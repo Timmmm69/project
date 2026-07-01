@@ -67,6 +67,42 @@ type ImportJobResult = {
   preview: ImportPreviewQuestion[];
 };
 
+type PaymentItem = {
+  id: string;
+  email: string;
+  testTitle: string;
+  amount: number;
+  currency: string;
+  status: string;
+  provider: string;
+  accessId: string | null;
+  createdAt: string;
+};
+
+type AccessItem = {
+  id: string;
+  email: string;
+  testTitle: string;
+  source: string;
+  attemptsTotal: number;
+  attemptsAvailable: number;
+  expiresAt: string;
+  revokedAt: string | null;
+};
+
+type AccessCodeItem = {
+  id: string;
+  testTitle: string;
+  status: string;
+  attemptsTotal: number;
+  accessDays: number;
+  codeExpiresAt: string;
+  activatedByEmail: string | null;
+  activatedAt: string | null;
+  revokedAt: string | null;
+  comment: string | null;
+};
+
 type ApiSuccess<T> = {
   success: true;
   data: T;
@@ -107,6 +143,20 @@ const emptyQuestionForm = {
   explanation: ""
 };
 
+const emptyManualAccessForm = {
+  email: "",
+  attemptsTotal: "1",
+  accessDays: "7",
+  comment: ""
+};
+
+const emptyAccessCodeForm = {
+  attemptsTotal: "1",
+  accessDays: "7",
+  codeExpiresDays: "30",
+  comment: ""
+};
+
 async function readJson<T>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
 }
@@ -125,6 +175,12 @@ export function AdminDashboard() {
   const [importFile, setImportFile] = useState<File | null>(null);
   const [importJob, setImportJob] = useState<ImportJobResult | null>(null);
   const [importBusy, setImportBusy] = useState(false);
+  const [payments, setPayments] = useState<PaymentItem[]>([]);
+  const [accesses, setAccesses] = useState<AccessItem[]>([]);
+  const [accessCodes, setAccessCodes] = useState<AccessCodeItem[]>([]);
+  const [manualAccessForm, setManualAccessForm] = useState(emptyManualAccessForm);
+  const [accessCodeForm, setAccessCodeForm] = useState(emptyAccessCodeForm);
+  const [createdCode, setCreatedCode] = useState<string | null>(null);
 
   const selectedTest = useMemo(
     () => tests.find((test) => test.id === selectedTestId) ?? null,
@@ -150,6 +206,29 @@ export function AdminDashboard() {
     }
   }
 
+  async function loadAdminAccessData(testId: string) {
+    const [paymentsResponse, accessesResponse, codesResponse] = await Promise.all([
+      fetch(`/api/admin/payments?testId=${testId}&limit=20`),
+      fetch(`/api/admin/accesses?testId=${testId}&limit=20`),
+      fetch(`/api/admin/access-codes?testId=${testId}&limit=20`)
+    ]);
+    const [paymentsBody, accessesBody, codesBody] = await Promise.all([
+      readJson<{ items: PaymentItem[] }>(paymentsResponse),
+      readJson<{ items: AccessItem[] }>(accessesResponse),
+      readJson<{ items: AccessCodeItem[] }>(codesResponse)
+    ]);
+
+    if (paymentsBody.success) {
+      setPayments(paymentsBody.data.items);
+    }
+    if (accessesBody.success) {
+      setAccesses(accessesBody.data.items);
+    }
+    if (codesBody.success) {
+      setAccessCodes(codesBody.data.items);
+    }
+  }
+
   async function loadMe() {
     const response = await fetch("/api/admin/auth/me");
     const body = await readJson<{ user: AdminUser }>(response);
@@ -169,10 +248,15 @@ export function AdminDashboard() {
   useEffect(() => {
     setImportJob(null);
     setImportFile(null);
+    setCreatedCode(null);
     if (selectedTestId) {
       void loadQuestions(selectedTestId);
+      void loadAdminAccessData(selectedTestId);
     } else {
       setQuestions([]);
+      setPayments([]);
+      setAccesses([]);
+      setAccessCodes([]);
     }
   }, [selectedTestId]);
 
@@ -327,6 +411,106 @@ export function AdminDashboard() {
     setMessage("Импорт применён.");
     await loadQuestions(selectedTestId);
     await loadTests(selectedTestId);
+  }
+
+  async function handleCreateManualAccess(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTestId) {
+      return;
+    }
+
+    setMessage(null);
+    const response = await fetch("/api/admin/accesses/manual", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        email: manualAccessForm.email,
+        testId: selectedTestId,
+        attemptsTotal: Number(manualAccessForm.attemptsTotal),
+        accessDays: Number(manualAccessForm.accessDays),
+        comment: manualAccessForm.comment || undefined
+      })
+    });
+    const body = await readJson<{ access: AccessItem }>(response);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setManualAccessForm(emptyManualAccessForm);
+    setMessage("Доступ выдан вручную.");
+    await loadAdminAccessData(selectedTestId);
+  }
+
+  async function handleCreateAccessCode(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTestId) {
+      return;
+    }
+
+    setMessage(null);
+    setCreatedCode(null);
+    const response = await fetch("/api/admin/access-codes", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        testId: selectedTestId,
+        attemptsTotal: Number(accessCodeForm.attemptsTotal),
+        accessDays: Number(accessCodeForm.accessDays),
+        codeExpiresDays: Number(accessCodeForm.codeExpiresDays),
+        comment: accessCodeForm.comment || undefined
+      })
+    });
+    const body = await readJson<{ accessCode: AccessCodeItem; code: string }>(response);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setAccessCodeForm(emptyAccessCodeForm);
+    setCreatedCode(body.data.code);
+    setMessage("Код создан. Он показан один раз.");
+    await loadAdminAccessData(selectedTestId);
+  }
+
+  async function handleRevokeAccess(accessId: string) {
+    if (!selectedTestId || !confirm("Отозвать доступ?")) {
+      return;
+    }
+
+    const response = await fetch(`/api/admin/accesses/${accessId}/revoke`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Revoked by admin" })
+    });
+    const body = await readJson<{ access: AccessItem }>(response);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setMessage("Доступ отозван.");
+    await loadAdminAccessData(selectedTestId);
+  }
+
+  async function handleRevokeAccessCode(accessCodeId: string) {
+    if (!selectedTestId || !confirm("Отозвать код доступа?")) {
+      return;
+    }
+
+    const response = await fetch(`/api/admin/access-codes/${accessCodeId}/revoke`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ reason: "Revoked by admin" })
+    });
+    const body = await readJson<{ accessCode: AccessCodeItem }>(response);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setMessage("Код отозван.");
+    await loadAdminAccessData(selectedTestId);
   }
 
   async function handleQuestionOrder(questionId: string, direction: "up" | "down") {
@@ -656,6 +840,242 @@ export function AdminDashboard() {
                 </button>
               </div>
             ) : null}
+          </section>
+
+          <section className="subpanel stack">
+            <div>
+              <h3 className="subsection-title">Доступы и оплата</h3>
+              <p className="muted">
+                Ручная выдача, одноразовые коды и последние mock-оплаты по выбранному тесту.
+              </p>
+            </div>
+
+            <form className="form-grid" onSubmit={handleCreateManualAccess}>
+              <label className="field wide">
+                <span>Email ученика</span>
+                <input
+                  value={manualAccessForm.email}
+                  onChange={(event) =>
+                    setManualAccessForm({ ...manualAccessForm, email: event.target.value })
+                  }
+                  type="email"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Попытки</span>
+                <input
+                  value={manualAccessForm.attemptsTotal}
+                  onChange={(event) =>
+                    setManualAccessForm({ ...manualAccessForm, attemptsTotal: event.target.value })
+                  }
+                  type="number"
+                  min="1"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Дней доступа</span>
+                <input
+                  value={manualAccessForm.accessDays}
+                  onChange={(event) =>
+                    setManualAccessForm({ ...manualAccessForm, accessDays: event.target.value })
+                  }
+                  type="number"
+                  min="1"
+                  required
+                />
+              </label>
+              <label className="field wide">
+                <span>Комментарий</span>
+                <input
+                  value={manualAccessForm.comment}
+                  onChange={(event) =>
+                    setManualAccessForm({ ...manualAccessForm, comment: event.target.value })
+                  }
+                />
+              </label>
+              <button className="button" type="submit">
+                Выдать доступ
+              </button>
+            </form>
+
+            <form className="form-grid" onSubmit={handleCreateAccessCode}>
+              <label className="field">
+                <span>Попытки по коду</span>
+                <input
+                  value={accessCodeForm.attemptsTotal}
+                  onChange={(event) =>
+                    setAccessCodeForm({ ...accessCodeForm, attemptsTotal: event.target.value })
+                  }
+                  type="number"
+                  min="1"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Дней доступа</span>
+                <input
+                  value={accessCodeForm.accessDays}
+                  onChange={(event) =>
+                    setAccessCodeForm({ ...accessCodeForm, accessDays: event.target.value })
+                  }
+                  type="number"
+                  min="1"
+                  required
+                />
+              </label>
+              <label className="field">
+                <span>Код действует дней</span>
+                <input
+                  value={accessCodeForm.codeExpiresDays}
+                  onChange={(event) =>
+                    setAccessCodeForm({ ...accessCodeForm, codeExpiresDays: event.target.value })
+                  }
+                  type="number"
+                  min="1"
+                  required
+                />
+              </label>
+              <label className="field wide">
+                <span>Комментарий</span>
+                <input
+                  value={accessCodeForm.comment}
+                  onChange={(event) =>
+                    setAccessCodeForm({ ...accessCodeForm, comment: event.target.value })
+                  }
+                />
+              </label>
+              <button className="button secondary" type="submit">
+                Создать код
+              </button>
+            </form>
+
+            {createdCode ? (
+              <div className="state-box success">
+                <p>Новый код: {createdCode}</p>
+                <p className="muted">Код хранится только как hash и больше не будет показан.</p>
+              </div>
+            ) : null}
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Источник</th>
+                    <th>Попытки</th>
+                    <th>Действует до</th>
+                    <th>Статус</th>
+                    <th>Действие</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accesses.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>Доступов пока нет.</td>
+                    </tr>
+                  ) : (
+                    accesses.map((access) => (
+                      <tr key={access.id}>
+                        <td>{access.email}</td>
+                        <td>{access.source}</td>
+                        <td>
+                          {access.attemptsAvailable} из {access.attemptsTotal}
+                        </td>
+                        <td>{new Date(access.expiresAt).toLocaleDateString()}</td>
+                        <td>{access.revokedAt ? "revoked" : "active"}</td>
+                        <td>
+                          <button
+                            className="button danger small"
+                            type="button"
+                            disabled={Boolean(access.revokedAt)}
+                            onClick={() => handleRevokeAccess(access.id)}
+                          >
+                            Отозвать
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Код</th>
+                    <th>Статус</th>
+                    <th>Попытки</th>
+                    <th>Активирован</th>
+                    <th>Истекает</th>
+                    <th>Действие</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {accessCodes.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>Кодов пока нет.</td>
+                    </tr>
+                  ) : (
+                    accessCodes.map((codeItem) => (
+                      <tr key={codeItem.id}>
+                        <td>hash only</td>
+                        <td>{codeItem.status}</td>
+                        <td>{codeItem.attemptsTotal}</td>
+                        <td>{codeItem.activatedByEmail ?? "-"}</td>
+                        <td>{new Date(codeItem.codeExpiresAt).toLocaleDateString()}</td>
+                        <td>
+                          <button
+                            className="button danger small"
+                            type="button"
+                            disabled={codeItem.status !== "active"}
+                            onClick={() => handleRevokeAccessCode(codeItem.id)}
+                          >
+                            Отозвать
+                          </button>
+                        </td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Провайдер</th>
+                    <th>Статус</th>
+                    <th>Сумма</th>
+                    <th>Access</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {payments.length === 0 ? (
+                    <tr>
+                      <td colSpan={5}>Оплат пока нет.</td>
+                    </tr>
+                  ) : (
+                    payments.map((paymentItem) => (
+                      <tr key={paymentItem.id}>
+                        <td>{paymentItem.email}</td>
+                        <td>{paymentItem.provider}</td>
+                        <td>{paymentItem.status}</td>
+                        <td>
+                          {(paymentItem.amount / 100).toFixed(2)} {paymentItem.currency}
+                        </td>
+                        <td>{paymentItem.accessId ? "created" : "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
           </section>
 
           <form className="form-grid" onSubmit={handleCreateQuestion}>

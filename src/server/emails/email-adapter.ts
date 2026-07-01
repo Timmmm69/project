@@ -16,7 +16,8 @@ export interface EmailAdapter {
 }
 
 export class DisabledEmailAdapter implements EmailAdapter {
-  async send(): Promise<SendEmailResult> {
+  async send(_input: SendEmailInput): Promise<SendEmailResult> {
+    void _input;
     return {
       provider: "disabled"
     };

@@ -27,6 +27,14 @@ type AccessCheckResult = {
   } | null;
 };
 
+type PaymentSummary = {
+  id: string;
+  amount: number;
+  currency: string;
+  status: string;
+  accessId: string | null;
+};
+
 type ApiSuccess<T> = {
   success: true;
   data: T;
@@ -65,47 +73,141 @@ function statusText(result: AccessCheckResult | null) {
 
 export function TestAccessForm({ testId }: { testId: string }) {
   const [email, setEmail] = useState("");
+  const [code, setCode] = useState("");
+  const [payment, setPayment] = useState<PaymentSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [accessResult, setAccessResult] = useState<AccessCheckResult | null>(null);
 
-  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
-    event.preventDefault();
-    setBusy(true);
-    setMessage(null);
-    setAccessResult(null);
-
-    const identifyResponse = await fetch("/api/students/identify", {
+  async function identifyEmail() {
+    const response = await fetch("/api/students/identify", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email })
     });
-    const identifyBody = await readJson<{ student: { id: string; email: string } }>(identifyResponse);
+    const identifyBody = await readJson<{ student: { id: string; email: string } }>(response);
     if (!identifyBody.success) {
-      setBusy(false);
       setMessage(identifyBody.error.message);
-      return;
+      return null;
     }
 
     const normalizedEmail = identifyBody.data.student.email;
+    setEmail(normalizedEmail);
+    return normalizedEmail;
+  }
+
+  async function checkAccessForEmail(normalizedEmail: string) {
     const accessResponse = await fetch("/api/access/check", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ email: normalizedEmail, testId })
     });
     const accessBody = await readJson<AccessCheckResult>(accessResponse);
-    setBusy(false);
 
     if (!accessBody.success) {
       setMessage(accessBody.error.message);
+      return null;
+    }
+
+    setAccessResult(accessBody.data);
+    return accessBody.data;
+  }
+
+  async function handleSubmit(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    setBusy(true);
+    setMessage(null);
+    setPayment(null);
+    setAccessResult(null);
+
+    const normalizedEmail = await identifyEmail();
+    if (normalizedEmail) {
+      await checkAccessForEmail(normalizedEmail);
+    }
+
+    setBusy(false);
+  }
+
+  async function handleCreatePayment() {
+    setBusy(true);
+    setMessage(null);
+    const normalizedEmail = await identifyEmail();
+    if (!normalizedEmail) {
+      setBusy(false);
       return;
     }
 
-    setEmail(normalizedEmail);
-    setAccessResult(accessBody.data);
+    const response = await fetch("/api/payments/create", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalizedEmail, testId, provider: "mock" })
+    });
+    const body = await readJson<{ payment: PaymentSummary }>(response);
+    setBusy(false);
+
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setPayment(body.data.payment);
+    setMessage("Тестовая оплата создана. Подтвердите её, чтобы открыть доступ.");
+  }
+
+  async function handleConfirmPayment() {
+    if (!payment) {
+      return;
+    }
+
+    setBusy(true);
+    setMessage(null);
+    const response = await fetch("/api/payments/webhook/mock", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ paymentId: payment.id, status: "success" })
+    });
+    const body = await readJson<{ payment: PaymentSummary; createdAccess: boolean }>(response);
+    if (!body.success) {
+      setBusy(false);
+      setMessage(body.error.message);
+      return;
+    }
+
+    setPayment(body.data.payment);
+    await checkAccessForEmail(email);
+    setBusy(false);
+    setMessage(body.data.createdAccess ? "Доступ открыт." : "Оплата уже была подтверждена ранее.");
+  }
+
+  async function handleActivateCode() {
+    setBusy(true);
+    setMessage(null);
+    const normalizedEmail = await identifyEmail();
+    if (!normalizedEmail) {
+      setBusy(false);
+      return;
+    }
+
+    const response = await fetch("/api/access-codes/activate", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalizedEmail, testId, code })
+    });
+    const body = await readJson<{ access: { id: string } }>(response);
+    if (!body.success) {
+      setBusy(false);
+      setMessage(body.error.message);
+      return;
+    }
+
+    setCode("");
+    await checkAccessForEmail(normalizedEmail);
+    setBusy(false);
+    setMessage("Код активирован. Доступ открыт.");
   }
 
   const text = statusText(accessResult);
+  const showAccessActions = accessResult && !accessResult.hasAccess;
 
   return (
     <form className="form-stack" onSubmit={handleSubmit}>
@@ -131,6 +233,36 @@ export function TestAccessForm({ testId }: { testId: string }) {
               Попыток доступно: {accessResult.access.attemptsAvailable} из {accessResult.access.attemptsTotal}.
             </p>
           ) : null}
+        </div>
+      ) : null}
+      {showAccessActions ? (
+        <div className="state-box">
+          <div className="inline-actions">
+            <button className="button secondary" type="button" disabled={busy} onClick={handleCreatePayment}>
+              Создать тестовую оплату
+            </button>
+            {payment?.status === "pending" ? (
+              <button className="button" type="button" disabled={busy} onClick={handleConfirmPayment}>
+                Подтвердить тестовую оплату
+              </button>
+            ) : null}
+          </div>
+          {payment ? (
+            <p className="muted">
+              Оплата: {payment.status}, сумма {(payment.amount / 100).toFixed(2)} {payment.currency}.
+            </p>
+          ) : null}
+          <label className="field">
+            <span>Код доступа</span>
+            <input
+              value={code}
+              onChange={(event) => setCode(event.target.value)}
+              placeholder="XXXX-XXXX-XXXX-XXXX"
+            />
+          </label>
+          <button className="button secondary" type="button" disabled={busy || !code} onClick={handleActivateCode}>
+            Активировать код
+          </button>
         </div>
       ) : null}
     </form>

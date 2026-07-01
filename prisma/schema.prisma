@@ -70,6 +70,7 @@ enum PaymentStatus {
 }
 
 enum PaymentProvider {
+  MOCK   @map("mock")
   MANUAL @map("manual")
   BEPAID @map("bepaid")
   WEBPAY @map("webpay")
