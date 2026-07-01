@@ -231,7 +231,6 @@ model Question {
   test    Test     @relation(fields: [testId], references: [id])
   answers Answer[]
 
-  @@unique([testId, orderIndex])
   @@index([testId])
   @@index([topic])
   @@index([testId, orderIndex])

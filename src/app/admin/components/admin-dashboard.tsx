@@ -39,6 +39,34 @@ type QuestionItem = {
   orderIndex: number;
 };
 
+type ImportIssue = {
+  rowNumber: number | null;
+  field?: string;
+  code: string;
+  message: string;
+};
+
+type ImportPreviewQuestion = {
+  questionText: string;
+  questionType: "single_choice" | "multiple_choice" | "short_text";
+  correctAnswer: string;
+  topic: string;
+  points: number;
+};
+
+type ImportJobResult = {
+  id: string;
+  mode: "append" | "replace";
+  status: "validated" | "failed" | "imported" | "uploaded" | "cancelled";
+  totalRows: number;
+  validRows: number;
+  errorRows: number;
+  warningRows: number;
+  errors: ImportIssue[];
+  warnings: ImportIssue[];
+  preview: ImportPreviewQuestion[];
+};
+
 type ApiSuccess<T> = {
   success: true;
   data: T;
@@ -93,6 +121,10 @@ export function AdminDashboard() {
   const [loginForm, setLoginForm] = useState({ email: "", password: "" });
   const [createForm, setCreateForm] = useState(emptyCreateForm);
   const [questionForm, setQuestionForm] = useState(emptyQuestionForm);
+  const [importMode, setImportMode] = useState<"append" | "replace">("append");
+  const [importFile, setImportFile] = useState<File | null>(null);
+  const [importJob, setImportJob] = useState<ImportJobResult | null>(null);
+  const [importBusy, setImportBusy] = useState(false);
 
   const selectedTest = useMemo(
     () => tests.find((test) => test.id === selectedTestId) ?? null,
@@ -135,6 +167,8 @@ export function AdminDashboard() {
   }, []);
 
   useEffect(() => {
+    setImportJob(null);
+    setImportFile(null);
     if (selectedTestId) {
       void loadQuestions(selectedTestId);
     } else {
@@ -231,6 +265,66 @@ export function AdminDashboard() {
     }
 
     setQuestionForm(emptyQuestionForm);
+    await loadQuestions(selectedTestId);
+    await loadTests(selectedTestId);
+  }
+
+  async function handleValidateImport(event: FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    if (!selectedTestId || !importFile) {
+      setMessage("Выберите файл импорта.");
+      return;
+    }
+
+    setImportBusy(true);
+    setMessage(null);
+    setImportJob(null);
+
+    const formData = new FormData();
+    formData.set("file", importFile);
+    formData.set("mode", importMode);
+
+    const response = await fetch(`/api/admin/tests/${selectedTestId}/import/validate`, {
+      method: "POST",
+      body: formData
+    });
+    const body = await readJson<ImportJobResult>(response);
+    setImportBusy(false);
+
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setImportJob(body.data);
+    setMessage(
+      body.data.errors.length > 0
+        ? "Файл проверен, но есть критические ошибки. Commit заблокирован."
+        : "Файл проверен. Можно применить импорт."
+    );
+  }
+
+  async function handleCommitImport() {
+    if (!selectedTestId || !importJob || importJob.errors.length > 0) {
+      return;
+    }
+    if (importJob.mode === "replace" && !confirm("Replace удалит текущие активные вопросы теста и добавит вопросы из файла. Продолжить?")) {
+      return;
+    }
+
+    setImportBusy(true);
+    setMessage(null);
+    const response = await fetch(`/api/admin/import/${importJob.id}/commit`, { method: "POST" });
+    const body = await readJson<ImportJobResult>(response);
+    setImportBusy(false);
+
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setImportJob(body.data);
+    setMessage("Импорт применён.");
     await loadQuestions(selectedTestId);
     await loadTests(selectedTestId);
   }
@@ -457,6 +551,113 @@ export function AdminDashboard() {
             </p>
           </div>
 
+          <section className="subpanel stack">
+            <div>
+              <h3 className="subsection-title">Импорт XLSX/CSV</h3>
+              <p className="muted">
+                Сначала проверьте файл. Вопросы появятся в тесте только после commit.
+              </p>
+            </div>
+            <div className="inline-actions">
+              <a className="button secondary small" href="/api/admin/import/template?format=xlsx">
+                Скачать XLSX шаблон
+              </a>
+              <a className="button secondary small" href="/api/admin/import/template?format=csv">
+                Скачать CSV шаблон
+              </a>
+            </div>
+            <form className="form-grid" onSubmit={handleValidateImport}>
+              <label className="field">
+                <span>Режим</span>
+                <select value={importMode} onChange={(event) => setImportMode(event.target.value as "append" | "replace")}>
+                  <option value="append">append - добавить</option>
+                  <option value="replace">replace - заменить активные вопросы</option>
+                </select>
+              </label>
+              <label className="field wide">
+                <span>Файл .xlsx или .csv</span>
+                <input
+                  type="file"
+                  accept=".xlsx,.csv"
+                  onChange={(event) => setImportFile(event.target.files?.[0] ?? null)}
+                  required
+                />
+              </label>
+              <button className="button" type="submit" disabled={importBusy}>
+                Проверить файл
+              </button>
+            </form>
+
+            {importJob ? (
+              <div className="stack">
+                <p className="muted">
+                  Status: {importJob.status}. Rows: {importJob.totalRows}. Valid: {importJob.validRows}. Errors:{" "}
+                  {importJob.errorRows}. Warnings: {importJob.warningRows}.
+                </p>
+                {importJob.errors.length > 0 ? (
+                  <div className="issue-box error">
+                    <strong>Критические ошибки</strong>
+                    <ul>
+                      {importJob.errors.slice(0, 20).map((item, index) => (
+                        <li key={`${item.code}-${index}`}>
+                          Row {item.rowNumber ?? "file"}, {item.field ?? "file"}: {item.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {importJob.warnings.length > 0 ? (
+                  <div className="issue-box warning">
+                    <strong>Warnings</strong>
+                    <ul>
+                      {importJob.warnings.slice(0, 20).map((item, index) => (
+                        <li key={`${item.code}-${index}`}>
+                          Row {item.rowNumber ?? "file"}, {item.field ?? "file"}: {item.message}
+                        </li>
+                      ))}
+                    </ul>
+                  </div>
+                ) : null}
+                {importJob.preview.length > 0 ? (
+                  <div className="table-wrap">
+                    <table>
+                      <thead>
+                        <tr>
+                          <th>#</th>
+                          <th>Вопрос</th>
+                          <th>Тип</th>
+                          <th>Ответ</th>
+                          <th>Тема</th>
+                          <th>Балл</th>
+                        </tr>
+                      </thead>
+                      <tbody>
+                        {importJob.preview.slice(0, 10).map((question, index) => (
+                          <tr key={`${question.questionText}-${index}`}>
+                            <td>{index + 1}</td>
+                            <td>{question.questionText}</td>
+                            <td>{question.questionType}</td>
+                            <td>{question.correctAnswer}</td>
+                            <td>{question.topic}</td>
+                            <td>{question.points}</td>
+                          </tr>
+                        ))}
+                      </tbody>
+                    </table>
+                  </div>
+                ) : null}
+                <button
+                  className="button"
+                  type="button"
+                  disabled={importBusy || importJob.errors.length > 0 || importJob.status === "imported"}
+                  onClick={handleCommitImport}
+                >
+                  Commit import
+                </button>
+              </div>
+            ) : null}
+          </section>
+
           <form className="form-grid" onSubmit={handleCreateQuestion}>
             <label className="field wide">
               <span>Текст вопроса</span>
@@ -505,34 +706,18 @@ export function AdminDashboard() {
             </label>
             {questionForm.questionType !== "short_text" ? (
               <>
-                <label className="field">
-                  <span>Вариант A</span>
-                  <input
-                    value={questionForm.optionA}
-                    onChange={(event) => setQuestionForm({ ...questionForm, optionA: event.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Вариант B</span>
-                  <input
-                    value={questionForm.optionB}
-                    onChange={(event) => setQuestionForm({ ...questionForm, optionB: event.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Вариант C</span>
-                  <input
-                    value={questionForm.optionC}
-                    onChange={(event) => setQuestionForm({ ...questionForm, optionC: event.target.value })}
-                  />
-                </label>
-                <label className="field">
-                  <span>Вариант D</span>
-                  <input
-                    value={questionForm.optionD}
-                    onChange={(event) => setQuestionForm({ ...questionForm, optionD: event.target.value })}
-                  />
-                </label>
+                {(["A", "B", "C", "D"] as const).map((letter) => {
+                  const key = `option${letter}` as "optionA" | "optionB" | "optionC" | "optionD";
+                  return (
+                    <label className="field" key={letter}>
+                      <span>Вариант {letter}</span>
+                      <input
+                        value={questionForm[key]}
+                        onChange={(event) => setQuestionForm({ ...questionForm, [key]: event.target.value })}
+                      />
+                    </label>
+                  );
+                })}
               </>
             ) : null}
             <label className="field">
