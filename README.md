@@ -8,6 +8,8 @@ Phase 5 Public Student Flow is complete. Report: `docs/16-phase-5-public-flow-re
 
 Phase 6 Payments, Accesses And Access Codes is complete with mock payments. Report: `docs/17-phase-6-payments-access-report.md`.
 
+Phase 7 Attempt Runtime is complete. Report: `docs/18-phase-7-attempt-runtime-report.md`.
+
 MVP веб-сервиса для продажи онлайн-тестов по русскому языку для подготовки к ЦЭ/ЦТ.
 
 Главный источник истины: `docs/00-final-mvp-spec-v2.md`.

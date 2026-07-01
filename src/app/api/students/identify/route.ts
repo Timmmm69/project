@@ -1,5 +1,6 @@
 import { apiFailure, apiSuccess } from "@/lib/api-response";
 import { studentIdentifySchema } from "@/lib/validation/schemas";
+import { setStudentSessionCookie } from "@/server/auth/student-session";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
 
@@ -56,6 +57,12 @@ export async function POST(request: Request) {
       payload: { email: student.email }
     });
   }
+
+  await setStudentSessionCookie({
+    userId: student.id,
+    email: student.email,
+    role: "STUDENT"
+  });
 
   return apiSuccess({
     student: {

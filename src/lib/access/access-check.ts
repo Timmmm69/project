@@ -108,7 +108,7 @@ export async function checkStudentAccess(input: {
     }
   });
 
-  if (startedAttempt && !startedAttempt.access.revokedAt && startedAttempt.access.expiresAt > now) {
+  if (startedAttempt && !startedAttempt.access.revokedAt) {
     return {
       hasAccess: true,
       status: "continue_attempt",
@@ -126,7 +126,7 @@ export async function checkStudentAccess(input: {
       userId: user.id,
       testId: input.testId
     },
-    orderBy: [{ createdAt: "asc" }],
+    orderBy: [{ expiresAt: "asc" }, { createdAt: "asc" }],
     select: {
       id: true,
       attemptsTotal: true,

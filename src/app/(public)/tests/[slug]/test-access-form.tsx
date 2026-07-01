@@ -206,6 +206,31 @@ export function TestAccessForm({ testId }: { testId: string }) {
     setMessage("Код активирован. Доступ открыт.");
   }
 
+  async function handleStartAttempt() {
+    setBusy(true);
+    setMessage(null);
+    const normalizedEmail = await identifyEmail();
+    if (!normalizedEmail) {
+      setBusy(false);
+      return;
+    }
+
+    const response = await fetch("/api/attempts/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ email: normalizedEmail, testId })
+    });
+    const body = await readJson<{ attempt: { attemptId: string }; restored: boolean }>(response);
+    setBusy(false);
+
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    window.location.href = `/attempts/${body.data.attempt.attemptId}`;
+  }
+
   const text = statusText(accessResult);
   const showAccessActions = accessResult && !accessResult.hasAccess;
 
@@ -232,6 +257,16 @@ export function TestAccessForm({ testId }: { testId: string }) {
             <p className="muted">
               Попыток доступно: {accessResult.access.attemptsAvailable} из {accessResult.access.attemptsTotal}.
             </p>
+          ) : null}
+          {accessResult?.status === "can_start" ? (
+            <button className="button" type="button" disabled={busy} onClick={handleStartAttempt}>
+              Начать тест
+            </button>
+          ) : null}
+          {accessResult?.status === "continue_attempt" && accessResult.attempt ? (
+            <a className="button" href={`/attempts/${accessResult.attempt.id}`}>
+              Продолжить тест
+            </a>
           ) : null}
         </div>
       ) : null}
