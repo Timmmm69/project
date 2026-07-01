@@ -55,8 +55,6 @@ enum Difficulty {
 enum ScoringRule {
   FULL_MATCH    @map("full_match")
   EXACT_TEXT    @map("exact_text")
-  MANUAL        @map("manual")
-  PARTIAL_MATCH @map("partial_match")
 
   @@map("scoring_rule")
 }
@@ -76,7 +74,6 @@ enum PaymentProvider {
   BEPAID @map("bepaid")
   WEBPAY @map("webpay")
   ERIP   @map("erip")
-  STRIPE @map("stripe")
   OTHER  @map("other")
 
   @@map("payment_provider")

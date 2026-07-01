@@ -26,6 +26,12 @@ function issueCount(value: Prisma.JsonValue) {
   return Array.isArray(value) ? value.length : 0;
 }
 
+class ImportJobAlreadyCommittedError extends Error {
+  constructor() {
+    super("Import job is no longer validated");
+  }
+}
+
 export async function POST(_request: Request, context: RouteContext) {
   const admin = await requireAdmin();
   if (!admin) {
@@ -58,63 +64,83 @@ export async function POST(_request: Request, context: RouteContext) {
     return apiFailure({ code: "EMPTY_IMPORT", message: "Import has no valid rows" }, 409);
   }
 
-  const updatedJob = await prisma.$transaction(async (tx) => {
-    const startOrder =
-      job.mode === "APPEND"
-        ? (
-            await tx.question.aggregate({
-              where: { testId: job.testId, deletedAt: null },
-              _max: { orderIndex: true }
-            })
-          )._max.orderIndex ?? 0
-        : 0;
-
-    if (job.mode === "REPLACE") {
-      await tx.question.updateMany({
-        where: { testId: job.testId, deletedAt: null },
-        data: { deletedAt: new Date() }
+  try {
+    const updatedJob = await prisma.$transaction(async (tx) => {
+      const claimed = await tx.importJob.updateMany({
+        where: {
+          id: job.id,
+          status: "VALIDATED"
+        },
+        data: {
+          status: "IMPORTED",
+          importedAt: new Date()
+        }
       });
-    }
 
-    await tx.question.createMany({
-      data: preview.map((question, index) => ({
-        testId: job.testId,
-        questionText: question.questionText,
-        questionType: toPrismaQuestionType(question.questionType),
-        optionA: question.optionA,
-        optionB: question.optionB,
-        optionC: question.optionC,
-        optionD: question.optionD,
-        correctAnswer: question.correctAnswer,
-        topic: question.topic,
-        subtopic: question.subtopic,
-        difficulty: toPrismaDifficulty(question.difficulty),
-        points: question.points,
-        scoringRule: scoringRuleForQuestionType(question.questionType),
-        explanation: question.explanation,
-        source: question.source,
-        orderIndex: startOrder + index + 1
-      }))
-    });
-
-    await recalculateTestQuestionCounters(tx, job.testId);
-
-    return tx.importJob.update({
-      where: { id: job.id },
-      data: {
-        status: "IMPORTED",
-        importedAt: new Date()
+      if (claimed.count !== 1) {
+        throw new ImportJobAlreadyCommittedError();
       }
+
+      const startOrder =
+        job.mode === "APPEND"
+          ? (
+              await tx.question.aggregate({
+                where: { testId: job.testId, deletedAt: null },
+                _max: { orderIndex: true }
+              })
+            )._max.orderIndex ?? 0
+          : 0;
+
+      if (job.mode === "REPLACE") {
+        await tx.question.updateMany({
+          where: { testId: job.testId, deletedAt: null },
+          data: { deletedAt: new Date() }
+        });
+      }
+
+      await tx.question.createMany({
+        data: preview.map((question, index) => ({
+          testId: job.testId,
+          questionText: question.questionText,
+          questionType: toPrismaQuestionType(question.questionType),
+          optionA: question.optionA,
+          optionB: question.optionB,
+          optionC: question.optionC,
+          optionD: question.optionD,
+          correctAnswer: question.correctAnswer,
+          topic: question.topic,
+          subtopic: question.subtopic,
+          difficulty: toPrismaDifficulty(question.difficulty),
+          points: question.points,
+          scoringRule: scoringRuleForQuestionType(question.questionType),
+          explanation: question.explanation,
+          source: question.source,
+          orderIndex: startOrder + index + 1
+        }))
+      });
+
+      await recalculateTestQuestionCounters(tx, job.testId);
+
+      const importedJob = await tx.importJob.findUniqueOrThrow({
+        where: { id: job.id }
+      });
+
+      return importedJob;
     });
-  });
 
-  await logEvent({
-    eventType: "import_committed",
-    actorUserId: admin.id,
-    entityType: "import_job",
-    entityId: job.id,
-    payload: { testId: job.testId, mode: job.mode, importedRows: preview.length }
-  });
+    await logEvent({
+      eventType: "import_committed",
+      actorUserId: admin.id,
+      entityType: "import_job",
+      entityId: job.id,
+      payload: { testId: job.testId, mode: job.mode, importedRows: preview.length }
+    });
 
-  return apiSuccess(serializeImportJob(updatedJob));
+    return apiSuccess(serializeImportJob(updatedJob));
+  } catch (error) {
+    if (error instanceof ImportJobAlreadyCommittedError) {
+      return apiFailure({ code: "INVALID_IMPORT_STATUS", message: "Only validated imports can be committed" }, 409);
+    }
+    throw error;
+  }
 }

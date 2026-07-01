@@ -2,6 +2,8 @@
 
 Phase 4 Import XLSX/CSV is complete. Report: `docs/14-phase-4-import-report.md`.
 
+Stabilization pass before Phase 5 is complete. Report: `docs/15-stabilization-pass-report.md`.
+
 MVP веб-сервиса для продажи онлайн-тестов по русскому языку для подготовки к ЦЭ/ЦТ.
 
 Главный источник истины: `docs/00-final-mvp-spec-v2.md`.
