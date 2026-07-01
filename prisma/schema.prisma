@@ -1,0 +1,516 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum UserRole {
+  ADMIN   @map("admin")
+  STUDENT @map("student")
+
+  @@map("user_role")
+}
+
+enum Subject {
+  RUSSIAN @map("russian")
+
+  @@map("subject")
+}
+
+enum TestMode {
+  TRAINING @map("training")
+  CE_CT    @map("ce_ct")
+
+  @@map("test_mode")
+}
+
+enum TestStatus {
+  DRAFT     @map("draft")
+  PUBLISHED @map("published")
+  HIDDEN    @map("hidden")
+  ARCHIVED  @map("archived")
+
+  @@map("test_status")
+}
+
+enum QuestionType {
+  SINGLE_CHOICE   @map("single_choice")
+  MULTIPLE_CHOICE @map("multiple_choice")
+  SHORT_TEXT      @map("short_text")
+
+  @@map("question_type")
+}
+
+enum Difficulty {
+  EASY   @map("easy")
+  MEDIUM @map("medium")
+  HARD   @map("hard")
+
+  @@map("difficulty")
+}
+
+enum ScoringRule {
+  FULL_MATCH    @map("full_match")
+  EXACT_TEXT    @map("exact_text")
+  MANUAL        @map("manual")
+  PARTIAL_MATCH @map("partial_match")
+
+  @@map("scoring_rule")
+}
+
+enum PaymentStatus {
+  PENDING   @map("pending")
+  SUCCESS   @map("success")
+  FAILED    @map("failed")
+  CANCELLED @map("cancelled")
+  REFUNDED  @map("refunded")
+
+  @@map("payment_status")
+}
+
+enum PaymentProvider {
+  MANUAL @map("manual")
+  BEPAID @map("bepaid")
+  WEBPAY @map("webpay")
+  ERIP   @map("erip")
+  STRIPE @map("stripe")
+  OTHER  @map("other")
+
+  @@map("payment_provider")
+}
+
+enum AccessSource {
+  PAYMENT     @map("payment")
+  MANUAL      @map("manual")
+  ACCESS_CODE @map("access_code")
+
+  @@map("access_source")
+}
+
+enum AccessCodeStatus {
+  ACTIVE  @map("active")
+  USED    @map("used")
+  EXPIRED @map("expired")
+  REVOKED @map("revoked")
+
+  @@map("access_code_status")
+}
+
+enum AttemptStatus {
+  STARTED   @map("started")
+  COMPLETED @map("completed")
+  EXPIRED   @map("expired")
+  CANCELLED @map("cancelled")
+
+  @@map("attempt_status")
+}
+
+enum ImportMode {
+  APPEND  @map("append")
+  REPLACE @map("replace")
+
+  @@map("import_mode")
+}
+
+enum ImportJobStatus {
+  UPLOADED  @map("uploaded")
+  VALIDATED @map("validated")
+  FAILED    @map("failed")
+  IMPORTED  @map("imported")
+  CANCELLED @map("cancelled")
+
+  @@map("import_job_status")
+}
+
+enum EmailStatus {
+  PENDING @map("pending")
+  SENT    @map("sent")
+  FAILED  @map("failed")
+
+  @@map("email_status")
+}
+
+model User {
+  id           String   @id @default(uuid()) @db.Uuid
+  email        String   @unique
+  name         String?
+  role         UserRole @default(STUDENT)
+  passwordHash String?  @map("password_hash")
+  createdAt    DateTime @default(now()) @map("created_at")
+  updatedAt    DateTime @updatedAt @map("updated_at")
+  deletedAt    DateTime? @map("deleted_at")
+
+  payments                 Payment[]         @relation("PaymentUser")
+  accesses                 Access[]          @relation("AccessUser")
+  attempts                 Attempt[]         @relation("AttemptUser")
+  createdTests             Test[]            @relation("TestCreatedByAdmin")
+  createdAccesses          Access[]          @relation("AccessCreatedByAdmin")
+  revokedAccesses          Access[]          @relation("AccessRevokedByAdmin")
+  createdAccessCodes       AccessCode[]      @relation("AccessCodeCreatedByAdmin")
+  activatedAccessCodes     AccessCode[]      @relation("AccessCodeActivatedByUser")
+  revokedAccessCodes       AccessCode[]      @relation("AccessCodeRevokedByAdmin")
+  importJobs               ImportJob[]       @relation("ImportJobAdmin")
+  manualAccessAdminLogs    ManualAccessLog[] @relation("ManualAccessAdmin")
+  manualAccessUserLogs     ManualAccessLog[] @relation("ManualAccessUser")
+  eventLogs                EventLog[]        @relation("EventLogActor")
+  emailLogs                EmailLog[]        @relation("EmailLogUser")
+
+  @@index([role])
+  @@map("users")
+}
+
+model Test {
+  id                  String     @id @default(uuid()) @db.Uuid
+  title               String
+  slug                String     @unique
+  subject             Subject    @default(RUSSIAN)
+  mode                TestMode   @default(TRAINING)
+  shortDescription    String?    @map("short_description")
+  fullDescription     String?    @map("full_description")
+  price               Int
+  currency            String     @default("BYN")
+  durationMinutes     Int        @map("duration_minutes")
+  attemptsLimit       Int        @default(1) @map("attempts_limit")
+  accessDays          Int        @default(7) @map("access_days")
+  status              TestStatus @default(DRAFT)
+  questionsCount      Int        @default(0) @map("questions_count")
+  maxRawScore         Int        @default(0) @map("max_raw_score")
+  scoringSchemeId     String?    @map("scoring_scheme_id") @db.Uuid
+  showScaledScore     Boolean    @default(false) @map("show_scaled_score")
+  showPercent         Boolean    @default(true) @map("show_percent")
+  showCorrectAnswers  Boolean    @default(true) @map("show_correct_answers")
+  showTopicResult     Boolean    @default(true) @map("show_topic_result")
+  showRecommendations Boolean    @default(true) @map("show_recommendations")
+  publishedAt         DateTime?  @map("published_at")
+  createdByAdminId    String?    @map("created_by_admin_id") @db.Uuid
+  createdAt           DateTime   @default(now()) @map("created_at")
+  updatedAt           DateTime   @updatedAt @map("updated_at")
+  deletedAt           DateTime?  @map("deleted_at")
+
+  createdByAdmin User?          @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  scoringScheme  ScoringScheme? @relation(fields: [scoringSchemeId], references: [id])
+  questions      Question[]
+  payments       Payment[]
+  accesses       Access[]
+  accessCodes    AccessCode[]
+  attempts       Attempt[]
+  importJobs     ImportJob[]
+  manualLogs     ManualAccessLog[]
+
+  @@index([status])
+  @@index([subject])
+  @@index([mode])
+  @@map("tests")
+}
+
+model Question {
+  id            String       @id @default(uuid()) @db.Uuid
+  testId        String       @map("test_id") @db.Uuid
+  questionText  String       @map("question_text")
+  questionType  QuestionType @map("question_type")
+  optionA       String?      @map("option_a")
+  optionB       String?      @map("option_b")
+  optionC       String?      @map("option_c")
+  optionD       String?      @map("option_d")
+  correctAnswer String       @map("correct_answer")
+  topic         String
+  subtopic      String?
+  difficulty    Difficulty?  @default(MEDIUM)
+  points        Int          @default(1)
+  scoringRule   ScoringRule  @default(FULL_MATCH) @map("scoring_rule")
+  explanation   String?
+  source        String?
+  orderIndex    Int          @map("order_index")
+  createdAt     DateTime     @default(now()) @map("created_at")
+  updatedAt     DateTime     @updatedAt @map("updated_at")
+  deletedAt     DateTime?    @map("deleted_at")
+
+  test    Test     @relation(fields: [testId], references: [id])
+  answers Answer[]
+
+  @@unique([testId, orderIndex])
+  @@index([testId])
+  @@index([topic])
+  @@index([testId, orderIndex])
+  @@map("questions")
+}
+
+model Payment {
+  id                String          @id @default(uuid()) @db.Uuid
+  userId            String          @map("user_id") @db.Uuid
+  testId            String          @map("test_id") @db.Uuid
+  amount            Int
+  currency          String          @default("BYN")
+  status            PaymentStatus   @default(PENDING)
+  provider          PaymentProvider
+  providerPaymentId String?         @map("provider_payment_id")
+  providerPayload   Json?           @map("provider_payload_json")
+  createdAt         DateTime        @default(now()) @map("created_at")
+  updatedAt         DateTime        @updatedAt @map("updated_at")
+  paidAt            DateTime?       @map("paid_at")
+  failedAt          DateTime?       @map("failed_at")
+  refundedAt        DateTime?       @map("refunded_at")
+
+  user   User    @relation("PaymentUser", fields: [userId], references: [id])
+  test   Test    @relation(fields: [testId], references: [id])
+  access Access?
+
+  @@unique([provider, providerPaymentId])
+  @@index([userId])
+  @@index([testId])
+  @@index([status])
+  @@map("payments")
+}
+
+model Access {
+  id                 String       @id @default(uuid()) @db.Uuid
+  userId             String       @map("user_id") @db.Uuid
+  testId             String       @map("test_id") @db.Uuid
+  paymentId          String?      @unique @map("payment_id") @db.Uuid
+  accessCodeId       String?      @unique @map("access_code_id") @db.Uuid
+  source             AccessSource
+  attemptsTotal      Int          @default(1) @map("attempts_total")
+  attemptsAvailable  Int          @default(1) @map("attempts_available")
+  expiresAt          DateTime     @map("expires_at")
+  revokedAt          DateTime?    @map("revoked_at")
+  revokedByAdminId   String?      @map("revoked_by_admin_id") @db.Uuid
+  revokedReason      String?      @map("revoked_reason")
+  createdByAdminId   String?      @map("created_by_admin_id") @db.Uuid
+  createdAt          DateTime     @default(now()) @map("created_at")
+  updatedAt          DateTime     @updatedAt @map("updated_at")
+
+  user             User       @relation("AccessUser", fields: [userId], references: [id])
+  test             Test       @relation(fields: [testId], references: [id])
+  payment          Payment?   @relation(fields: [paymentId], references: [id])
+  accessCode       AccessCode? @relation(fields: [accessCodeId], references: [id])
+  revokedByAdmin   User?      @relation("AccessRevokedByAdmin", fields: [revokedByAdminId], references: [id])
+  createdByAdmin   User?      @relation("AccessCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  attempts         Attempt[]
+  manualLogs       ManualAccessLog[]
+
+  @@index([userId])
+  @@index([testId])
+  @@index([userId, testId])
+  @@index([expiresAt])
+  @@map("accesses")
+}
+
+model AccessCode {
+  id                  String           @id @default(uuid()) @db.Uuid
+  codeHash            String           @unique @map("code_hash")
+  testId              String           @map("test_id") @db.Uuid
+  createdByAdminId    String           @map("created_by_admin_id") @db.Uuid
+  status              AccessCodeStatus @default(ACTIVE)
+  attemptsTotal       Int              @default(1) @map("attempts_total")
+  accessDays          Int              @default(7) @map("access_days")
+  codeExpiresAt       DateTime         @map("code_expires_at")
+  activatedByUserId   String?          @map("activated_by_user_id") @db.Uuid
+  activatedAt         DateTime?        @map("activated_at")
+  revokedAt           DateTime?        @map("revoked_at")
+  revokedByAdminId    String?          @map("revoked_by_admin_id") @db.Uuid
+  revokedReason       String?          @map("revoked_reason")
+  comment             String?
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+
+  test              Test    @relation(fields: [testId], references: [id])
+  createdByAdmin    User    @relation("AccessCodeCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  activatedByUser   User?   @relation("AccessCodeActivatedByUser", fields: [activatedByUserId], references: [id])
+  revokedByAdmin    User?   @relation("AccessCodeRevokedByAdmin", fields: [revokedByAdminId], references: [id])
+  access            Access?
+
+  @@index([testId])
+  @@index([status])
+  @@index([codeExpiresAt])
+  @@map("access_codes")
+}
+
+model Attempt {
+  id                          String        @id @default(uuid()) @db.Uuid
+  userId                      String        @map("user_id") @db.Uuid
+  testId                      String        @map("test_id") @db.Uuid
+  accessId                    String        @map("access_id") @db.Uuid
+  status                      AttemptStatus @default(STARTED)
+  startedAt                   DateTime      @default(now()) @map("started_at")
+  finishedAt                  DateTime?     @map("finished_at")
+  durationSeconds             Int?          @map("duration_seconds")
+  rawScore                    Int?          @map("raw_score")
+  maxRawScore                 Int?          @map("max_raw_score")
+  percent                     Decimal?      @db.Decimal(5, 2)
+  scaledScore                 Int?          @map("scaled_score")
+  maxScaledScore              Int?          @map("max_scaled_score")
+  level                       String?
+  testSnapshot                Json          @map("test_snapshot_json")
+  scoringSchemeSnapshot       Json?         @map("scoring_scheme_snapshot_json")
+  topicResults                Json?         @map("topic_results_json")
+  recommendations             Json?         @map("recommendations_json")
+  createdAt                   DateTime      @default(now()) @map("created_at")
+  updatedAt                   DateTime      @updatedAt @map("updated_at")
+
+  user    User     @relation("AttemptUser", fields: [userId], references: [id])
+  test    Test     @relation(fields: [testId], references: [id])
+  access  Access   @relation(fields: [accessId], references: [id])
+  answers Answer[]
+
+  @@index([userId])
+  @@index([testId])
+  @@index([accessId])
+  @@index([status])
+  @@index([startedAt])
+  @@map("attempts")
+}
+
+model Answer {
+  id                 String   @id @default(uuid()) @db.Uuid
+  attemptId          String   @map("attempt_id") @db.Uuid
+  questionId         String?  @map("question_id") @db.Uuid
+  snapshotQuestionId String?  @map("snapshot_question_id")
+  questionSnapshot   Json     @map("question_snapshot_json")
+  selectedAnswer     String?  @map("selected_answer")
+  isCorrect          Boolean? @map("is_correct")
+  pointsEarned       Int?     @map("points_earned")
+  maxPoints          Int      @map("max_points")
+  answeredAt         DateTime? @map("answered_at")
+  createdAt          DateTime @default(now()) @map("created_at")
+  updatedAt          DateTime @updatedAt @map("updated_at")
+
+  attempt  Attempt  @relation(fields: [attemptId], references: [id])
+  question Question? @relation(fields: [questionId], references: [id])
+
+  @@unique([attemptId, snapshotQuestionId])
+  @@index([attemptId])
+  @@index([questionId])
+  @@map("answers")
+}
+
+model ImportJob {
+  id          String          @id @default(uuid()) @db.Uuid
+  testId      String          @map("test_id") @db.Uuid
+  adminId     String          @map("admin_id") @db.Uuid
+  fileName    String          @map("file_name")
+  fileType    String          @map("file_type")
+  mode        ImportMode
+  status      ImportJobStatus @default(UPLOADED)
+  totalRows   Int?            @map("total_rows")
+  validRows   Int?            @map("valid_rows")
+  errorRows   Int?            @map("error_rows")
+  warningRows Int?            @map("warning_rows")
+  errors      Json?           @map("errors_json")
+  warnings    Json?           @map("warnings_json")
+  preview     Json?           @map("preview_json")
+  createdAt   DateTime        @default(now()) @map("created_at")
+  updatedAt   DateTime        @updatedAt @map("updated_at")
+  validatedAt DateTime?       @map("validated_at")
+  importedAt  DateTime?       @map("imported_at")
+
+  test  Test @relation(fields: [testId], references: [id])
+  admin User @relation("ImportJobAdmin", fields: [adminId], references: [id])
+
+  @@index([testId])
+  @@index([adminId])
+  @@index([status])
+  @@map("import_jobs")
+}
+
+model ManualAccessLog {
+  id            String   @id @default(uuid()) @db.Uuid
+  adminId       String   @map("admin_id") @db.Uuid
+  userId        String   @map("user_id") @db.Uuid
+  testId        String   @map("test_id") @db.Uuid
+  accessId      String   @map("access_id") @db.Uuid
+  attemptsTotal Int      @map("attempts_total")
+  accessDays    Int      @map("access_days")
+  comment       String?
+  createdAt     DateTime @default(now()) @map("created_at")
+
+  admin  User   @relation("ManualAccessAdmin", fields: [adminId], references: [id])
+  user   User   @relation("ManualAccessUser", fields: [userId], references: [id])
+  test   Test   @relation(fields: [testId], references: [id])
+  access Access @relation(fields: [accessId], references: [id])
+
+  @@index([adminId])
+  @@index([userId])
+  @@index([testId])
+  @@index([accessId])
+  @@map("manual_access_logs")
+}
+
+model EventLog {
+  id          String   @id @default(uuid()) @db.Uuid
+  actorUserId String?  @map("actor_user_id") @db.Uuid
+  eventType   String   @map("event_type")
+  entityType  String?  @map("entity_type")
+  entityId    String?  @map("entity_id") @db.Uuid
+  payload     Json?    @map("payload_json")
+  createdAt   DateTime @default(now()) @map("created_at")
+
+  actorUser User? @relation("EventLogActor", fields: [actorUserId], references: [id])
+
+  @@index([actorUserId])
+  @@index([eventType])
+  @@index([entityType, entityId])
+  @@index([createdAt])
+  @@map("event_logs")
+}
+
+model ScoringScheme {
+  id             String   @id @default(uuid()) @db.Uuid
+  name           String
+  subject        Subject
+  examType       String   @map("exam_type")
+  year           Int?
+  maxRawScore    Int      @map("max_raw_score")
+  maxScaledScore Int      @default(100) @map("max_scaled_score")
+  isActive       Boolean  @default(true) @map("is_active")
+  createdAt      DateTime @default(now()) @map("created_at")
+  updatedAt      DateTime @updatedAt @map("updated_at")
+
+  tests  Test[]
+  scales ScoringScale[]
+
+  @@index([subject])
+  @@index([examType])
+  @@index([isActive])
+  @@map("scoring_schemes")
+}
+
+model ScoringScale {
+  id              String   @id @default(uuid()) @db.Uuid
+  scoringSchemeId String   @map("scoring_scheme_id") @db.Uuid
+  rawScore        Int      @map("raw_score")
+  scaledScore     Int      @map("scaled_score")
+  createdAt       DateTime @default(now()) @map("created_at")
+  updatedAt       DateTime @updatedAt @map("updated_at")
+
+  scoringScheme ScoringScheme @relation(fields: [scoringSchemeId], references: [id])
+
+  @@unique([scoringSchemeId, rawScore])
+  @@index([scoringSchemeId])
+  @@map("scoring_scales")
+}
+
+model EmailLog {
+  id                String      @id @default(uuid()) @db.Uuid
+  userId            String?     @map("user_id") @db.Uuid
+  email             String
+  type              String
+  status            EmailStatus @default(PENDING)
+  subject           String
+  body              String?
+  provider          String?
+  providerMessageId String?     @map("provider_message_id")
+  errorMessage      String?     @map("error_message")
+  sentAt            DateTime?   @map("sent_at")
+  createdAt         DateTime    @default(now()) @map("created_at")
+  updatedAt         DateTime    @updatedAt @map("updated_at")
+
+  user User? @relation("EmailLogUser", fields: [userId], references: [id])
+
+  @@index([userId])
+  @@index([email])
+  @@index([status])
+  @@map("email_logs")
+}
