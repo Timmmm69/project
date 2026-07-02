@@ -1,4 +1,4 @@
-import type { Prisma, QuestionType, TestMode } from "@prisma/client";
+import type { Prisma, QuestionType, Subject, TestMode } from "@prisma/client";
 import { fromPrismaQuestionType, scoringRuleForQuestionType } from "@/lib/questions/enums";
 import { fromPrismaTestMode } from "@/lib/tests/enums";
 
@@ -25,6 +25,21 @@ type TestForSnapshot = {
   durationMinutes: number;
   maxRawScore: number;
   questions: QuestionForSnapshot[];
+  scoringScheme?: ScoringSchemeForSnapshot | null;
+};
+
+type ScoringSchemeForSnapshot = {
+  id: string;
+  name: string;
+  subject: Subject;
+  examType: string;
+  year: number | null;
+  maxRawScore: number;
+  maxScaledScore: number;
+  scales: Array<{
+    rawScore: number;
+    scaledScore: number;
+  }>;
 };
 
 export type SnapshotQuestion = {
@@ -55,6 +70,20 @@ export type TestSnapshot = {
   durationMinutes: number;
   maxRawScore: number;
   questions: SnapshotQuestion[];
+};
+
+export type ScoringSchemeSnapshot = {
+  scoringSchemeId: string;
+  name: string;
+  subject: "russian";
+  examType: string;
+  year: number | null;
+  maxRawScore: number;
+  maxScaledScore: number;
+  scale: Array<{
+    rawScore: number;
+    scaledScore: number;
+  }>;
 };
 
 function optionsFromQuestion(question: QuestionForSnapshot) {
@@ -94,8 +123,34 @@ export function buildTestSnapshot(test: TestForSnapshot): TestSnapshot {
   };
 }
 
+export function buildScoringSchemeSnapshot(test: TestForSnapshot): ScoringSchemeSnapshot | null {
+  if (!test.scoringScheme) {
+    return null;
+  }
+
+  return {
+    scoringSchemeId: test.scoringScheme.id,
+    name: test.scoringScheme.name,
+    subject: "russian",
+    examType: test.scoringScheme.examType,
+    year: test.scoringScheme.year,
+    maxRawScore: test.scoringScheme.maxRawScore,
+    maxScaledScore: test.scoringScheme.maxScaledScore,
+    scale: test.scoringScheme.scales
+      .map((scale) => ({
+        rawScore: scale.rawScore,
+        scaledScore: scale.scaledScore
+      }))
+      .sort((left, right) => left.rawScore - right.rawScore)
+  };
+}
+
 export function parseTestSnapshot(value: Prisma.JsonValue): TestSnapshot {
   return value as TestSnapshot;
+}
+
+export function parseScoringSchemeSnapshot(value: Prisma.JsonValue | null): ScoringSchemeSnapshot | null {
+  return value as ScoringSchemeSnapshot | null;
 }
 
 export function serializeQuestionForStudent(question: SnapshotQuestion) {

@@ -1,4 +1,4 @@
 export const scoringFeature = {
   name: "scoring",
-  sprint: 7
+  sprint: 8
 } as const;

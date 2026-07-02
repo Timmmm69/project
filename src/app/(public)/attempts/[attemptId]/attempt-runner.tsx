@@ -159,8 +159,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
       return;
     }
 
-    await loadAttempt();
-    setMessage("Тест завершён. Расчёт результатов будет добавлен в следующем модуле.");
+    window.location.href = body.data.resultUrl;
   }
 
   async function handleExpire() {
@@ -176,8 +175,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
       return;
     }
 
-    await loadAttempt();
-    setMessage("Время вышло. Попытка завершена.");
+    window.location.href = body.data.resultUrl;
   }
 
   if (!attempt) {
@@ -210,7 +208,9 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
       {isFinished ? (
         <section className="panel stack">
           <h2 className="section-title">Попытка завершена</h2>
-          <p className="muted">Ответы больше нельзя изменить. Результаты и scoring появятся в следующем этапе.</p>
+          <a className="button" href={`/results/${attemptId}`}>
+            Посмотреть результат
+          </a>
         </section>
       ) : null}
 

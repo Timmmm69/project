@@ -197,6 +197,18 @@ textarea {
   gap: 16px;
 }
 
+.cards-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 16px;
+}
+
+.metric-value {
+  margin: 0;
+  font-size: 28px;
+  line-height: 1.15;
+}
+
 .test-card {
   min-height: 260px;
   border: 1px solid var(--border);
@@ -350,6 +362,17 @@ th {
   width: auto;
 }
 
+.result-mistake {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: #fbfbfa;
+  padding: 16px;
+}
+
+.result-mistake p {
+  margin: 8px 0 0;
+}
+
 @media (max-width: 760px) {
   .toolbar {
     display: grid;
@@ -360,6 +383,7 @@ th {
   }
 
   .catalog-grid,
+  .cards-grid,
   .meta-grid,
   .meta-grid.wide {
     grid-template-columns: 1fr;

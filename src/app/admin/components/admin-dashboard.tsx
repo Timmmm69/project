@@ -103,6 +103,19 @@ type AccessCodeItem = {
   comment: string | null;
 };
 
+type AttemptItem = {
+  id: string;
+  email: string;
+  status: string;
+  startedAt: string;
+  finishedAt: string | null;
+  rawScore: number | null;
+  maxRawScore: number | null;
+  percent: number | null;
+  level: string | null;
+  scaledScore: number | null;
+};
+
 type ApiSuccess<T> = {
   success: true;
   data: T;
@@ -178,6 +191,7 @@ export function AdminDashboard() {
   const [payments, setPayments] = useState<PaymentItem[]>([]);
   const [accesses, setAccesses] = useState<AccessItem[]>([]);
   const [accessCodes, setAccessCodes] = useState<AccessCodeItem[]>([]);
+  const [attempts, setAttempts] = useState<AttemptItem[]>([]);
   const [manualAccessForm, setManualAccessForm] = useState(emptyManualAccessForm);
   const [accessCodeForm, setAccessCodeForm] = useState(emptyAccessCodeForm);
   const [createdCode, setCreatedCode] = useState<string | null>(null);
@@ -207,15 +221,17 @@ export function AdminDashboard() {
   }
 
   async function loadAdminAccessData(testId: string) {
-    const [paymentsResponse, accessesResponse, codesResponse] = await Promise.all([
+    const [paymentsResponse, accessesResponse, codesResponse, attemptsResponse] = await Promise.all([
       fetch(`/api/admin/payments?testId=${testId}&limit=20`),
       fetch(`/api/admin/accesses?testId=${testId}&limit=20`),
-      fetch(`/api/admin/access-codes?testId=${testId}&limit=20`)
+      fetch(`/api/admin/access-codes?testId=${testId}&limit=20`),
+      fetch(`/api/admin/attempts?testId=${testId}&limit=20`)
     ]);
-    const [paymentsBody, accessesBody, codesBody] = await Promise.all([
+    const [paymentsBody, accessesBody, codesBody, attemptsBody] = await Promise.all([
       readJson<{ items: PaymentItem[] }>(paymentsResponse),
       readJson<{ items: AccessItem[] }>(accessesResponse),
-      readJson<{ items: AccessCodeItem[] }>(codesResponse)
+      readJson<{ items: AccessCodeItem[] }>(codesResponse),
+      readJson<{ items: AttemptItem[] }>(attemptsResponse)
     ]);
 
     if (paymentsBody.success) {
@@ -226,6 +242,9 @@ export function AdminDashboard() {
     }
     if (codesBody.success) {
       setAccessCodes(codesBody.data.items);
+    }
+    if (attemptsBody.success) {
+      setAttempts(attemptsBody.data.items);
     }
   }
 
@@ -257,6 +276,7 @@ export function AdminDashboard() {
       setPayments([]);
       setAccesses([]);
       setAccessCodes([]);
+      setAttempts([]);
     }
   }, [selectedTestId]);
 
@@ -285,6 +305,7 @@ export function AdminDashboard() {
     setUser(null);
     setTests([]);
     setQuestions([]);
+    setAttempts([]);
     setSelectedTestId(null);
   }
 
@@ -1070,6 +1091,47 @@ export function AdminDashboard() {
                           {(paymentItem.amount / 100).toFixed(2)} {paymentItem.currency}
                         </td>
                         <td>{paymentItem.accessId ? "created" : "-"}</td>
+                      </tr>
+                    ))
+                  )}
+                </tbody>
+              </table>
+            </div>
+
+            <div className="table-wrap">
+              <table>
+                <thead>
+                  <tr>
+                    <th>Email</th>
+                    <th>Статус</th>
+                    <th>Балл</th>
+                    <th>Процент</th>
+                    <th>Уровень</th>
+                    <th>Детали</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {attempts.length === 0 ? (
+                    <tr>
+                      <td colSpan={6}>Попыток пока нет.</td>
+                    </tr>
+                  ) : (
+                    attempts.map((attemptItem) => (
+                      <tr key={attemptItem.id}>
+                        <td>{attemptItem.email}</td>
+                        <td>{attemptItem.status}</td>
+                        <td>
+                          {attemptItem.rawScore === null || attemptItem.maxRawScore === null
+                            ? "-"
+                            : `${attemptItem.rawScore} / ${attemptItem.maxRawScore}`}
+                        </td>
+                        <td>{attemptItem.percent === null ? "-" : `${attemptItem.percent.toFixed(1)}%`}</td>
+                        <td>{attemptItem.level ?? "-"}</td>
+                        <td>
+                          <a className="text-link" href={`/api/admin/attempts/${attemptItem.id}`} target="_blank">
+                            JSON
+                          </a>
+                        </td>
                       </tr>
                     ))
                   )}

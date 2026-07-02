@@ -1,6 +1,7 @@
 import { Prisma } from "@prisma/client";
 import { normalizeCorrectAnswer } from "@/lib/questions/normalization";
-import { buildTestSnapshot, parseTestSnapshot } from "@/lib/attempts/snapshot";
+import { buildScoringSchemeSnapshot, buildTestSnapshot, parseScoringSchemeSnapshot, parseTestSnapshot } from "@/lib/attempts/snapshot";
+import { scoreAttemptSnapshot } from "@/lib/scoring/scoring-engine";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
 
@@ -94,6 +95,11 @@ export async function startOrRestoreAttempt(input: {
           deletedAt: null
         },
         include: {
+          scoringScheme: {
+            include: {
+              scales: true
+            }
+          },
           questions: {
             where: { deletedAt: null },
             orderBy: { orderIndex: "asc" }
@@ -122,6 +128,7 @@ export async function startOrRestoreAttempt(input: {
       }
 
       const snapshot = buildTestSnapshot(test);
+      const scoringSchemeSnapshot = buildScoringSchemeSnapshot(test);
       return tx.attempt.create({
         data: {
           userId: input.studentId,
@@ -129,7 +136,8 @@ export async function startOrRestoreAttempt(input: {
           accessId: access.id,
           status: "STARTED",
           startedAt: now,
-          testSnapshot: snapshot as unknown as Prisma.InputJsonValue
+          testSnapshot: snapshot as unknown as Prisma.InputJsonValue,
+          scoringSchemeSnapshot: scoringSchemeSnapshot as unknown as Prisma.InputJsonValue
         },
         include: {
           answers: {
@@ -273,14 +281,113 @@ export async function completeAttempt(input: {
   }
 
   const finishedAt = now;
-  const updated = await prisma.attempt.update({
-    where: { id: attempt.id },
-    data: {
-      status: input.expire ? "EXPIRED" : "COMPLETED",
-      finishedAt,
-      durationSeconds: Math.max(0, Math.floor((finishedAt.getTime() - attempt.startedAt.getTime()) / 1000))
+  const completion = await prisma.$transaction(async (tx) => {
+    const attemptWithAnswers = await tx.attempt.findUnique({
+      where: { id: attempt.id },
+      include: {
+        answers: true
+      }
+    });
+
+    if (!attemptWithAnswers) {
+      throw new Error("ATTEMPT_NOT_FOUND");
     }
+    if (attemptWithAnswers.status !== "STARTED") {
+      return { attempt: attemptWithAnswers, transitioned: false };
+    }
+
+    const snapshotForScoring = parseTestSnapshot(attemptWithAnswers.testSnapshot);
+    const scoringSchemeSnapshot = parseScoringSchemeSnapshot(attemptWithAnswers.scoringSchemeSnapshot);
+    const scoringResult = scoreAttemptSnapshot(
+      snapshotForScoring,
+      attemptWithAnswers.answers.map((answer) => ({
+        snapshotQuestionId: answer.snapshotQuestionId,
+        selectedAnswer: answer.selectedAnswer
+      })),
+      scoringSchemeSnapshot
+    );
+
+    for (const answer of scoringResult.answers) {
+      await tx.answer.upsert({
+        where: {
+          attemptId_snapshotQuestionId: {
+            attemptId: attempt.id,
+            snapshotQuestionId: answer.snapshotQuestionId
+          }
+        },
+        create: {
+          attemptId: attempt.id,
+          questionId: answer.question.originalQuestionId,
+          snapshotQuestionId: answer.snapshotQuestionId,
+          questionSnapshot: answer.question as unknown as Prisma.InputJsonValue,
+          selectedAnswer: answer.selectedAnswer,
+          isCorrect: answer.isCorrect,
+          pointsEarned: answer.pointsEarned,
+          maxPoints: answer.maxPoints,
+          answeredAt: answer.selectedAnswer ? finishedAt : null
+        },
+        update: {
+          selectedAnswer: answer.selectedAnswer,
+          isCorrect: answer.isCorrect,
+          pointsEarned: answer.pointsEarned,
+          maxPoints: answer.maxPoints,
+          questionSnapshot: answer.question as unknown as Prisma.InputJsonValue
+        }
+      });
+    }
+
+    const statusUpdate = await tx.attempt.updateMany({
+      where: {
+        id: attempt.id,
+        status: "STARTED"
+      },
+      data: {
+        status: input.expire ? "EXPIRED" : "COMPLETED",
+        finishedAt,
+        durationSeconds: Math.max(0, Math.floor((finishedAt.getTime() - attempt.startedAt.getTime()) / 1000)),
+        rawScore: scoringResult.rawScore,
+        maxRawScore: scoringResult.maxRawScore,
+        percent: new Prisma.Decimal(scoringResult.percent),
+        scaledScore: scoringResult.scaledScore,
+        maxScaledScore: scoringResult.maxScaledScore,
+        level: scoringResult.level,
+        topicResults: scoringResult.topicResults as unknown as Prisma.InputJsonValue,
+        recommendations: scoringResult.recommendations as unknown as Prisma.InputJsonValue
+      }
+    });
+
+    const updatedAttempt = await tx.attempt.findUnique({
+      where: { id: attempt.id }
+    });
+
+    if (!updatedAttempt) {
+      throw new Error("ATTEMPT_NOT_FOUND");
+    }
+
+    return {
+      attempt: updatedAttempt,
+      transitioned: statusUpdate.count === 1
+    };
   });
+
+  const updated = completion.attempt;
+  if (!completion.transitioned) {
+    return updated;
+  }
+
+  const updatedSnapshot = parseTestSnapshot(updated.testSnapshot);
+  if (updatedSnapshot.mode === "ce_ct" && updated.scoringSchemeSnapshot && updated.scaledScore === null) {
+    await logEvent({
+      eventType: "scoring_scaled_score_missing",
+      actorUserId: input.studentId,
+      entityType: "attempt",
+      entityId: attempt.id,
+      payload: {
+        testId: attempt.testId,
+        rawScore: updated.rawScore
+      }
+    });
+  }
 
   await logEvent({
     eventType: input.expire ? "attempt_expired" : "attempt_completed",
