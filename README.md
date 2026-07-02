@@ -10,6 +10,10 @@ Phase 6 Payments, Accesses And Access Codes is complete with mock payments. Repo
 
 Phase 7 Attempt Runtime is complete. Report: `docs/18-phase-7-attempt-runtime-report.md`.
 
+Phase 8 Scoring And Results is complete. Report: `docs/19-phase-8-scoring-results-report.md`.
+
+Phase 9 QA Hardening is complete. Report: `docs/20-phase-9-qa-hardening-report.md`.
+
 MVP веб-сервиса для продажи онлайн-тестов по русскому языку для подготовки к ЦЭ/ЦТ.
 
 Главный источник истины: `docs/00-final-mvp-spec-v2.md`.

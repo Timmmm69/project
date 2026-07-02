@@ -60,8 +60,8 @@ function statusText(result: AccessCheckResult | null) {
   }
 
   const values: Record<AccessStatus, string> = {
-    can_start: "Доступ найден. В следующем этапе здесь будет старт теста.",
-    continue_attempt: "У вас уже есть начатая попытка. В следующем этапе здесь будет продолжение теста.",
+    can_start: "Доступ найден. Можно начать тест.",
+    continue_attempt: "У вас уже есть начатая попытка. Можно продолжить тест.",
     no_access: "Для этого email пока нет доступа к тесту.",
     expired: "Доступ для этого email истёк.",
     revoked: "Доступ для этого email был отозван.",
