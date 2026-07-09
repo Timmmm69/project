@@ -4,6 +4,7 @@ import { MAX_IMPORT_FILE_SIZE_BYTES } from "@/lib/imports/template";
 import { detectImportFileType, parseCsvImport, parseXlsxImport } from "@/lib/imports/parse";
 import { serializeImportJob } from "@/lib/imports/serialize";
 import { validateImportRows } from "@/lib/imports/validation";
+import { fromPrismaExamMode } from "@/lib/tests/enums";
 import { uuidSchema } from "@/lib/validation/schemas";
 import { prisma } from "@/server/db/client";
 import { requireAdmin } from "@/server/auth/session";
@@ -49,7 +50,7 @@ export async function POST(request: Request, context: RouteContext) {
 
   const test = await prisma.test.findFirst({
     where: { id: parsedTestId.data, deletedAt: null },
-    select: { id: true }
+    select: { id: true, examMode: true }
   });
   if (!test) {
     return apiFailure({ code: "NOT_FOUND", message: "Test not found" }, 404);
@@ -75,7 +76,8 @@ export async function POST(request: Request, context: RouteContext) {
     const validation = validateImportRows({
       header: parsedFile.parsed.header,
       rows: parsedFile.parsed.rows,
-      parseErrors: parsedFile.parsed.errors
+      parseErrors: parsedFile.parsed.errors,
+      examMode: fromPrismaExamMode(test.examMode)
     });
 
     const job = await prisma.importJob.create({

@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { parse as parseCsvSync } from "csv-parse/sync";
 import { mapRecordToImportRow } from "@/lib/imports/validation";
-import { IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
+import { AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, GENERIC_IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
 import type { ImportError, ImportFileType, ImportRawRow } from "@/lib/imports/types";
 
 type ParsedSheet = {
@@ -39,6 +39,10 @@ function nonEmptyRecord(record: string[]) {
   return record.some((value) => value.trim().length > 0);
 }
 
+function columnsFromHeader(header: string[]) {
+  return header[0]?.trim() === "exam_mode" ? AUTHENTIC_IMPORT_TEMPLATE_COLUMNS : GENERIC_IMPORT_TEMPLATE_COLUMNS;
+}
+
 export function detectImportFileType(fileName: string): ImportFileType | null {
   const normalized = fileName.toLowerCase();
   if (normalized.endsWith(".csv")) {
@@ -58,11 +62,12 @@ export function parseCsvImport(buffer: Uint8Array): ParsedSheet {
   }) as string[][];
 
   const header = (records[0] ?? []).map((value) => String(value).trim());
+  const columns = columnsFromHeader(header);
   const rows = records
     .slice(1)
     .map((record, index) => ({ record: record.map((value) => String(value ?? "")), rowNumber: index + 2 }))
     .filter(({ record }) => nonEmptyRecord(record))
-    .map(({ record, rowNumber }) => mapRecordToImportRow(rowNumber, record));
+    .map(({ record, rowNumber }) => mapRecordToImportRow(rowNumber, record, columns));
 
   return { header, rows, errors: [] };
 }
@@ -83,7 +88,7 @@ export async function parseXlsxImport(buffer: Uint8Array): Promise<ParsedSheet> 
   }
 
   const errors: ImportError[] = [];
-  const width = Math.max(IMPORT_TEMPLATE_COLUMNS.length, worksheet.columnCount);
+  const width = Math.max(AUTHENTIC_IMPORT_TEMPLATE_COLUMNS.length, worksheet.columnCount);
   const readRow = (rowNumber: number) => {
     const row = worksheet.getRow(rowNumber);
     const values: string[] = [];
@@ -92,7 +97,7 @@ export async function parseXlsxImport(buffer: Uint8Array): Promise<ParsedSheet> 
       if (isFormulaCell(cell.value)) {
         errors.push({
           rowNumber,
-          field: column <= IMPORT_TEMPLATE_COLUMNS.length ? IMPORT_TEMPLATE_COLUMNS[column - 1] : "file",
+          field: column <= AUTHENTIC_IMPORT_TEMPLATE_COLUMNS.length ? AUTHENTIC_IMPORT_TEMPLATE_COLUMNS[column - 1] : "file",
           code: "FORMULA_NOT_ALLOWED",
           message: "Формулы в импортируемом файле не разрешены."
         });
@@ -103,11 +108,12 @@ export async function parseXlsxImport(buffer: Uint8Array): Promise<ParsedSheet> 
   };
 
   const header = readRow(1).map((value) => value.trim());
+  const columns = columnsFromHeader(header);
   const rows: ImportRawRow[] = [];
   for (let rowNumber = 2; rowNumber <= worksheet.rowCount; rowNumber += 1) {
     const record = readRow(rowNumber);
     if (nonEmptyRecord(record)) {
-      rows.push(mapRecordToImportRow(rowNumber, record));
+      rows.push(mapRecordToImportRow(rowNumber, record, columns));
     }
   }
 

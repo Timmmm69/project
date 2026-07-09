@@ -1,7 +1,12 @@
 import ExcelJS from "exceljs";
-import { buildCsvTemplate, IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
+import { AUTHENTIC_IMPORT_EXAMPLE_ROWS, buildCsvTemplate, columnsForImportTemplate, type ImportTemplateMode } from "@/lib/imports/template";
 import { apiFailure } from "@/lib/api-response";
 import { requireAdmin } from "@/server/auth/session";
+
+function templateModeFromRequest(request: Request): ImportTemplateMode {
+  const examMode = new URL(request.url).searchParams.get("examMode");
+  return examMode === "rikz_russian_2026" ? "rikz_russian_2026" : "generic";
+}
 
 export async function GET(request: Request) {
   const admin = await requireAdmin();
@@ -9,13 +14,16 @@ export async function GET(request: Request) {
     return apiFailure({ code: "UNAUTHORIZED", message: "Admin login required" }, 401);
   }
 
-  const format = new URL(request.url).searchParams.get("format") ?? "xlsx";
+  const url = new URL(request.url);
+  const format = url.searchParams.get("format") ?? "xlsx";
+  const templateMode = templateModeFromRequest(request);
+  const columns = columnsForImportTemplate(templateMode);
 
   if (format === "csv") {
-    return new Response(buildCsvTemplate(), {
+    return new Response(buildCsvTemplate(templateMode), {
       headers: {
         "Content-Type": "text/csv; charset=utf-8",
-        "Content-Disposition": 'attachment; filename="questions-import-template.csv"'
+        "Content-Disposition": `attachment; filename="${templateMode}-questions-import-template.csv"`
       }
     });
   }
@@ -26,9 +34,14 @@ export async function GET(request: Request) {
 
   const workbook = new ExcelJS.Workbook();
   const worksheet = workbook.addWorksheet("questions");
-  worksheet.addRow([...IMPORT_TEMPLATE_COLUMNS]);
+  worksheet.addRow([...columns]);
+  if (templateMode === "rikz_russian_2026") {
+    for (const row of AUTHENTIC_IMPORT_EXAMPLE_ROWS) {
+      worksheet.addRow(columns.map((column) => row[column] ?? ""));
+    }
+  }
   worksheet.getRow(1).font = { bold: true };
-  worksheet.columns = IMPORT_TEMPLATE_COLUMNS.map((header) => ({
+  worksheet.columns = columns.map((header) => ({
     header,
     key: header,
     width: Math.max(header.length + 4, 18)
@@ -38,7 +51,7 @@ export async function GET(request: Request) {
   return new Response(buffer, {
     headers: {
       "Content-Type": "application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-      "Content-Disposition": 'attachment; filename="questions-import-template.xlsx"'
+      "Content-Disposition": `attachment; filename="${templateMode}-questions-import-template.xlsx"`
     }
   });
 }

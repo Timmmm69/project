@@ -32,6 +32,19 @@ class ImportJobAlreadyCommittedError extends Error {
   }
 }
 
+function toPrismaResponseSubtype(subtype: ImportPreviewQuestion["responseSubtype"]) {
+  if (subtype === "digits") {
+    return "DIGITS" as const;
+  }
+  if (subtype === "alnum") {
+    return "ALNUM" as const;
+  }
+  if (subtype === "word") {
+    return "WORD" as const;
+  }
+  return null;
+}
+
 export async function POST(_request: Request, context: RouteContext) {
   const admin = await requireAdmin();
   if (!admin) {
@@ -107,6 +120,7 @@ export async function POST(_request: Request, context: RouteContext) {
           optionB: question.optionB,
           optionC: question.optionC,
           optionD: question.optionD,
+          optionE: question.optionE,
           correctAnswer: question.correctAnswer,
           topic: question.topic,
           subtopic: question.subtopic,
@@ -115,6 +129,10 @@ export async function POST(_request: Request, context: RouteContext) {
           scoringRule: scoringRuleForQuestionType(question.questionType),
           explanation: question.explanation,
           source: question.source,
+          officialPart: question.officialPart,
+          officialNumber: question.officialNumber,
+          responseSubtype: toPrismaResponseSubtype(question.responseSubtype),
+          acceptedAnswers: question.acceptedAnswers as Prisma.InputJsonValue | undefined,
           orderIndex: startOrder + index + 1
         }))
       });
