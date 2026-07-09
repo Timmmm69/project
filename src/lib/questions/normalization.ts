@@ -36,12 +36,19 @@ export function normalizeShortTextAnswer(answer: string) {
   ).join(";");
 }
 
+export function normalizeShortAnswerTokenAnswer(answer: string) {
+  return answer.trim().normalize("NFC").toLocaleLowerCase("ru");
+}
+
 export function normalizeCorrectAnswer(type: MvpQuestionType, answer: string) {
   if (type === "single_choice") {
     return normalizeSingleChoiceAnswer(answer);
   }
   if (type === "multiple_choice" || type === "multi_select_five") {
     return normalizeMultipleChoiceAnswer(answer);
+  }
+  if (type === "short_answer_token") {
+    return normalizeShortAnswerTokenAnswer(answer);
   }
   return normalizeShortTextAnswer(answer);
 }

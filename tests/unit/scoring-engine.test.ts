@@ -70,6 +70,55 @@ const rikz2026Scale: ScoringSchemeSnapshot = {
   ]
 };
 
+const authenticPartAQuestion: TestSnapshot["questions"][number] = {
+  snapshotQuestionId: "a_1",
+  originalQuestionId: "question-a1",
+  orderIndex: 1,
+  questionText: "Part A",
+  questionType: "multi_select_five",
+  options: { A: "A", B: "B", C: "C", D: "D", E: "E" },
+  correctAnswer: "A,C",
+  topic: "Орфография",
+  subtopic: null,
+  points: 2,
+  scoringRule: "full_match",
+  explanation: null,
+  officialPart: "A",
+  officialNumber: 1
+};
+
+const authenticPartBQuestion: TestSnapshot["questions"][number] = {
+  snapshotQuestionId: "b_1",
+  originalQuestionId: "question-b1",
+  orderIndex: 1,
+  questionText: "Part B",
+  questionType: "short_answer_token",
+  options: {},
+  correctAnswer: "ёж",
+  topic: "Лексика",
+  subtopic: null,
+  points: 2,
+  scoringRule: "exact_text",
+  explanation: null,
+  officialPart: "B",
+  officialNumber: 1,
+  responseSubtype: "word",
+  acceptedAnswers: ["ёж"]
+};
+
+function authenticSnapshot(question: TestSnapshot["questions"][number], maxRawScore = question.points): TestSnapshot {
+  return {
+    testId: "rikz-test",
+    title: "RIKZ Russian 2026",
+    subject: "russian",
+    mode: "ce_ct",
+    examMode: "rikz_russian_2026",
+    durationMinutes: 120,
+    maxRawScore,
+    questions: [question]
+  };
+}
+
 describe("scoreAttemptSnapshot", () => {
   it("scores exact matches and short text alternatives", () => {
     const result = scoreAttemptSnapshot(
@@ -187,5 +236,178 @@ describe("scoreAttemptSnapshot", () => {
     expect(result.rawScore).toBe(80);
     expect(result.scaledScore).toBe(100);
     expect(result.maxScaledScore).toBe(100);
+  });
+
+  it("keeps generic multiple choice scoring unchanged", () => {
+    const result = scoreAttemptSnapshot(
+      baseSnapshot,
+      [{ snapshotQuestionId: "q_2", selectedAnswer: "A" }],
+      null
+    );
+
+    const multipleAnswer = result.answers.find((answer) => answer.snapshotQuestionId === "q_2");
+    expect(multipleAnswer?.pointsEarned).toBe(1);
+  });
+
+  it("scores authentic Part A exact match as two points regardless of answer order", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "C,A" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(2);
+    expect(result.answers[0]?.isCorrect).toBe(true);
+  });
+
+  it("scores authentic Part A with spaces and lowercase letters", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: " a , c " }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(2);
+    expect(result.answers[0]?.isCorrect).toBe(true);
+  });
+
+  it("scores authentic Part A one missing answer as one point", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "A" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(1);
+  });
+
+  it("scores authentic Part A one extra answer as one point", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "A,C,D" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(1);
+  });
+
+  it("scores authentic Part A two errors as zero points", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "B,D" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(0);
+  });
+
+  it("scores authentic Part A invalid selected option as an extra error without crashing", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "A,F" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(0);
+    expect(result.answers[0]?.isCorrect).toBe(false);
+  });
+
+  it("scores authentic Part A blank answer as zero points", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(0);
+  });
+
+  it("scores authentic Part A null answer as zero points", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartAQuestion),
+      [{ snapshotQuestionId: "a_1", selectedAnswer: null }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(0);
+    expect(result.answers[0]?.isCorrect).toBe(false);
+  });
+
+  it("scores authentic Part B exact word match as full points", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartBQuestion),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "ёж" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(2);
+    expect(result.answers[0]?.isCorrect).toBe(true);
+  });
+
+  it("scores authentic Part B case-insensitive match", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartBQuestion),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "ЁЖ" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(2);
+  });
+
+  it("does not replace ё with е automatically for authentic Part B", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartBQuestion),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "еж" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(0);
+  });
+
+  it("supports alternate accepted answers for authentic Part B", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot({
+        ...authenticPartBQuestion,
+        correctAnswer: "лес",
+        acceptedAnswers: ["лес", "леса"]
+      }),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "ЛЕСА" }],
+      null
+    );
+
+    expect(result.answers[0]?.pointsEarned).toBe(2);
+  });
+
+  it("maps authentic scaled score through lookup for full 80 raw score", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot({ ...authenticPartBQuestion, points: 80, acceptedAnswers: ["ok"], correctAnswer: "ok" }, 80),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "ok" }],
+      rikz2026Scale
+    );
+
+    expect(result.rawScore).toBe(80);
+    expect(result.scaledScore).toBe(100);
+  });
+
+  it("does not map authentic scaled score when maxRawScore is not 80", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot(authenticPartBQuestion, 2),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "ёж" }],
+      rikz2026Scale
+    );
+
+    expect(result.scaledScore).toBeNull();
+    expect(result.maxScaledScore).toBeNull();
+  });
+
+  it("does not map authentic scaled score without scoring scheme snapshot", () => {
+    const result = scoreAttemptSnapshot(
+      authenticSnapshot({ ...authenticPartBQuestion, points: 80 }, 80),
+      [{ snapshotQuestionId: "b_1", selectedAnswer: "ёж" }],
+      null
+    );
+
+    expect(result.scaledScore).toBeNull();
+    expect(result.maxScaledScore).toBeNull();
   });
 });

@@ -1,5 +1,9 @@
 import type { ScoringSchemeSnapshot, SnapshotQuestion, TestSnapshot } from "@/lib/attempts/snapshot";
-import { normalizeCorrectAnswer, parseMultipleChoiceLetters } from "@/lib/questions/normalization";
+import {
+  normalizeCorrectAnswer,
+  normalizeShortAnswerTokenAnswer,
+  parseMultipleChoiceLetters
+} from "@/lib/questions/normalization";
 
 export type TopicStatus = "weak" | "requires_review" | "normal";
 
@@ -118,6 +122,56 @@ function scoreQuestion(question: SnapshotQuestion, selectedAnswer: string | null
   };
 }
 
+function acceptedAnswerTokens(question: SnapshotQuestion) {
+  const accepted = question.acceptedAnswers;
+  if (Array.isArray(accepted)) {
+    return accepted
+      .filter((item): item is string => typeof item === "string")
+      .map(normalizeShortAnswerTokenAnswer)
+      .filter(Boolean);
+  }
+  if (typeof accepted === "string") {
+    return [normalizeShortAnswerTokenAnswer(accepted)].filter(Boolean);
+  }
+  return [question.correctAnswer].map(normalizeShortAnswerTokenAnswer).filter(Boolean);
+}
+
+// Authentic Russian CE/CT snapshot format:
+// Part A uses `correctAnswer` as an A-E set string, e.g. "A,C".
+// Part B uses `acceptedAnswers` as the token list, e.g. ["ёж", "ежи"].
+export function rikzRussian2026Scoring(question: SnapshotQuestion, selectedAnswer: string | null) {
+  if (!selectedAnswer) {
+    return {
+      isCorrect: false,
+      pointsEarned: 0
+    };
+  }
+
+  if (question.questionType === "multi_select_five") {
+    const correct = parseMultipleChoiceLetters(question.correctAnswer);
+    const selected = parseMultipleChoiceLetters(selectedAnswer);
+    const diffSize = symmetricDifferenceSize(correct, selected);
+
+    return {
+      isCorrect: diffSize === 0,
+      pointsEarned: diffSize === 0 ? 2 : diffSize === 1 ? 1 : 0
+    };
+  }
+
+  if (question.questionType === "short_answer_token") {
+    const normalizedSelected = normalizeShortAnswerTokenAnswer(selectedAnswer);
+    const accepted = acceptedAnswerTokens(question);
+    const isCorrect = accepted.includes(normalizedSelected);
+
+    return {
+      isCorrect,
+      pointsEarned: isCorrect ? question.points : 0
+    };
+  }
+
+  return scoreQuestion(question, selectedAnswer);
+}
+
 export function getResultLevel(percent: number) {
   if (percent < 40) {
     return "низкий";
@@ -227,10 +281,14 @@ function findScaledScore(rawScore: number, scoringSchemeSnapshot: ScoringSchemeS
   };
 }
 
+// Scaled score is intentionally read only from the attempt's scoring scheme snapshot.
+// It must not be recomputed from mutable current ScoringScheme rows after an attempt starts.
 function canUseScaledScore(snapshot: TestSnapshot, scoringSchemeSnapshot: ScoringSchemeSnapshot | null) {
+  const isRikzRussian2026 = snapshot.examMode === "rikz_russian_2026";
   return (
-    snapshot.mode === "ce_ct" &&
+    (isRikzRussian2026 || snapshot.mode === "ce_ct") &&
     snapshot.maxRawScore === 80 &&
+    Boolean(scoringSchemeSnapshot?.scoringSchemeId) &&
     scoringSchemeSnapshot?.subject === "russian" &&
     scoringSchemeSnapshot.examType === "ce_ct" &&
     scoringSchemeSnapshot.year === 2026 &&
@@ -252,7 +310,10 @@ export function scoreAttemptSnapshot(
 
   const scoredAnswers = snapshot.questions.map((question) => {
     const selectedAnswer = normalizeStudentAnswer(question, answerByQuestion.get(question.snapshotQuestionId) ?? null);
-    const score = scoreQuestion(question, selectedAnswer);
+    const score =
+      snapshot.examMode === "rikz_russian_2026"
+        ? rikzRussian2026Scoring(question, selectedAnswer)
+        : scoreQuestion(question, selectedAnswer);
     return {
       snapshotQuestionId: question.snapshotQuestionId,
       question,
