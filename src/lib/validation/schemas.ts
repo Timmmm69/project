@@ -1,10 +1,12 @@
 import { z } from "zod";
-import { MVP_DEFAULTS, QUESTION_TYPES, TEST_MODES, TEST_STATUSES } from "@/lib/mvp-constants";
+import { EXAM_MODES, MVP_DEFAULTS, QUESTION_TYPES, TEST_MODES, TEST_STATUSES } from "@/lib/mvp-constants";
 import { normalizedEmailSchema } from "@/lib/validation/email";
 
 export const subjectSchema = z.literal(MVP_DEFAULTS.subject);
 
 export const testModeSchema = z.enum(TEST_MODES);
+
+export const examModeSchema = z.enum(EXAM_MODES);
 
 export const testStatusSchema = z.enum(TEST_STATUSES);
 

@@ -43,3 +43,20 @@
 - До Sprint 8 подготовить 1-3 реальных теста и чеклист проверки.
 - До Sprint 4 утвердить способ защиты публичных student/attempt/result endpoints без личного кабинета ученика.
 - До Sprint 3 проверить XLSX/CSV шаблон на одном реальном тесте.
+
+## RIKZ Russian 2026 Authentic Mode
+
+The approved pre-migration mapping for `examMode = rikz_russian_2026` is recorded in
+`docs/24-rikz-russian-2026-schema-mapping.md`.
+
+Key decisions:
+
+- Keep generic MVP behavior and legacy question types.
+- Add authentic Russian CE/CT mode as a separate layer.
+- Reuse `points`, `scoringSchemeId`, and `source`.
+- Do not add duplicate `maxPoints`, `scoringScaleId`, `sourceRef`, or `canonicalTaskType` fields in P0.
+- Use lookup-only scaled score through `ScoringScheme` and `ScoringScale`.
+
+Open before migration:
+
+- Approve the exact Prisma migration shape from `docs/24-rikz-russian-2026-schema-mapping.md`.

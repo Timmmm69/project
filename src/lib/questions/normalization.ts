@@ -1,8 +1,8 @@
 import type { MvpQuestionType } from "@/lib/questions/enums";
 
-const OPTION_LETTERS = ["A", "B", "C", "D"] as const;
+const AUTHENTIC_OPTION_LETTERS = ["A", "B", "C", "D", "E"] as const;
 
-export type OptionLetter = (typeof OPTION_LETTERS)[number];
+export type AuthenticOptionLetter = (typeof AUTHENTIC_OPTION_LETTERS)[number];
 
 export function normalizeSingleChoiceAnswer(answer: string) {
   return answer.trim().toUpperCase();
@@ -17,7 +17,11 @@ export function normalizeMultipleChoiceAnswer(answer: string) {
         .filter(Boolean)
     )
   )
-    .sort((left, right) => OPTION_LETTERS.indexOf(left as OptionLetter) - OPTION_LETTERS.indexOf(right as OptionLetter))
+    .sort(
+      (left, right) =>
+        AUTHENTIC_OPTION_LETTERS.indexOf(left as AuthenticOptionLetter) -
+        AUTHENTIC_OPTION_LETTERS.indexOf(right as AuthenticOptionLetter)
+    )
     .join(",");
 }
 
@@ -36,14 +40,14 @@ export function normalizeCorrectAnswer(type: MvpQuestionType, answer: string) {
   if (type === "single_choice") {
     return normalizeSingleChoiceAnswer(answer);
   }
-  if (type === "multiple_choice") {
+  if (type === "multiple_choice" || type === "multi_select_five") {
     return normalizeMultipleChoiceAnswer(answer);
   }
   return normalizeShortTextAnswer(answer);
 }
 
-export function isOptionLetter(value: string): value is OptionLetter {
-  return OPTION_LETTERS.includes(value as OptionLetter);
+export function isOptionLetter(value: string): value is AuthenticOptionLetter {
+  return AUTHENTIC_OPTION_LETTERS.includes(value as AuthenticOptionLetter);
 }
 
 export function parseMultipleChoiceLetters(answer: string) {

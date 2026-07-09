@@ -27,6 +27,13 @@ enum TestMode {
   @@map("test_mode")
 }
 
+enum ExamMode {
+  GENERIC           @map("generic")
+  RIKZ_RUSSIAN_2026 @map("rikz_russian_2026")
+
+  @@map("exam_mode")
+}
+
 enum TestStatus {
   DRAFT     @map("draft")
   PUBLISHED @map("published")
@@ -37,11 +44,28 @@ enum TestStatus {
 }
 
 enum QuestionType {
-  SINGLE_CHOICE   @map("single_choice")
-  MULTIPLE_CHOICE @map("multiple_choice")
-  SHORT_TEXT      @map("short_text")
+  SINGLE_CHOICE      @map("single_choice")
+  MULTIPLE_CHOICE    @map("multiple_choice")
+  SHORT_TEXT         @map("short_text")
+  MULTI_SELECT_FIVE  @map("multi_select_five")
+  SHORT_ANSWER_TOKEN @map("short_answer_token")
 
   @@map("question_type")
+}
+
+enum OfficialPart {
+  A @map("A")
+  B @map("B")
+
+  @@map("official_part")
+}
+
+enum ResponseSubtype {
+  WORD   @map("word")
+  DIGITS @map("digits")
+  ALNUM  @map("alnum")
+
+  @@map("response_subtype")
 }
 
 enum Difficulty {
@@ -53,8 +77,8 @@ enum Difficulty {
 }
 
 enum ScoringRule {
-  FULL_MATCH    @map("full_match")
-  EXACT_TEXT    @map("exact_text")
+  FULL_MATCH @map("full_match")
+  EXACT_TEXT @map("exact_text")
 
   @@map("scoring_rule")
 }
@@ -134,29 +158,29 @@ enum EmailStatus {
 }
 
 model User {
-  id           String   @id @default(uuid()) @db.Uuid
-  email        String   @unique
+  id           String    @id @default(uuid()) @db.Uuid
+  email        String    @unique
   name         String?
-  role         UserRole @default(STUDENT)
-  passwordHash String?  @map("password_hash")
-  createdAt    DateTime @default(now()) @map("created_at")
-  updatedAt    DateTime @updatedAt @map("updated_at")
+  role         UserRole  @default(STUDENT)
+  passwordHash String?   @map("password_hash")
+  createdAt    DateTime  @default(now()) @map("created_at")
+  updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
 
-  payments                 Payment[]         @relation("PaymentUser")
-  accesses                 Access[]          @relation("AccessUser")
-  attempts                 Attempt[]         @relation("AttemptUser")
-  createdTests             Test[]            @relation("TestCreatedByAdmin")
-  createdAccesses          Access[]          @relation("AccessCreatedByAdmin")
-  revokedAccesses          Access[]          @relation("AccessRevokedByAdmin")
-  createdAccessCodes       AccessCode[]      @relation("AccessCodeCreatedByAdmin")
-  activatedAccessCodes     AccessCode[]      @relation("AccessCodeActivatedByUser")
-  revokedAccessCodes       AccessCode[]      @relation("AccessCodeRevokedByAdmin")
-  importJobs               ImportJob[]       @relation("ImportJobAdmin")
-  manualAccessAdminLogs    ManualAccessLog[] @relation("ManualAccessAdmin")
-  manualAccessUserLogs     ManualAccessLog[] @relation("ManualAccessUser")
-  eventLogs                EventLog[]        @relation("EventLogActor")
-  emailLogs                EmailLog[]        @relation("EmailLogUser")
+  payments              Payment[]         @relation("PaymentUser")
+  accesses              Access[]          @relation("AccessUser")
+  attempts              Attempt[]         @relation("AttemptUser")
+  createdTests          Test[]            @relation("TestCreatedByAdmin")
+  createdAccesses       Access[]          @relation("AccessCreatedByAdmin")
+  revokedAccesses       Access[]          @relation("AccessRevokedByAdmin")
+  createdAccessCodes    AccessCode[]      @relation("AccessCodeCreatedByAdmin")
+  activatedAccessCodes  AccessCode[]      @relation("AccessCodeActivatedByUser")
+  revokedAccessCodes    AccessCode[]      @relation("AccessCodeRevokedByAdmin")
+  importJobs            ImportJob[]       @relation("ImportJobAdmin")
+  manualAccessAdminLogs ManualAccessLog[] @relation("ManualAccessAdmin")
+  manualAccessUserLogs  ManualAccessLog[] @relation("ManualAccessUser")
+  eventLogs             EventLog[]        @relation("EventLogActor")
+  emailLogs             EmailLog[]        @relation("EmailLogUser")
 
   @@index([role])
   @@map("users")
@@ -168,6 +192,9 @@ model Test {
   slug                String     @unique
   subject             Subject    @default(RUSSIAN)
   mode                TestMode   @default(TRAINING)
+  examMode            ExamMode   @default(GENERIC) @map("exam_mode")
+  subjectCode         String?    @map("subject_code")
+  officialYear        Int?       @map("official_year")
   shortDescription    String?    @map("short_description")
   fullDescription     String?    @map("full_description")
   price               Int
@@ -190,8 +217,8 @@ model Test {
   updatedAt           DateTime   @updatedAt @map("updated_at")
   deletedAt           DateTime?  @map("deleted_at")
 
-  createdByAdmin User?          @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  scoringScheme  ScoringScheme? @relation(fields: [scoringSchemeId], references: [id])
+  createdByAdmin User?             @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  scoringScheme  ScoringScheme?    @relation(fields: [scoringSchemeId], references: [id])
   questions      Question[]
   payments       Payment[]
   accesses       Access[]
@@ -203,30 +230,40 @@ model Test {
   @@index([status])
   @@index([subject])
   @@index([mode])
+  @@index([examMode])
   @@map("tests")
 }
 
 model Question {
-  id            String       @id @default(uuid()) @db.Uuid
-  testId        String       @map("test_id") @db.Uuid
-  questionText  String       @map("question_text")
-  questionType  QuestionType @map("question_type")
-  optionA       String?      @map("option_a")
-  optionB       String?      @map("option_b")
-  optionC       String?      @map("option_c")
-  optionD       String?      @map("option_d")
-  correctAnswer String       @map("correct_answer")
-  topic         String
-  subtopic      String?
-  difficulty    Difficulty?  @default(MEDIUM)
-  points        Int          @default(1)
-  scoringRule   ScoringRule  @default(FULL_MATCH) @map("scoring_rule")
-  explanation   String?
-  source        String?
-  orderIndex    Int          @map("order_index")
-  createdAt     DateTime     @default(now()) @map("created_at")
-  updatedAt     DateTime     @updatedAt @map("updated_at")
-  deletedAt     DateTime?    @map("deleted_at")
+  id                  String           @id @default(uuid()) @db.Uuid
+  testId              String           @map("test_id") @db.Uuid
+  questionText        String           @map("question_text")
+  questionType        QuestionType     @map("question_type")
+  optionA             String?          @map("option_a")
+  optionB             String?          @map("option_b")
+  optionC             String?          @map("option_c")
+  optionD             String?          @map("option_d")
+  optionE             String?          @map("option_e")
+  correctAnswer       String           @map("correct_answer")
+  topic               String
+  subtopic            String?
+  difficulty          Difficulty?      @default(MEDIUM)
+  points              Int              @default(1)
+  scoringRule         ScoringRule      @default(FULL_MATCH) @map("scoring_rule")
+  explanation         String?
+  source              String?
+  officialPart        OfficialPart?    @map("official_part")
+  officialNumber      Int?             @map("official_number")
+  responseSubtype     ResponseSubtype? @map("response_subtype")
+  partialPolicy       String?          @map("partial_policy")
+  acceptedAnswers     Json?            @map("accepted_answers_json")
+  normalizationPolicy Json?            @map("normalization_policy_json")
+  expertReviewerName  String?          @map("expert_reviewer_name")
+  expertReviewedAt    DateTime?        @map("expert_reviewed_at")
+  orderIndex          Int              @map("order_index")
+  createdAt           DateTime         @default(now()) @map("created_at")
+  updatedAt           DateTime         @updatedAt @map("updated_at")
+  deletedAt           DateTime?        @map("deleted_at")
 
   test    Test     @relation(fields: [testId], references: [id])
   answers Answer[]
@@ -234,38 +271,40 @@ model Question {
   @@index([testId])
   @@index([topic])
   @@index([testId, orderIndex])
+  @@index([testId, officialPart, officialNumber])
+  @@index([questionType])
   @@map("questions")
 }
 
 model Payment {
-  id                         String          @id @default(uuid()) @db.Uuid
-  userId                     String          @map("user_id") @db.Uuid
-  testId                     String          @map("test_id") @db.Uuid
-  amount                     Int
-  currency                   String          @default("BYN")
-  status                     PaymentStatus   @default(PENDING)
-  provider                   PaymentProvider
-  providerPaymentId          String?         @map("provider_payment_id")
-  providerInvoiceId          String?         @map("provider_invoice_id")
-  providerAccountNumber      String?         @map("provider_account_number")
-  paymentUrl                 String?         @map("payment_url")
-  qrCodeUrl                  String?         @map("qr_code_url")
-  qrCodePayload              String?         @map("qr_code_payload")
-  paymentInstructions        String?         @map("payment_instructions")
-  providerStatus             String?         @map("provider_status")
-  providerPayload            Json?           @map("provider_payload_json")
-  providerWebhookPayload     Json?           @map("provider_webhook_payload_json")
-  npdReceiptRequired         Boolean         @default(false) @map("npd_receipt_required")
-  npdReceiptCreated          Boolean         @default(false) @map("npd_receipt_created")
-  npdReceiptCreatedAt        DateTime?       @map("npd_receipt_created_at")
-  npdReceiptNote             String?         @map("npd_receipt_note")
-  createdAt                  DateTime        @default(now()) @map("created_at")
-  updatedAt                  DateTime        @updatedAt @map("updated_at")
-  paidAt                     DateTime?       @map("paid_at")
-  failedAt                   DateTime?       @map("failed_at")
-  cancelledAt                DateTime?       @map("cancelled_at")
-  expiredAt                  DateTime?       @map("expired_at")
-  refundedAt                 DateTime?       @map("refunded_at")
+  id                     String          @id @default(uuid()) @db.Uuid
+  userId                 String          @map("user_id") @db.Uuid
+  testId                 String          @map("test_id") @db.Uuid
+  amount                 Int
+  currency               String          @default("BYN")
+  status                 PaymentStatus   @default(PENDING)
+  provider               PaymentProvider
+  providerPaymentId      String?         @map("provider_payment_id")
+  providerInvoiceId      String?         @map("provider_invoice_id")
+  providerAccountNumber  String?         @map("provider_account_number")
+  paymentUrl             String?         @map("payment_url")
+  qrCodeUrl              String?         @map("qr_code_url")
+  qrCodePayload          String?         @map("qr_code_payload")
+  paymentInstructions    String?         @map("payment_instructions")
+  providerStatus         String?         @map("provider_status")
+  providerPayload        Json?           @map("provider_payload_json")
+  providerWebhookPayload Json?           @map("provider_webhook_payload_json")
+  npdReceiptRequired     Boolean         @default(false) @map("npd_receipt_required")
+  npdReceiptCreated      Boolean         @default(false) @map("npd_receipt_created")
+  npdReceiptCreatedAt    DateTime?       @map("npd_receipt_created_at")
+  npdReceiptNote         String?         @map("npd_receipt_note")
+  createdAt              DateTime        @default(now()) @map("created_at")
+  updatedAt              DateTime        @updatedAt @map("updated_at")
+  paidAt                 DateTime?       @map("paid_at")
+  failedAt               DateTime?       @map("failed_at")
+  cancelledAt            DateTime?       @map("cancelled_at")
+  expiredAt              DateTime?       @map("expired_at")
+  refundedAt             DateTime?       @map("refunded_at")
 
   user   User    @relation("PaymentUser", fields: [userId], references: [id])
   test   Test    @relation(fields: [testId], references: [id])
@@ -282,30 +321,30 @@ model Payment {
 }
 
 model Access {
-  id                 String       @id @default(uuid()) @db.Uuid
-  userId             String       @map("user_id") @db.Uuid
-  testId             String       @map("test_id") @db.Uuid
-  paymentId          String?      @unique @map("payment_id") @db.Uuid
-  accessCodeId       String?      @unique @map("access_code_id") @db.Uuid
-  source             AccessSource
-  attemptsTotal      Int          @default(1) @map("attempts_total")
-  attemptsAvailable  Int          @default(1) @map("attempts_available")
-  expiresAt          DateTime     @map("expires_at")
-  revokedAt          DateTime?    @map("revoked_at")
-  revokedByAdminId   String?      @map("revoked_by_admin_id") @db.Uuid
-  revokedReason      String?      @map("revoked_reason")
-  createdByAdminId   String?      @map("created_by_admin_id") @db.Uuid
-  createdAt          DateTime     @default(now()) @map("created_at")
-  updatedAt          DateTime     @updatedAt @map("updated_at")
+  id                String       @id @default(uuid()) @db.Uuid
+  userId            String       @map("user_id") @db.Uuid
+  testId            String       @map("test_id") @db.Uuid
+  paymentId         String?      @unique @map("payment_id") @db.Uuid
+  accessCodeId      String?      @unique @map("access_code_id") @db.Uuid
+  source            AccessSource
+  attemptsTotal     Int          @default(1) @map("attempts_total")
+  attemptsAvailable Int          @default(1) @map("attempts_available")
+  expiresAt         DateTime     @map("expires_at")
+  revokedAt         DateTime?    @map("revoked_at")
+  revokedByAdminId  String?      @map("revoked_by_admin_id") @db.Uuid
+  revokedReason     String?      @map("revoked_reason")
+  createdByAdminId  String?      @map("created_by_admin_id") @db.Uuid
+  createdAt         DateTime     @default(now()) @map("created_at")
+  updatedAt         DateTime     @updatedAt @map("updated_at")
 
-  user             User       @relation("AccessUser", fields: [userId], references: [id])
-  test             Test       @relation(fields: [testId], references: [id])
-  payment          Payment?   @relation(fields: [paymentId], references: [id])
-  accessCode       AccessCode? @relation(fields: [accessCodeId], references: [id])
-  revokedByAdmin   User?      @relation("AccessRevokedByAdmin", fields: [revokedByAdminId], references: [id])
-  createdByAdmin   User?      @relation("AccessCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  attempts         Attempt[]
-  manualLogs       ManualAccessLog[]
+  user           User              @relation("AccessUser", fields: [userId], references: [id])
+  test           Test              @relation(fields: [testId], references: [id])
+  payment        Payment?          @relation(fields: [paymentId], references: [id])
+  accessCode     AccessCode?       @relation(fields: [accessCodeId], references: [id])
+  revokedByAdmin User?             @relation("AccessRevokedByAdmin", fields: [revokedByAdminId], references: [id])
+  createdByAdmin User?             @relation("AccessCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  attempts       Attempt[]
+  manualLogs     ManualAccessLog[]
 
   @@index([userId])
   @@index([testId])
@@ -315,28 +354,28 @@ model Access {
 }
 
 model AccessCode {
-  id                  String           @id @default(uuid()) @db.Uuid
-  codeHash            String           @unique @map("code_hash")
-  testId              String           @map("test_id") @db.Uuid
-  createdByAdminId    String           @map("created_by_admin_id") @db.Uuid
-  status              AccessCodeStatus @default(ACTIVE)
-  attemptsTotal       Int              @default(1) @map("attempts_total")
-  accessDays          Int              @default(7) @map("access_days")
-  codeExpiresAt       DateTime         @map("code_expires_at")
-  activatedByUserId   String?          @map("activated_by_user_id") @db.Uuid
-  activatedAt         DateTime?        @map("activated_at")
-  revokedAt           DateTime?        @map("revoked_at")
-  revokedByAdminId    String?          @map("revoked_by_admin_id") @db.Uuid
-  revokedReason       String?          @map("revoked_reason")
-  comment             String?
-  createdAt           DateTime         @default(now()) @map("created_at")
-  updatedAt           DateTime         @updatedAt @map("updated_at")
+  id                String           @id @default(uuid()) @db.Uuid
+  codeHash          String           @unique @map("code_hash")
+  testId            String           @map("test_id") @db.Uuid
+  createdByAdminId  String           @map("created_by_admin_id") @db.Uuid
+  status            AccessCodeStatus @default(ACTIVE)
+  attemptsTotal     Int              @default(1) @map("attempts_total")
+  accessDays        Int              @default(7) @map("access_days")
+  codeExpiresAt     DateTime         @map("code_expires_at")
+  activatedByUserId String?          @map("activated_by_user_id") @db.Uuid
+  activatedAt       DateTime?        @map("activated_at")
+  revokedAt         DateTime?        @map("revoked_at")
+  revokedByAdminId  String?          @map("revoked_by_admin_id") @db.Uuid
+  revokedReason     String?          @map("revoked_reason")
+  comment           String?
+  createdAt         DateTime         @default(now()) @map("created_at")
+  updatedAt         DateTime         @updatedAt @map("updated_at")
 
-  test              Test    @relation(fields: [testId], references: [id])
-  createdByAdmin    User    @relation("AccessCodeCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  activatedByUser   User?   @relation("AccessCodeActivatedByUser", fields: [activatedByUserId], references: [id])
-  revokedByAdmin    User?   @relation("AccessCodeRevokedByAdmin", fields: [revokedByAdminId], references: [id])
-  access            Access?
+  test            Test    @relation(fields: [testId], references: [id])
+  createdByAdmin  User    @relation("AccessCodeCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  activatedByUser User?   @relation("AccessCodeActivatedByUser", fields: [activatedByUserId], references: [id])
+  revokedByAdmin  User?   @relation("AccessCodeRevokedByAdmin", fields: [revokedByAdminId], references: [id])
+  access          Access?
 
   @@index([testId])
   @@index([status])
@@ -345,26 +384,26 @@ model AccessCode {
 }
 
 model Attempt {
-  id                          String        @id @default(uuid()) @db.Uuid
-  userId                      String        @map("user_id") @db.Uuid
-  testId                      String        @map("test_id") @db.Uuid
-  accessId                    String        @map("access_id") @db.Uuid
-  status                      AttemptStatus @default(STARTED)
-  startedAt                   DateTime      @default(now()) @map("started_at")
-  finishedAt                  DateTime?     @map("finished_at")
-  durationSeconds             Int?          @map("duration_seconds")
-  rawScore                    Int?          @map("raw_score")
-  maxRawScore                 Int?          @map("max_raw_score")
-  percent                     Decimal?      @db.Decimal(5, 2)
-  scaledScore                 Int?          @map("scaled_score")
-  maxScaledScore              Int?          @map("max_scaled_score")
-  level                       String?
-  testSnapshot                Json          @map("test_snapshot_json")
-  scoringSchemeSnapshot       Json?         @map("scoring_scheme_snapshot_json")
-  topicResults                Json?         @map("topic_results_json")
-  recommendations             Json?         @map("recommendations_json")
-  createdAt                   DateTime      @default(now()) @map("created_at")
-  updatedAt                   DateTime      @updatedAt @map("updated_at")
+  id                    String        @id @default(uuid()) @db.Uuid
+  userId                String        @map("user_id") @db.Uuid
+  testId                String        @map("test_id") @db.Uuid
+  accessId              String        @map("access_id") @db.Uuid
+  status                AttemptStatus @default(STARTED)
+  startedAt             DateTime      @default(now()) @map("started_at")
+  finishedAt            DateTime?     @map("finished_at")
+  durationSeconds       Int?          @map("duration_seconds")
+  rawScore              Int?          @map("raw_score")
+  maxRawScore           Int?          @map("max_raw_score")
+  percent               Decimal?      @db.Decimal(5, 2)
+  scaledScore           Int?          @map("scaled_score")
+  maxScaledScore        Int?          @map("max_scaled_score")
+  level                 String?
+  testSnapshot          Json          @map("test_snapshot_json")
+  scoringSchemeSnapshot Json?         @map("scoring_scheme_snapshot_json")
+  topicResults          Json?         @map("topic_results_json")
+  recommendations       Json?         @map("recommendations_json")
+  createdAt             DateTime      @default(now()) @map("created_at")
+  updatedAt             DateTime      @updatedAt @map("updated_at")
 
   user    User     @relation("AttemptUser", fields: [userId], references: [id])
   test    Test     @relation(fields: [testId], references: [id])
@@ -380,20 +419,20 @@ model Attempt {
 }
 
 model Answer {
-  id                 String   @id @default(uuid()) @db.Uuid
-  attemptId          String   @map("attempt_id") @db.Uuid
-  questionId         String?  @map("question_id") @db.Uuid
-  snapshotQuestionId String?  @map("snapshot_question_id")
-  questionSnapshot   Json     @map("question_snapshot_json")
-  selectedAnswer     String?  @map("selected_answer")
-  isCorrect          Boolean? @map("is_correct")
-  pointsEarned       Int?     @map("points_earned")
-  maxPoints          Int      @map("max_points")
+  id                 String    @id @default(uuid()) @db.Uuid
+  attemptId          String    @map("attempt_id") @db.Uuid
+  questionId         String?   @map("question_id") @db.Uuid
+  snapshotQuestionId String?   @map("snapshot_question_id")
+  questionSnapshot   Json      @map("question_snapshot_json")
+  selectedAnswer     String?   @map("selected_answer")
+  isCorrect          Boolean?  @map("is_correct")
+  pointsEarned       Int?      @map("points_earned")
+  maxPoints          Int       @map("max_points")
   answeredAt         DateTime? @map("answered_at")
-  createdAt          DateTime @default(now()) @map("created_at")
-  updatedAt          DateTime @updatedAt @map("updated_at")
+  createdAt          DateTime  @default(now()) @map("created_at")
+  updatedAt          DateTime  @updatedAt @map("updated_at")
 
-  attempt  Attempt  @relation(fields: [attemptId], references: [id])
+  attempt  Attempt   @relation(fields: [attemptId], references: [id])
   question Question? @relation(fields: [questionId], references: [id])
 
   @@unique([attemptId, snapshotQuestionId])

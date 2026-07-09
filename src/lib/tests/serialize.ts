@@ -1,5 +1,5 @@
 import type { Test } from "@prisma/client";
-import { fromPrismaTestMode, fromPrismaTestStatus } from "@/lib/tests/enums";
+import { fromPrismaExamMode, fromPrismaTestMode, fromPrismaTestStatus } from "@/lib/tests/enums";
 
 export function serializeTest(test: Test) {
   return {
@@ -8,6 +8,9 @@ export function serializeTest(test: Test) {
     slug: test.slug,
     subject: "russian",
     mode: fromPrismaTestMode(test.mode),
+    examMode: fromPrismaExamMode(test.examMode),
+    subjectCode: test.subjectCode,
+    officialYear: test.officialYear,
     shortDescription: test.shortDescription,
     fullDescription: test.fullDescription,
     price: test.price,

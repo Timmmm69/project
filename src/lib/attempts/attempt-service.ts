@@ -1,11 +1,12 @@
 import { Prisma } from "@prisma/client";
+import type { MvpQuestionType } from "@/lib/questions/enums";
 import { normalizeCorrectAnswer } from "@/lib/questions/normalization";
 import { buildScoringSchemeSnapshot, buildTestSnapshot, parseScoringSchemeSnapshot, parseTestSnapshot } from "@/lib/attempts/snapshot";
 import { scoreAttemptSnapshot } from "@/lib/scoring/scoring-engine";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
 
-function normalizeStudentAnswer(questionType: "single_choice" | "multiple_choice" | "short_text", answer: string | null) {
+function normalizeStudentAnswer(questionType: MvpQuestionType, answer: string | null) {
   if (answer === null) {
     return null;
   }
