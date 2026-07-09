@@ -95,8 +95,8 @@ test("student can buy access, complete a test, and see the result", async ({ pag
   await page.getByRole("button", { name: "Проверить доступ" }).click();
   await expect(page.getByText("Для этого email пока нет доступа к тесту.")).toBeVisible();
 
-  await page.getByRole("button", { name: "Создать тестовую оплату" }).click();
-  await page.getByRole("button", { name: "Simulate success payment" }).click();
+  await page.getByRole("button", { name: "Создать оплату" }).click();
+  await page.getByRole("button", { name: "Подтвердить mock-оплату" }).click();
   await expect(page.getByText("Доступ открыт.")).toBeVisible();
 
   await page.getByRole("button", { name: "Начать тест" }).click();

@@ -127,6 +127,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
     () => Object.values(answers).filter((value) => value.trim().length > 0).length,
     [answers]
   );
+  const progressPercent = attempt?.questions.length ? Math.round((answeredCount / attempt.questions.length) * 100) : 0;
 
   async function persistAnswer(question: AttemptQuestion, value: string) {
     setMessage(null);
@@ -211,16 +212,26 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
 
   return (
     <>
-      <section className="toolbar">
-        <div>
-          <p className="eyebrow">Прохождение теста</p>
-          <h1 className="page-title">Попытка</h1>
+      <section className="hero compact">
+        <div className="toolbar">
+          <div className="stack compact">
+            <p className="eyebrow">Прохождение теста</p>
+            <h1 className="page-title">Попытка</h1>
+            <p className="lead">
+              Ответы сохраняются автоматически. Обновление страницы не списывает вторую попытку.
+            </p>
+          </div>
+          <div className={remainingSeconds !== null && remainingSeconds <= 60 ? "timer danger" : "timer"}>
+            {isFinished ? attempt.status : formatRemaining(remainingSeconds ?? 0)}
+          </div>
+        </div>
+        <div className="stack compact">
           <p className="muted">
             Ответов: {answeredCount} из {attempt.questions.length}
           </p>
-        </div>
-        <div className={remainingSeconds !== null && remainingSeconds <= 60 ? "timer danger" : "timer"}>
-          {isFinished ? attempt.status : formatRemaining(remainingSeconds ?? 0)}
+          <div className="progress-track">
+            <div className="progress-fill" style={{ width: `${progressPercent}%` }} />
+          </div>
         </div>
       </section>
 
@@ -235,84 +246,90 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
         </section>
       ) : null}
 
-      <section className="stack">
-        {attempt.questions.map((question) => {
-          const value = answers[question.snapshotQuestionId] ?? "";
-          return (
-            <article className="panel stack compact" key={question.snapshotQuestionId}>
-              <div>
-                <p className="eyebrow">
-                  Вопрос {question.orderIndex}. {question.topic}
-                  {question.subtopic ? ` / ${question.subtopic}` : ""}
-                </p>
-                <h2 className="card-title">{question.questionText}</h2>
-              </div>
-
-              {question.questionType === "single_choice" ? (
-                <div className="answer-options">
-                  {Object.entries(question.options).map(([letter, label]) => (
-                    <label className="choice-row" key={letter}>
-                      <input
-                        type="radio"
-                        name={question.snapshotQuestionId}
-                        checked={value === letter}
-                        disabled={isFinished}
-                        onChange={() => saveAnswer(question, letter)}
-                      />
-                      <span>
-                        {letter}. {label}
-                      </span>
-                    </label>
-                  ))}
+      <section className="attempt-layout">
+        <div className="stack">
+          {attempt.questions.map((question) => {
+            const value = answers[question.snapshotQuestionId] ?? "";
+            return (
+              <article className="panel stack compact" key={question.snapshotQuestionId}>
+                <div>
+                  <p className="eyebrow">
+                    Вопрос {question.orderIndex}. {question.topic}
+                    {question.subtopic ? ` / ${question.subtopic}` : ""}
+                  </p>
+                  <h2 className="card-title">{question.questionText}</h2>
                 </div>
-              ) : null}
 
-              {question.questionType === "multiple_choice" ? (
-                <div className="answer-options">
-                  {Object.entries(question.options).map(([letter, label]) => (
-                    <label className="choice-row" key={letter}>
-                      <input
-                        type="checkbox"
-                        checked={value.split(",").includes(letter)}
-                        disabled={isFinished}
-                        onChange={() => saveMultipleAnswer(question, letter)}
-                      />
-                      <span>
-                        {letter}. {label}
-                      </span>
-                    </label>
-                  ))}
-                </div>
-              ) : null}
+                {question.questionType === "single_choice" ? (
+                  <div className="answer-options">
+                    {Object.entries(question.options).map(([letter, label]) => (
+                      <label className="choice-row" key={letter}>
+                        <input
+                          type="radio"
+                          name={question.snapshotQuestionId}
+                          checked={value === letter}
+                          disabled={isFinished}
+                          onChange={() => saveAnswer(question, letter)}
+                        />
+                        <span>
+                          {letter}. {label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
 
-              {question.questionType === "short_text" ? (
-                <label className="field">
-                  <span>Ответ</span>
-                  <input
-                    value={value}
-                    disabled={isFinished}
-                    onChange={(event) =>
-                      setAnswers((current) => ({
-                        ...current,
-                        [question.snapshotQuestionId]: event.target.value
-                      }))
-                    }
-                    onBlur={(event) => saveAnswer(question, event.target.value)}
-                  />
-                </label>
-              ) : null}
-            </article>
-          );
-        })}
+                {question.questionType === "multiple_choice" ? (
+                  <div className="answer-options">
+                    {Object.entries(question.options).map(([letter, label]) => (
+                      <label className="choice-row" key={letter}>
+                        <input
+                          type="checkbox"
+                          checked={value.split(",").includes(letter)}
+                          disabled={isFinished}
+                          onChange={() => saveMultipleAnswer(question, letter)}
+                        />
+                        <span>
+                          {letter}. {label}
+                        </span>
+                      </label>
+                    ))}
+                  </div>
+                ) : null}
+
+                {question.questionType === "short_text" ? (
+                  <label className="field">
+                    <span>Ответ</span>
+                    <input
+                      value={value}
+                      disabled={isFinished}
+                      onChange={(event) =>
+                        setAnswers((current) => ({
+                          ...current,
+                          [question.snapshotQuestionId]: event.target.value
+                        }))
+                      }
+                      onBlur={(event) => saveAnswer(question, event.target.value)}
+                    />
+                  </label>
+                ) : null}
+              </article>
+            );
+          })}
+        </div>
+
+        {!isFinished ? (
+          <aside className="panel stack compact attempt-side">
+            <p className="eyebrow">Завершение</p>
+            <p className="muted">
+              Проверьте ответы перед отправкой. После завершения изменить их нельзя.
+            </p>
+            <button className="button" type="button" disabled={busy} onClick={handleComplete}>
+              Завершить тест
+            </button>
+          </aside>
+        ) : null}
       </section>
-
-      {!isFinished ? (
-        <section className="panel">
-          <button className="button" type="button" disabled={busy} onClick={handleComplete}>
-            Завершить тест
-          </button>
-        </section>
-      ) : null}
     </>
   );
 }

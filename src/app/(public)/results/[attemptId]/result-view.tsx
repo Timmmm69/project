@@ -77,11 +77,16 @@ export function ResultView({ attemptId }: { attemptId: string }) {
 
   return (
     <>
-      <section className="toolbar">
-        <div>
-          <p className="eyebrow">Результат теста</p>
+      <section className="hero compact">
+        <div className="stack compact">
+          <div className="badge-row">
+            <span className="badge accent">{result.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</span>
+            <span className={result.status === "expired" ? "status-pill pending" : "status-pill success"}>
+              {result.status === "expired" ? "время вышло" : "завершено"}
+            </span>
+          </div>
           <h1 className="page-title">{result.test_title}</h1>
-          <p className="muted">{result.status === "expired" ? "Время вышло" : "Попытка завершена"}</p>
+          <p className="lead">Итоговая оценка и разбор ошибок доступны после завершения попытки.</p>
         </div>
       </section>
 
@@ -101,12 +106,20 @@ export function ResultView({ attemptId }: { attemptId: string }) {
             </h2>
           </article>
         ) : null}
+
+        <article className="panel compact">
+          <p className="eyebrow">Ошибки</p>
+          <h2 className="metric-value">{result.mistakes.length}</h2>
+        </article>
       </section>
 
       {result.scaled_score_note ? <p className="state-box">{result.scaled_score_note}</p> : null}
 
       <section className="panel stack">
-        <h2 className="section-title">Ошибки</h2>
+        <div>
+          <p className="eyebrow">Разбор</p>
+          <h2 className="section-title">Ошибки и правильные ответы</h2>
+        </div>
         {result.mistakes.length === 0 ? <p className="state-box success">Ошибок нет.</p> : null}
         {result.mistakes.map((mistake) => (
           <article className="result-mistake" key={mistake.snapshot_question_id}>

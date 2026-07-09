@@ -17,31 +17,73 @@ export default async function PublicCatalogPage() {
     orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }]
   });
   const publicTests = tests.map(serializePublicTest);
+  const ceCtCount = publicTests.filter((test) => test.mode === "ce_ct").length;
 
   return (
     <main className="page-shell stack">
-      <section className="toolbar">
-        <div>
-          <p className="eyebrow">ЦЭ/ЦТ</p>
-          <h1 className="page-title">Каталог тестов</h1>
-          <p className="muted">Онлайн-тесты по русскому языку для подготовки.</p>
+      <header className="topbar">
+        <div className="brand-mark">
+          <span className="brand-dot" />
+          <span>Русский язык. Онлайн-тесты</span>
         </div>
+        <Link className="button secondary small" href="/admin">
+          Админка
+        </Link>
+      </header>
+
+      <section className="hero">
+        <div className="stack compact">
+          <p className="eyebrow">Подготовка к ЦЭ/ЦТ</p>
+          <h1 className="page-title">Тренировочные онлайн-тесты по русскому языку</h1>
+          <p className="lead">
+            Выберите тест, введите email для доступа и проходите задания в формате, близком к реальной проверке:
+            с таймером, первичным баллом и разбором ошибок после завершения.
+          </p>
+        </div>
+
+        <dl className="meta-grid">
+          <div>
+            <dt>Опубликовано</dt>
+            <dd>{publicTests.length}</dd>
+          </div>
+          <div>
+            <dt>ЦЭ/ЦТ</dt>
+            <dd>{ceCtCount}</dd>
+          </div>
+          <div>
+            <dt>Результат</dt>
+            <dd>после теста</dd>
+          </div>
+        </dl>
       </section>
 
-      {publicTests.length === 0 ? (
-        <section className="panel">
-          <p className="muted">Пока нет опубликованных тестов.</p>
-        </section>
-      ) : (
-        <section className="catalog-grid">
-          {publicTests.map((test) => (
-            <article className="test-card" key={test.id}>
-              <div className="stack compact">
-                <div>
-                  <p className="eyebrow">{test.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</p>
-                  <h2 className="card-title">{test.title}</h2>
-                  {test.shortDescription ? <p className="muted">{test.shortDescription}</p> : null}
+      <section className="stack compact">
+        <div className="toolbar">
+          <div>
+            <p className="eyebrow">Каталог</p>
+            <h2 className="section-title">Доступные тесты</h2>
+          </div>
+        </div>
+
+        {publicTests.length === 0 ? (
+          <section className="panel">
+            <p className="muted">Пока нет опубликованных тестов.</p>
+          </section>
+        ) : (
+          <section className="catalog-grid">
+            {publicTests.map((test) => (
+              <article className="test-card" key={test.id}>
+                <div className="stack compact">
+                  <div className="badge-row">
+                    <span className="badge accent">{test.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</span>
+                    {test.maxRawScore === 80 ? <span className="badge">полный тест</span> : null}
+                  </div>
+                  <div>
+                    <h3 className="card-title">{test.title}</h3>
+                    {test.shortDescription ? <p className="muted">{test.shortDescription}</p> : null}
+                  </div>
                 </div>
+
                 <dl className="meta-grid">
                   <div>
                     <dt>Вопросы</dt>
@@ -56,14 +98,15 @@ export default async function PublicCatalogPage() {
                     <dd>{formatPrice(test.price, test.currency)}</dd>
                   </div>
                 </dl>
-              </div>
-              <Link className="button" href={`/tests/${test.slug}`}>
-                Открыть тест
-              </Link>
-            </article>
-          ))}
-        </section>
-      )}
+
+                <Link className="button" href={`/tests/${test.slug}`}>
+                  Открыть тест
+                </Link>
+              </article>
+            ))}
+          </section>
+        )}
+      </section>
     </main>
   );
 }

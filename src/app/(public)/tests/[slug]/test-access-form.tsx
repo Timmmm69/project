@@ -71,15 +71,26 @@ function statusText(result: AccessCheckResult | null) {
   }
 
   const values: Record<AccessStatus, string> = {
-    can_start: "Доступ найден. Можно начать тест.",
-    continue_attempt: "У вас уже есть начатая попытка. Можно продолжить тест.",
+    can_start: "Доступ найден. Можно начинать тест.",
+    continue_attempt: "У вас уже есть начатая попытка. Можно продолжить с того же места.",
     no_access: "Для этого email пока нет доступа к тесту.",
     expired: "Доступ для этого email истёк.",
     revoked: "Доступ для этого email был отозван.",
-    no_attempts: "Доступ найден, но доступных попыток не осталось."
+    no_attempts: "Доступ найден, но доступных попыток больше нет."
   };
 
   return values[result.status];
+}
+
+function paymentStatusText(payment: PaymentSummary) {
+  const amount = `${(payment.amount / 100).toFixed(2)} ${payment.currency}`;
+  if (payment.status === "pending") {
+    return `Ожидает подтверждения, сумма ${amount}.`;
+  }
+  if (payment.status === "success") {
+    return `Оплата подтверждена, сумма ${amount}.`;
+  }
+  return `Статус оплаты: ${payment.status}, сумма ${amount}.`;
 }
 
 export function TestAccessForm({ testId }: { testId: string }) {
@@ -173,7 +184,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
     }
 
     setPayment(body.data.payment);
-    showMessage("Тестовая оплата создана. Подтвердите её, чтобы открыть доступ.", "info");
+    showMessage("Оплата создана. После подтверждения доступ откроется автоматически.", "info");
   }
 
   async function refreshPaymentStatus(paymentId: string) {
@@ -209,7 +220,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
     if (status === "success") {
       showMessage(body.data.createdAccess ? "Доступ открыт." : "Оплата уже была подтверждена ранее.", "success");
     } else {
-      showMessage("Тестовая оплата отмечена как failed. Access не создан.", "info");
+      showMessage("Оплата отмечена как failed. Доступ не создан.", "info");
     }
   }
 
@@ -286,23 +297,27 @@ export function TestAccessForm({ testId }: { testId: string }) {
   const showAccessActions = accessResult && !accessResult.hasAccess;
 
   return (
-    <form className="form-stack" onSubmit={handleSubmit}>
-      <label className="field">
-        <span>Email для доступа</span>
-        <input
-          value={email}
-          onChange={(event) => setEmail(event.target.value)}
-          type="email"
-          placeholder="student@example.com"
-          required
-        />
-      </label>
-      <button className="button" type="submit" disabled={busy}>
-        Проверить доступ
-      </button>
+    <div className="stack">
+      <form className="form-stack" onSubmit={handleSubmit}>
+        <label className="field">
+          <span>Email для доступа</span>
+          <input
+            value={email}
+            onChange={(event) => setEmail(event.target.value)}
+            type="email"
+            placeholder="student@example.com"
+            required
+          />
+        </label>
+        <button className="button" type="submit" disabled={busy}>
+          Проверить доступ
+        </button>
+      </form>
+
       {message ? <p className={`form-message ${messageTone}`}>{message}</p> : null}
+
       {text ? (
-        <div className={accessResult?.hasAccess ? "state-box success" : "state-box"}>
+        <div className={accessResult?.hasAccess ? "state-box success stack compact" : "state-box stack compact"}>
           <p>{text}</p>
           {accessResult?.access ? (
             <p className="muted">
@@ -321,59 +336,69 @@ export function TestAccessForm({ testId }: { testId: string }) {
           ) : null}
         </div>
       ) : null}
+
       {showAccessActions ? (
-        <div className="state-box">
-          <div className="inline-actions">
-            <button className="button secondary" type="button" disabled={busy} onClick={handleCreatePayment}>
-              Создать тестовую оплату
-            </button>
-            {payment?.status === "pending" ? (
-              <button className="button secondary" type="button" disabled={busy} onClick={handleCheckPayment}>
-                Проверить оплату
+        <section className="stack">
+          <div className="subpanel stack compact">
+            <div>
+              <h3 className="subsection-title">Оплата</h3>
+              <p className="muted">В dev-режиме можно подтвердить mock-оплату кнопкой ниже.</p>
+            </div>
+            <div className="inline-actions">
+              <button className="button secondary" type="button" disabled={busy} onClick={handleCreatePayment}>
+                Создать оплату
               </button>
-            ) : null}
-            {payment?.provider === "mock" && payment.status === "pending" ? (
-              <>
-                <button className="button" type="button" disabled={busy} onClick={() => handleSimulatePayment("success")}>
-                  Simulate success payment
+              {payment?.status === "pending" ? (
+                <button className="button secondary" type="button" disabled={busy} onClick={handleCheckPayment}>
+                  Проверить оплату
                 </button>
-                <button className="button secondary" type="button" disabled={busy} onClick={() => handleSimulatePayment("failed")}>
-                  Simulate failed payment
-                </button>
-              </>
+              ) : null}
+            </div>
+
+            {payment ? (
+              <div className="state-box stack compact">
+                <p>{paymentStatusText(payment)}</p>
+                {payment.providerAccountNumber ? <p className="muted">Номер счёта: {payment.providerAccountNumber}</p> : null}
+                {payment.paymentUrl ? (
+                  <a className="text-link" href={payment.paymentUrl} target="_blank">
+                    Открыть страницу оплаты
+                  </a>
+                ) : null}
+                {payment.qrCodePayload ? <p className="muted">QR payload: {payment.qrCodePayload}</p> : null}
+                {payment.paymentInstructions ? <p className="muted">{payment.paymentInstructions}</p> : null}
+                {payment.provider === "mock" && payment.status === "pending" ? (
+                  <div className="inline-actions">
+                    <button className="button" type="button" disabled={busy} onClick={() => handleSimulatePayment("success")}>
+                      Подтвердить mock-оплату
+                    </button>
+                    <button className="button secondary" type="button" disabled={busy} onClick={() => handleSimulatePayment("failed")}>
+                      Отклонить mock-оплату
+                    </button>
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </div>
-          {payment ? (
-            <div className="stack compact">
-              <p className="muted">
-                Оплата: {payment.status}, сумма {(payment.amount / 100).toFixed(2)} {payment.currency}.
-              </p>
-              <p className="muted">Provider: {payment.provider}{payment.providerStatus ? ` / ${payment.providerStatus}` : ""}</p>
-              {payment.providerAccountNumber ? (
-                <p className="muted">Account number: {payment.providerAccountNumber}</p>
-              ) : null}
-              {payment.paymentUrl ? (
-                <a className="text-link" href={payment.paymentUrl} target="_blank">
-                  Открыть страницу оплаты
-                </a>
-              ) : null}
-              {payment.qrCodePayload ? <p className="muted">QR payload: {payment.qrCodePayload}</p> : null}
-              {payment.paymentInstructions ? <p className="state-box">{payment.paymentInstructions}</p> : null}
+
+          <div className="subpanel stack compact">
+            <div>
+              <h3 className="subsection-title">Код доступа</h3>
+              <p className="muted">Если преподаватель выдал код, активируйте его для этого email.</p>
             </div>
-          ) : null}
-          <label className="field">
-            <span>Код доступа</span>
-            <input
-              value={code}
-              onChange={(event) => setCode(event.target.value)}
-              placeholder="XXXX-XXXX-XXXX-XXXX"
-            />
-          </label>
-          <button className="button secondary" type="button" disabled={busy || !code} onClick={handleActivateCode}>
-            Активировать код
-          </button>
-        </div>
+            <label className="field">
+              <span>Код</span>
+              <input
+                value={code}
+                onChange={(event) => setCode(event.target.value)}
+                placeholder="XXXX-XXXX-XXXX-XXXX"
+              />
+            </label>
+            <button className="button secondary" type="button" disabled={busy || !code} onClick={handleActivateCode}>
+              Активировать код
+            </button>
+          </div>
+        </section>
       ) : null}
-    </form>
+    </div>
   );
 }

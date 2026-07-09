@@ -182,6 +182,24 @@ async function readJson<T>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
 }
 
+function formatMoney(amount: number, currency: string) {
+  return `${(amount / 100).toFixed(2)} ${currency}`;
+}
+
+function statusClass(status: string) {
+  const normalized = status.toLowerCase();
+  if (["published", "active", "success", "completed"].includes(normalized)) {
+    return "status-pill success";
+  }
+  if (["draft", "pending", "started"].includes(normalized)) {
+    return "status-pill pending";
+  }
+  if (["hidden", "archived", "revoked", "failed", "expired", "cancelled"].includes(normalized)) {
+    return "status-pill failed";
+  }
+  return "status-pill";
+}
+
 export function AdminDashboard() {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [tests, setTests] = useState<TestItem[]>([]);
@@ -207,6 +225,12 @@ export function AdminDashboard() {
   const selectedTest = useMemo(
     () => tests.find((test) => test.id === selectedTestId) ?? null,
     [selectedTestId, tests]
+  );
+  const publishedCount = useMemo(() => tests.filter((test) => test.status === "published").length, [tests]);
+  const activeAccessCount = useMemo(() => accesses.filter((access) => !access.revokedAt).length, [accesses]);
+  const completedAttemptCount = useMemo(
+    () => attempts.filter((attempt) => attempt.status === "completed" || attempt.status === "expired").length,
+    [attempts]
   );
 
   async function loadTests(nextSelectedTestId = selectedTestId) {
@@ -633,7 +657,7 @@ export function AdminDashboard() {
   }
 
   return (
-    <main className="page-shell stack">
+    <main className="page-shell admin-shell stack">
       <section className="toolbar">
         <div>
           <p className="eyebrow">Админка</p>
@@ -643,6 +667,29 @@ export function AdminDashboard() {
         <button className="button secondary" type="button" onClick={handleLogout}>
           Выйти
         </button>
+      </section>
+
+      <section className="admin-overview">
+        <article className="metric-card">
+          <p className="eyebrow">Тесты</p>
+          <h2 className="metric-value">{tests.length}</h2>
+          <p className="muted">Опубликовано: {publishedCount}</p>
+        </article>
+        <article className="metric-card">
+          <p className="eyebrow">Выбранный тест</p>
+          <h2 className="metric-value">{selectedTest ? selectedTest.questionsCount : "-"}</h2>
+          <p className="muted">{selectedTest ? "вопросов" : "выберите тест"}</p>
+        </article>
+        <article className="metric-card">
+          <p className="eyebrow">Доступы</p>
+          <h2 className="metric-value">{activeAccessCount}</h2>
+          <p className="muted">активных по выбранному тесту</p>
+        </article>
+        <article className="metric-card">
+          <p className="eyebrow">Попытки</p>
+          <h2 className="metric-value">{completedAttemptCount}</h2>
+          <p className="muted">завершённых</p>
+        </article>
       </section>
 
       <section className="panel stack">
@@ -748,13 +795,11 @@ export function AdminDashboard() {
                       <div className="table-title">{test.title}</div>
                       <div className="muted">{test.slug}</div>
                     </td>
-                    <td>{test.status}</td>
-                    <td>{test.mode}</td>
+                    <td><span className={statusClass(test.status)}>{test.status}</span></td>
+                    <td>{test.mode === "ce_ct" ? "ЦЭ/ЦТ" : "training"}</td>
                     <td>{test.questionsCount}</td>
                     <td>{test.maxRawScore}</td>
-                    <td>
-                      {(test.price / 100).toFixed(2)} {test.currency}
-                    </td>
+                    <td>{formatMoney(test.price, test.currency)}</td>
                     <td>
                       <button
                         className="button secondary small"
@@ -781,6 +826,33 @@ export function AdminDashboard() {
               Вопросов: {selectedTest.questionsCount}. Максимальный балл: {selectedTest.maxRawScore}.
             </p>
           </div>
+
+          <dl className="meta-grid wide">
+            <div>
+              <dt>Статус</dt>
+              <dd>{selectedTest.status}</dd>
+            </div>
+            <div>
+              <dt>Режим</dt>
+              <dd>{selectedTest.mode === "ce_ct" ? "ЦЭ/ЦТ" : "training"}</dd>
+            </div>
+            <div>
+              <dt>Вопросы</dt>
+              <dd>{selectedTest.questionsCount}</dd>
+            </div>
+            <div>
+              <dt>Макс. балл</dt>
+              <dd>{selectedTest.maxRawScore}</dd>
+            </div>
+            <div>
+              <dt>Цена</dt>
+              <dd>{formatMoney(selectedTest.price, selectedTest.currency)}</dd>
+            </div>
+            <div>
+              <dt>Время</dt>
+              <dd>{selectedTest.durationMinutes} мин</dd>
+            </div>
+          </dl>
 
           <section className="subpanel stack">
             <div>
@@ -1031,7 +1103,7 @@ export function AdminDashboard() {
                           {access.attemptsAvailable} из {access.attemptsTotal}
                         </td>
                         <td>{new Date(access.expiresAt).toLocaleDateString()}</td>
-                        <td>{access.revokedAt ? "revoked" : "active"}</td>
+                        <td><span className={statusClass(access.revokedAt ? "revoked" : "active")}>{access.revokedAt ? "revoked" : "active"}</span></td>
                         <td>
                           <button
                             className="button danger small"
@@ -1070,7 +1142,7 @@ export function AdminDashboard() {
                     accessCodes.map((codeItem) => (
                       <tr key={codeItem.id}>
                         <td>hash only</td>
-                        <td>{codeItem.status}</td>
+                        <td><span className={statusClass(codeItem.status)}>{codeItem.status}</span></td>
                         <td>{codeItem.attemptsTotal}</td>
                         <td>{codeItem.activatedByEmail ?? "-"}</td>
                         <td>{new Date(codeItem.codeExpiresAt).toLocaleDateString()}</td>
@@ -1108,22 +1180,20 @@ export function AdminDashboard() {
                 <tbody>
                   {payments.length === 0 ? (
                     <tr>
-                      <td colSpan={5}>Оплат пока нет.</td>
+                      <td colSpan={8}>Оплат пока нет.</td>
                     </tr>
                   ) : (
                     payments.map((paymentItem) => (
                       <tr key={paymentItem.id}>
                         <td>{paymentItem.email}</td>
                         <td>{paymentItem.provider}</td>
-                        <td>{paymentItem.providerInvoiceId ?? paymentItem.providerPaymentId ?? "-"}</td>
-                        <td>{paymentItem.providerAccountNumber ?? "-"}</td>
                         <td>
-                          {paymentItem.status}
+                          <span className={statusClass(paymentItem.status)}>{paymentItem.status}</span>
                           {paymentItem.providerStatus ? <p className="muted">{paymentItem.providerStatus}</p> : null}
                         </td>
-                        <td>
-                          {(paymentItem.amount / 100).toFixed(2)} {paymentItem.currency}
-                        </td>
+                        <td>{formatMoney(paymentItem.amount, paymentItem.currency)}</td>
+                        <td>{paymentItem.providerInvoiceId ?? paymentItem.providerPaymentId ?? "-"}</td>
+                        <td>{paymentItem.providerAccountNumber ?? "-"}</td>
                         <td>{paymentItem.accessCreated ? "created" : "-"}</td>
                         <td>
                           {!paymentItem.npdReceiptRequired ? (
@@ -1168,7 +1238,7 @@ export function AdminDashboard() {
                     attempts.map((attemptItem) => (
                       <tr key={attemptItem.id}>
                         <td>{attemptItem.email}</td>
-                        <td>{attemptItem.status}</td>
+                        <td><span className={statusClass(attemptItem.status)}>{attemptItem.status}</span></td>
                         <td>
                           {attemptItem.rawScore === null || attemptItem.maxRawScore === null
                             ? "-"
