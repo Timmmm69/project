@@ -45,6 +45,10 @@ function toPrismaResponseSubtype(subtype: ImportPreviewQuestion["responseSubtype
   return null;
 }
 
+function toPrismaAcceptedAnswers(acceptedAnswers: ImportPreviewQuestion["acceptedAnswers"]) {
+  return acceptedAnswers ? acceptedAnswers as Prisma.InputJsonValue : Prisma.JsonNull;
+}
+
 export async function POST(_request: Request, context: RouteContext) {
   const admin = await requireAdmin();
   if (!admin) {
@@ -132,7 +136,7 @@ export async function POST(_request: Request, context: RouteContext) {
           officialPart: question.officialPart,
           officialNumber: question.officialNumber,
           responseSubtype: toPrismaResponseSubtype(question.responseSubtype),
-          acceptedAnswers: question.acceptedAnswers as Prisma.InputJsonValue | undefined,
+          acceptedAnswers: toPrismaAcceptedAnswers(question.acceptedAnswers),
           orderIndex: startOrder + index + 1
         }))
       });

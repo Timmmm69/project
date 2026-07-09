@@ -248,6 +248,9 @@ function validateAuthenticRow(rowNumber: number, candidate: ImportPreviewQuestio
   }
 
   if (candidate.officialPart === "A") {
+    if (candidate.officialNumber !== null && (candidate.officialNumber < 1 || candidate.officialNumber > 18)) {
+      errors.push(issue(rowNumber, "official_number", "AUTHENTIC_PART_A_NUMBER_RANGE", "Part A official_number must be from 1 to 18."));
+    }
     if (candidate.questionType !== "multi_select_five") {
       errors.push(issue(rowNumber, "question_type", "AUTHENTIC_PART_A_TYPE", "Part A must use multi_select_five."));
     }
@@ -264,6 +267,9 @@ function validateAuthenticRow(rowNumber: number, candidate: ImportPreviewQuestio
   }
 
   if (candidate.officialPart === "B") {
+    if (candidate.officialNumber !== null && (candidate.officialNumber < 1 || candidate.officialNumber > 22)) {
+      errors.push(issue(rowNumber, "official_number", "AUTHENTIC_PART_B_NUMBER_RANGE", "Part B official_number must be from 1 to 22."));
+    }
     if (candidate.questionType !== "short_answer_token") {
       errors.push(issue(rowNumber, "question_type", "AUTHENTIC_PART_B_TYPE", "Part B must use short_answer_token."));
     }
@@ -283,6 +289,7 @@ function validateAuthenticTotals(preview: ImportPreviewQuestion[], errors: Impor
   const partA = preview.filter((question) => question.officialPart === "A");
   const partB = preview.filter((question) => question.officialPart === "B");
   const totalPoints = preview.reduce((sum, question) => sum + question.points, 0);
+  const seenOfficialNumbers = new Set<string>();
 
   if (preview.length !== 40) {
     errors.push(issue(null, "file", "AUTHENTIC_QUESTION_COUNT", "rikz_russian_2026 import must contain exactly 40 questions."));
@@ -295,6 +302,17 @@ function validateAuthenticTotals(preview: ImportPreviewQuestion[], errors: Impor
   }
   if (totalPoints !== 80) {
     errors.push(issue(null, "points", "AUTHENTIC_TOTAL_POINTS", "rikz_russian_2026 import must contain exactly 80 primary points."));
+  }
+
+  for (const question of preview) {
+    if (!question.officialPart || question.officialNumber === null) {
+      continue;
+    }
+    const key = `${question.officialPart}${question.officialNumber}`;
+    if (seenOfficialNumbers.has(key)) {
+      errors.push(issue(null, "official_number", "AUTHENTIC_DUPLICATE_OFFICIAL_NUMBER", `Duplicate official number ${key}.`));
+    }
+    seenOfficialNumbers.add(key);
   }
 }
 

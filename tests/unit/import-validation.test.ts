@@ -294,4 +294,31 @@ describe("import validation", () => {
 
     expect(result.errors.map((error) => error.code)).toContain("INVALID_ACCEPTED_ANSWERS_JSON");
   });
+
+  it("blocks official numbers outside the authentic Part A and Part B ranges", () => {
+    const result = validateImportRows({
+      header: authenticHeader,
+      rows: authenticRows([
+        { index: 0, record: authenticRecord({ part: "A", number: 19 }) },
+        { index: 18, record: authenticRecord({ part: "B", number: 23 }) }
+      ]),
+      examMode: "rikz_russian_2026"
+    });
+
+    expect(result.errors.map((error) => error.code)).toContain("AUTHENTIC_PART_A_NUMBER_RANGE");
+    expect(result.errors.map((error) => error.code)).toContain("AUTHENTIC_PART_B_NUMBER_RANGE");
+  });
+
+  it("blocks duplicate official numbers inside authentic parts", () => {
+    const result = validateImportRows({
+      header: authenticHeader,
+      rows: authenticRows([
+        { index: 1, record: authenticRecord({ part: "A", number: 1 }) },
+        { index: 19, record: authenticRecord({ part: "B", number: 1 }) }
+      ]),
+      examMode: "rikz_russian_2026"
+    });
+
+    expect(result.errors.map((error) => error.code)).toContain("AUTHENTIC_DUPLICATE_OFFICIAL_NUMBER");
+  });
 });
