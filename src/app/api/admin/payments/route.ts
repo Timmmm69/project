@@ -10,7 +10,18 @@ const statusMap = {
   success: "SUCCESS",
   failed: "FAILED",
   cancelled: "CANCELLED",
+  expired: "EXPIRED",
   refunded: "REFUNDED"
+} as const;
+
+const providerMap = {
+  mock: "MOCK",
+  expresspay_epos: "EXPRESSPAY_EPOS",
+  manual: "MANUAL",
+  bepaid: "BEPAID",
+  webpay: "WEBPAY",
+  erip: "ERIP",
+  other: "OTHER"
 } as const;
 
 export async function GET(request: Request) {
@@ -35,7 +46,14 @@ export async function GET(request: Request) {
   const where: Prisma.PaymentWhereInput = {
     ...(parsed.data.testId ? { testId: parsed.data.testId } : {}),
     ...(parsed.data.status ? { status: statusMap[parsed.data.status] } : {}),
-    ...(parsed.data.email ? { user: { email: parsed.data.email } } : {})
+    ...(parsed.data.provider ? { provider: providerMap[parsed.data.provider] } : {}),
+    ...(parsed.data.email ? { user: { email: parsed.data.email } } : {}),
+    ...(parsed.data.npdReceipt === "missing"
+      ? { npdReceiptRequired: true, npdReceiptCreated: false }
+      : {}),
+    ...(parsed.data.npdReceipt === "created"
+      ? { npdReceiptRequired: true, npdReceiptCreated: true }
+      : {})
   };
 
   const items = await prisma.payment.findMany({

@@ -96,7 +96,7 @@ test("student can buy access, complete a test, and see the result", async ({ pag
   await expect(page.getByText("Для этого email пока нет доступа к тесту.")).toBeVisible();
 
   await page.getByRole("button", { name: "Создать тестовую оплату" }).click();
-  await page.getByRole("button", { name: "Подтвердить тестовую оплату" }).click();
+  await page.getByRole("button", { name: "Simulate success payment" }).click();
   await expect(page.getByText("Доступ открыт.")).toBeVisible();
 
   await page.getByRole("button", { name: "Начать тест" }).click();
@@ -112,5 +112,5 @@ test("student can buy access, complete a test, and see the result", async ({ pag
   await expect(page).toHaveURL(/\/results\//);
   await expect(page.getByText("Первичный балл")).toBeVisible();
   await expect(page.getByText("4 / 4")).toBeVisible();
-  await expect(page.getByText("Ошибок нет.")).toBeVisible();
+  await expect(page.getByText("Ошибок нет.", { exact: true })).toBeVisible();
 });

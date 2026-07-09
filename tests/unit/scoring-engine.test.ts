@@ -36,7 +36,7 @@ const baseSnapshot: TestSnapshot = {
       subtopic: "Запятая",
       points: 2,
       scoringRule: "full_match",
-      explanation: "Use full match"
+      explanation: "Use partial match"
     },
     {
       snapshotQuestionId: "q_3",
@@ -55,6 +55,21 @@ const baseSnapshot: TestSnapshot = {
   ]
 };
 
+const rikz2026Scale: ScoringSchemeSnapshot = {
+  scoringSchemeId: "scheme-1",
+  name: "РИКЗ 2026 русский язык ЦЭ/ЦТ",
+  subject: "russian",
+  examType: "ce_ct",
+  year: 2026,
+  maxRawScore: 80,
+  maxScaledScore: 100,
+  scale: [
+    { rawScore: 0, scaledScore: 0 },
+    { rawScore: 40, scaledScore: 52 },
+    { rawScore: 80, scaledScore: 100 }
+  ]
+};
+
 describe("scoreAttemptSnapshot", () => {
   it("scores exact matches and short text alternatives", () => {
     const result = scoreAttemptSnapshot(
@@ -70,11 +85,10 @@ describe("scoreAttemptSnapshot", () => {
     expect(result.rawScore).toBe(4);
     expect(result.maxRawScore).toBe(4);
     expect(result.percent).toBe(100);
-    expect(result.level).toBe("высокий");
-    expect(result.recommendations[0]?.message).toContain("Ошибок нет");
+    expect(result.answers.every((answer) => answer.isCorrect)).toBe(true);
   });
 
-  it("does not award partial points for multiple choice", () => {
+  it("awards one partial point for one multiple choice error", () => {
     const result = scoreAttemptSnapshot(
       baseSnapshot,
       [
@@ -87,8 +101,42 @@ describe("scoreAttemptSnapshot", () => {
 
     const multipleAnswer = result.answers.find((answer) => answer.snapshotQuestionId === "q_2");
     expect(multipleAnswer?.isCorrect).toBe(false);
+    expect(multipleAnswer?.pointsEarned).toBe(1);
+    expect(result.rawScore).toBe(3);
+  });
+
+  it("awards zero multiple choice points for two or more errors", () => {
+    const result = scoreAttemptSnapshot(
+      baseSnapshot,
+      [
+        { snapshotQuestionId: "q_1", selectedAnswer: "B" },
+        { snapshotQuestionId: "q_2", selectedAnswer: "B" },
+        { snapshotQuestionId: "q_3", selectedAnswer: "молоко" }
+      ],
+      null
+    );
+
+    const multipleAnswer = result.answers.find((answer) => answer.snapshotQuestionId === "q_2");
+    expect(multipleAnswer?.isCorrect).toBe(false);
     expect(multipleAnswer?.pointsEarned).toBe(0);
     expect(result.rawScore).toBe(2);
+  });
+
+  it("does not award partial points for short text", () => {
+    const result = scoreAttemptSnapshot(
+      baseSnapshot,
+      [
+        { snapshotQuestionId: "q_1", selectedAnswer: "B" },
+        { snapshotQuestionId: "q_2", selectedAnswer: "A,C" },
+        { snapshotQuestionId: "q_3", selectedAnswer: "мол" }
+      ],
+      null
+    );
+
+    const shortTextAnswer = result.answers.find((answer) => answer.snapshotQuestionId === "q_3");
+    expect(shortTextAnswer?.isCorrect).toBe(false);
+    expect(shortTextAnswer?.pointsEarned).toBe(0);
+    expect(result.rawScore).toBe(3);
   });
 
   it("treats missing answers as mistakes", () => {
@@ -100,38 +148,44 @@ describe("scoreAttemptSnapshot", () => {
     expect(result.topicResults.every((topic) => topic.status === "weak")).toBe(true);
   });
 
-  it("maps scaled score from scoring scheme snapshot for CE/CT mode", () => {
-    const ceCtSnapshot: TestSnapshot = {
-      ...baseSnapshot,
-      mode: "ce_ct"
-    };
-    const scoringScheme: ScoringSchemeSnapshot = {
-      scoringSchemeId: "scheme-1",
-      name: "Training scale",
-      subject: "russian",
-      examType: "ct",
-      year: 2026,
-      maxRawScore: 4,
-      maxScaledScore: 100,
-      scale: [
-        { rawScore: 0, scaledScore: 0 },
-        { rawScore: 2, scaledScore: 51 },
-        { rawScore: 4, scaledScore: 100 }
-      ]
-    };
-
+  it("does not map scaled score for incomplete CE/CT tests", () => {
     const result = scoreAttemptSnapshot(
-      ceCtSnapshot,
+      { ...baseSnapshot, mode: "ce_ct" },
       [
         { snapshotQuestionId: "q_1", selectedAnswer: "B" },
         { snapshotQuestionId: "q_2", selectedAnswer: "A" },
         { snapshotQuestionId: "q_3", selectedAnswer: "молоко" }
       ],
-      scoringScheme
+      rikz2026Scale
     );
 
-    expect(result.rawScore).toBe(2);
-    expect(result.scaledScore).toBe(51);
+    expect(result.rawScore).toBe(3);
+    expect(result.maxRawScore).toBe(4);
+    expect(result.scaledScore).toBeNull();
+    expect(result.maxScaledScore).toBeNull();
+  });
+
+  it("maps scaled score only for a full Russian CE/CT 2026 scale", () => {
+    const fullSnapshot: TestSnapshot = {
+      ...baseSnapshot,
+      mode: "ce_ct",
+      maxRawScore: 80,
+      questions: [
+        {
+          ...baseSnapshot.questions[0],
+          points: 80
+        }
+      ]
+    };
+
+    const result = scoreAttemptSnapshot(
+      fullSnapshot,
+      [{ snapshotQuestionId: "q_1", selectedAnswer: "B" }],
+      rikz2026Scale
+    );
+
+    expect(result.rawScore).toBe(80);
+    expect(result.scaledScore).toBe(100);
     expect(result.maxScaledScore).toBe(100);
   });
 });

@@ -122,6 +122,13 @@ export function runPublishCheck(test: PublishCheckInput) {
     }
 
     if (question.questionType === "MULTIPLE_CHOICE") {
+      if (question.points !== 2) {
+        errors.push({
+          code: "QUESTION_MULTIPLE_CHOICE_POINTS_UNSUPPORTED",
+          message: `Вопрос ${number}: для multiple_choice points должен быть равен 2`
+        });
+      }
+
       const options = filledOptions(question);
       if (options.length < 2) {
         errors.push({ code: "QUESTION_OPTIONS_REQUIRED", message: `Вопрос ${number}: нужно минимум 2 варианта` });

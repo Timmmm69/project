@@ -128,4 +128,30 @@ describe("import validation", () => {
     expect(result.warnings.map((warning) => warning.code)).toContain("SHORT_TEXT_OPTIONS_IGNORED");
     expect(result.preview[0]?.optionA).toBeNull();
   });
+
+  it("blocks multiple choice rows without the MVP two-point rule", () => {
+    const result = validateImportRows({
+      header,
+      rows: [
+        mapRecordToImportRow(2, [
+          "Choose many",
+          "multiple_choice",
+          "A text",
+          "B text",
+          "C text",
+          "",
+          "A,C",
+          "Topic",
+          "",
+          "medium",
+          "1",
+          "",
+          ""
+        ])
+      ]
+    });
+
+    expect(result.preview).toHaveLength(0);
+    expect(result.errors.map((error) => error.code)).toContain("MULTIPLE_CHOICE_POINTS_UNSUPPORTED");
+  });
 });

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 
 type AttemptQuestion = {
   snapshotQuestionId: string;
@@ -73,6 +73,8 @@ function toggleMultipleAnswer(current: string, letter: string) {
 export function AttemptRunner({ attemptId }: { attemptId: string }) {
   const [attempt, setAttempt] = useState<AttemptPayload | null>(null);
   const [answers, setAnswers] = useState<Record<string, string>>({});
+  const answersRef = useRef<Record<string, string>>({});
+  const saveQueuesRef = useRef<Record<string, Promise<void>>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
@@ -87,14 +89,14 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
     }
 
     const loaded = body.data.attempt;
-    setAttempt(loaded);
-    setAnswers(
-      Object.fromEntries(
-        loaded.answers
-          .filter((answer) => answer.snapshotQuestionId)
-          .map((answer) => [answer.snapshotQuestionId as string, answer.selectedAnswer ?? ""])
-      )
+    const loadedAnswers = Object.fromEntries(
+      loaded.answers
+        .filter((answer) => answer.snapshotQuestionId)
+        .map((answer) => [answer.snapshotQuestionId as string, answer.selectedAnswer ?? ""])
     );
+    setAttempt(loaded);
+    answersRef.current = loadedAnswers;
+    setAnswers(loadedAnswers);
 
     const serverNow = new Date(loaded.serverNow).getTime();
     const endsAt = new Date(loaded.endsAt).getTime();
@@ -126,8 +128,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
     [answers]
   );
 
-  async function saveAnswer(question: AttemptQuestion, value: string) {
-    setAnswers((current) => ({ ...current, [question.snapshotQuestionId]: value }));
+  async function persistAnswer(question: AttemptQuestion, value: string) {
     setMessage(null);
 
     const response = await fetch(`/api/attempts/${attemptId}/answers`, {
@@ -144,6 +145,25 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
     }
   }
 
+  function saveAnswer(question: AttemptQuestion, value: string) {
+    const nextAnswers = {
+      ...answersRef.current,
+      [question.snapshotQuestionId]: value
+    };
+    answersRef.current = nextAnswers;
+    setAnswers(nextAnswers);
+    const previousSave = saveQueuesRef.current[question.snapshotQuestionId] ?? Promise.resolve();
+    const nextSave = previousSave
+      .catch(() => undefined)
+      .then(() => persistAnswer(question, value));
+    saveQueuesRef.current[question.snapshotQuestionId] = nextSave;
+  }
+
+  function saveMultipleAnswer(question: AttemptQuestion, letter: string) {
+    const currentValue = answersRef.current[question.snapshotQuestionId] ?? "";
+    saveAnswer(question, toggleMultipleAnswer(currentValue, letter));
+  }
+
   async function handleComplete() {
     if (!confirm("Завершить тест? После этого ответы нельзя будет изменить.")) {
       return;
@@ -151,6 +171,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
 
     setBusy(true);
     setMessage(null);
+    await Promise.all(Object.values(saveQueuesRef.current));
     const response = await fetch(`/api/attempts/${attemptId}/complete`, { method: "POST" });
     const body = await readJson<{ resultUrl: string }>(response);
     setBusy(false);
@@ -254,7 +275,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                         type="checkbox"
                         checked={value.split(",").includes(letter)}
                         disabled={isFinished}
-                        onChange={() => saveAnswer(question, toggleMultipleAnswer(value, letter))}
+                        onChange={() => saveMultipleAnswer(question, letter)}
                       />
                       <span>
                         {letter}. {label}

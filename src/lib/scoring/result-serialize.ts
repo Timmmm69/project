@@ -4,9 +4,11 @@ import type { Recommendation, TopicResult } from "@/lib/scoring/scoring-engine";
 
 type AttemptResultPayload = Attempt & {
   user?: Pick<User, "email">;
-  test?: Pick<Test, "title" | "slug" | "mode" | "showPercent" | "showCorrectAnswers" | "showTopicResult" | "showRecommendations">;
+  test?: Pick<Test, "title" | "slug" | "mode" | "showCorrectAnswers">;
   answers: Answer[];
 };
+
+type ResultAudience = "student" | "admin";
 
 function jsonArray<T>(value: Prisma.JsonValue | null): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
@@ -20,8 +22,30 @@ function displayAnswer(answer: string | null) {
   return answer && answer.trim().length > 0 ? answer : "Ответ не дан";
 }
 
-export function serializeResult(attempt: AttemptResultPayload) {
+function scaledScoreNote(snapshot: ReturnType<typeof parseTestSnapshot>, attempt: AttemptResultPayload) {
+  if (snapshot.mode !== "ce_ct") {
+    return null;
+  }
+
+  if (attempt.scaledScore !== null) {
+    return "Тренировочный расчёт по таблице соответствия первичных и тестовых баллов РИКЗ. Не является официальным результатом ЦЭ/ЦТ.";
+  }
+
+  if ((attempt.maxRawScore ?? snapshot.maxRawScore) !== 80) {
+    return "Тестовый балл не рассчитывается для неполного теста. Для расчёта по шкале РИКЗ нужен полный тест с максимумом 80 первичных баллов.";
+  }
+
+  return "Тестовый балл не рассчитан: для этой попытки нет подходящей шкалы РИКЗ.";
+}
+
+export function serializeResult(
+  attempt: AttemptResultPayload,
+  options: { audience?: ResultAudience } = {}
+) {
+  const audience = options.audience ?? "student";
   const snapshot = parseTestSnapshot(attempt.testSnapshot);
+  const showCorrectAnswers = audience === "admin" || (attempt.test?.showCorrectAnswers ?? true);
+  const showTopicReference = audience === "admin" || showCorrectAnswers;
   const answerByQuestion = new Map(
     attempt.answers
       .filter((answer) => answer.snapshotQuestionId)
@@ -41,12 +65,12 @@ export function serializeResult(attempt: AttemptResultPayload) {
         question_text: question.questionText,
         question_type: question.questionType,
         selected_answer: displayAnswer(answer?.selectedAnswer ?? null),
-        correct_answer: question.correctAnswer,
-        topic: question.topic,
-        subtopic: question.subtopic,
+        correct_answer: showCorrectAnswers ? question.correctAnswer : null,
+        topic: showTopicReference ? question.topic : null,
+        subtopic: showTopicReference ? question.subtopic : null,
         points_earned: answer?.pointsEarned ?? 0,
         max_points: answer?.maxPoints ?? question.points,
-        explanation: question.explanation
+        explanation: showCorrectAnswers ? question.explanation : null
       }
     ];
   });
@@ -64,16 +88,13 @@ export function serializeResult(attempt: AttemptResultPayload) {
     duration_seconds: attempt.durationSeconds,
     raw_score: attempt.rawScore,
     max_raw_score: attempt.maxRawScore,
-    percent: decimalToNumber(attempt.percent),
-    level: attempt.level,
+    percent: audience === "admin" ? decimalToNumber(attempt.percent) : null,
+    level: audience === "admin" ? attempt.level : null,
     scaled_score: attempt.scaledScore,
     max_scaled_score: attempt.maxScaledScore,
-    scaled_score_note:
-      attempt.scaledScore === null
-        ? null
-        : "Тренировочный расчёт по таблице соответствия первичных и тестовых баллов.",
-    topic_results: jsonArray<TopicResult>(attempt.topicResults),
-    recommendations: jsonArray<Recommendation>(attempt.recommendations),
+    scaled_score_note: scaledScoreNote(snapshot, attempt),
+    topic_results: audience === "admin" ? jsonArray<TopicResult>(attempt.topicResults) : [],
+    recommendations: audience === "admin" ? jsonArray<Recommendation>(attempt.recommendations) : [],
     mistakes
   };
 }

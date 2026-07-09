@@ -12,6 +12,27 @@ function normalizeStudentAnswer(questionType: "single_choice" | "multiple_choice
   return normalizeCorrectAnswer(questionType, answer);
 }
 
+export function resolveAttemptCompletion(input: {
+  now: Date;
+  startedAt: Date;
+  durationMinutes: number;
+  expire: boolean;
+}) {
+  const endsAt = new Date(input.startedAt.getTime() + input.durationMinutes * 60 * 1000);
+  if (input.expire && input.now < endsAt) {
+    throw new Error("ATTEMPT_TIME_NOT_EXPIRED");
+  }
+
+  const isExpired = input.expire || input.now >= endsAt;
+  const finishedAt = isExpired ? endsAt : input.now;
+
+  return {
+    endsAt,
+    finishedAt,
+    status: isExpired ? "EXPIRED" as const : "COMPLETED" as const
+  };
+}
+
 export async function getAttemptForStudent(input: {
   attemptId: string;
   studentId: string;
@@ -92,7 +113,8 @@ export async function startOrRestoreAttempt(input: {
       const test = await tx.test.findFirst({
         where: {
           id: input.testId,
-          deletedAt: null
+          deletedAt: null,
+          status: "PUBLISHED"
         },
         include: {
           scoringScheme: {
@@ -275,12 +297,14 @@ export async function completeAttempt(input: {
   }
 
   const snapshot = parseTestSnapshot(attempt.testSnapshot);
-  const endsAt = new Date(attempt.startedAt.getTime() + snapshot.durationMinutes * 60 * 1000);
-  if (input.expire && now < endsAt) {
-    throw new Error("ATTEMPT_TIME_NOT_EXPIRED");
-  }
+  const completionState = resolveAttemptCompletion({
+    now,
+    startedAt: attempt.startedAt,
+    durationMinutes: snapshot.durationMinutes,
+    expire: input.expire
+  });
 
-  const finishedAt = now;
+  const finishedAt = completionState.finishedAt;
   const completion = await prisma.$transaction(async (tx) => {
     const attemptWithAnswers = await tx.attempt.findUnique({
       where: { id: attempt.id },
@@ -342,7 +366,7 @@ export async function completeAttempt(input: {
         status: "STARTED"
       },
       data: {
-        status: input.expire ? "EXPIRED" : "COMPLETED",
+        status: completionState.status,
         finishedAt,
         durationSeconds: Math.max(0, Math.floor((finishedAt.getTime() - attempt.startedAt.getTime()) / 1000)),
         rawScore: scoringResult.rawScore,
@@ -390,7 +414,7 @@ export async function completeAttempt(input: {
   }
 
   await logEvent({
-    eventType: input.expire ? "attempt_expired" : "attempt_completed",
+    eventType: completionState.status === "EXPIRED" ? "attempt_expired" : "attempt_completed",
     actorUserId: input.studentId,
     entityType: "attempt",
     entityId: attempt.id,

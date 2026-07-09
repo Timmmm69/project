@@ -75,7 +75,15 @@ type PaymentItem = {
   currency: string;
   status: string;
   provider: string;
+  providerPaymentId: string | null;
+  providerInvoiceId: string | null;
+  providerAccountNumber: string | null;
+  providerStatus: string | null;
   accessId: string | null;
+  accessCreated: boolean;
+  npdReceiptRequired: boolean;
+  npdReceiptCreated: boolean;
+  npdReceiptCreatedAt: string | null;
   createdAt: string;
 };
 
@@ -532,6 +540,24 @@ export function AdminDashboard() {
 
     setMessage("Код отозван.");
     await loadAdminAccessData(selectedTestId);
+  }
+
+  async function handleMarkNpdReceiptCreated(paymentId: string) {
+    const response = await fetch(`/api/admin/payments/${paymentId}/npd-receipt-created`, {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ note: "NPD receipt created manually" })
+    });
+    const body = await readJson<{ payment: PaymentItem }>(response);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+
+    setPayments((current) =>
+      current.map((payment) => (payment.id === paymentId ? body.data.payment : payment))
+    );
+    setMessage("NPD receipt marked as created.");
   }
 
   async function handleQuestionOrder(questionId: string, direction: "up" | "down") {
@@ -1073,7 +1099,10 @@ export function AdminDashboard() {
                     <th>Провайдер</th>
                     <th>Статус</th>
                     <th>Сумма</th>
+                    <th>Provider ID</th>
+                    <th>Account</th>
                     <th>Access</th>
+                    <th>NPD</th>
                   </tr>
                 </thead>
                 <tbody>
@@ -1086,11 +1115,31 @@ export function AdminDashboard() {
                       <tr key={paymentItem.id}>
                         <td>{paymentItem.email}</td>
                         <td>{paymentItem.provider}</td>
-                        <td>{paymentItem.status}</td>
+                        <td>{paymentItem.providerInvoiceId ?? paymentItem.providerPaymentId ?? "-"}</td>
+                        <td>{paymentItem.providerAccountNumber ?? "-"}</td>
+                        <td>
+                          {paymentItem.status}
+                          {paymentItem.providerStatus ? <p className="muted">{paymentItem.providerStatus}</p> : null}
+                        </td>
                         <td>
                           {(paymentItem.amount / 100).toFixed(2)} {paymentItem.currency}
                         </td>
-                        <td>{paymentItem.accessId ? "created" : "-"}</td>
+                        <td>{paymentItem.accessCreated ? "created" : "-"}</td>
+                        <td>
+                          {!paymentItem.npdReceiptRequired ? (
+                            "-"
+                          ) : paymentItem.npdReceiptCreated ? (
+                            "created"
+                          ) : (
+                            <button
+                              className="button secondary small"
+                              type="button"
+                              onClick={() => handleMarkNpdReceiptCreated(paymentItem.id)}
+                            >
+                              Mark created
+                            </button>
+                          )}
+                        </td>
                       </tr>
                     ))
                   )}

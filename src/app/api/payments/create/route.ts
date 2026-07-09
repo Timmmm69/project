@@ -1,16 +1,10 @@
 import { apiFailure, apiSuccess } from "@/lib/api-response";
-import { isMockPaymentsEnabled } from "@/lib/payments/mock-payments-enabled";
+import { createPaymentForTest } from "@/lib/payments/payment-service";
 import { publicCreatePaymentSchema } from "@/lib/payments/payment-schemas";
+import { PaymentProviderConfigurationError } from "@/lib/payments/providers/types";
 import { serializePayment } from "@/lib/payments/serialize";
-import { findOrCreateStudent } from "@/lib/users/students";
-import { prisma } from "@/server/db/client";
-import { logEvent } from "@/server/events/log-event";
 
 export async function POST(request: Request) {
-  if (!isMockPaymentsEnabled()) {
-    return apiFailure({ code: "PAYMENT_PROVIDER_DISABLED", message: "Mock payments are disabled" }, 403);
-  }
-
   const parsed = publicCreatePaymentSchema.safeParse(await request.json().catch(() => null));
   if (!parsed.success) {
     return apiFailure(
@@ -23,78 +17,38 @@ export async function POST(request: Request) {
     );
   }
 
-  const test = await prisma.test.findFirst({
-    where: {
-      id: parsed.data.testId,
-      status: "PUBLISHED",
-      deletedAt: null
-    },
-    select: {
-      id: true,
-      title: true,
-      slug: true,
-      price: true,
-      currency: true
-    }
-  });
-
-  if (!test) {
-    return apiFailure({ code: "NOT_FOUND", message: "Test not found" }, 404);
-  }
-
-  let student;
   try {
-    student = await findOrCreateStudent({ email: parsed.data.email });
-  } catch {
-    return apiFailure({ code: "EMAIL_NOT_AVAILABLE", message: "Email cannot be used for student access" }, 409);
-  }
-
-  const payment = await prisma.$transaction(async (tx) => {
-    const created = await tx.payment.create({
-      data: {
-        userId: student.id,
-        testId: test.id,
-        amount: test.price,
-        currency: test.currency,
-        provider: "MOCK",
-        status: "PENDING"
-      }
+    const provider =
+      parsed.data.provider === "mock"
+        ? "MOCK"
+        : parsed.data.provider === "expresspay_epos"
+          ? "EXPRESSPAY_EPOS"
+          : undefined;
+    const payment = await createPaymentForTest({
+      email: parsed.data.email,
+      testId: parsed.data.testId,
+      request,
+      provider
     });
 
-    return tx.payment.update({
-      where: { id: created.id },
-      data: {
-        providerPaymentId: `mock_${created.id}`
-      },
-      include: {
-        user: { select: { email: true } },
-        test: { select: { title: true, slug: true } },
-        access: { select: { id: true } }
-      }
-    });
-  });
-
-  await logEvent({
-    eventType: "payment_created",
-    actorUserId: student.id,
-    entityType: "payment",
-    entityId: payment.id,
-    payload: {
-      testId: test.id,
-      provider: "mock",
-      amount: test.price,
-      currency: test.currency
+    return apiSuccess({ payment: serializePayment(payment) }, { status: 201 });
+  } catch (error) {
+    if (error instanceof PaymentProviderConfigurationError) {
+      return apiFailure({ code: "PAYMENT_PROVIDER_NOT_CONFIGURED", message: error.message }, 503);
     }
-  });
+    if (error instanceof Error && error.message === "TEST_NOT_FOUND") {
+      return apiFailure({ code: "NOT_FOUND", message: "Test not found" }, 404);
+    }
+    if (error instanceof Error && error.message === "PAYMENT_CURRENCY_NOT_SUPPORTED") {
+      return apiFailure({ code: "PAYMENT_CURRENCY_NOT_SUPPORTED", message: "Only BYN payments are supported" }, 409);
+    }
+    if (error instanceof Error && error.message === "EMAIL_NOT_AVAILABLE") {
+      return apiFailure({ code: "EMAIL_NOT_AVAILABLE", message: "Email cannot be used for student access" }, 409);
+    }
+    if (error instanceof Error && error.message.startsWith("PAYMENT_PROVIDER_UNSUPPORTED")) {
+      return apiFailure({ code: "PAYMENT_PROVIDER_UNSUPPORTED", message: "Payment provider is not supported" }, 409);
+    }
 
-  return apiSuccess(
-    {
-      payment: serializePayment(payment),
-      mock: {
-        paymentId: payment.id,
-        webhookPath: "/api/payments/webhook/mock"
-      }
-    },
-    { status: 201 }
-  );
+    return apiFailure({ code: "PAYMENT_CREATE_FAILED", message: "Payment cannot be created" }, 500);
+  }
 }

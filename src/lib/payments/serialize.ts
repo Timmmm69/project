@@ -21,9 +21,23 @@ export function serializePayment(payment: PaymentWithRelations) {
     status: payment.status.toLowerCase(),
     provider: payment.provider.toLowerCase(),
     providerPaymentId: payment.providerPaymentId,
+    providerInvoiceId: payment.providerInvoiceId,
+    providerAccountNumber: payment.providerAccountNumber,
+    paymentUrl: payment.paymentUrl,
+    qrCodeUrl: payment.qrCodeUrl,
+    qrCodePayload: payment.qrCodePayload,
+    paymentInstructions: payment.paymentInstructions,
+    providerStatus: payment.providerStatus,
     accessId: payment.access?.id ?? null,
+    accessCreated: Boolean(payment.access?.id),
+    npdReceiptRequired: payment.npdReceiptRequired,
+    npdReceiptCreated: payment.npdReceiptCreated,
+    npdReceiptCreatedAt: payment.npdReceiptCreatedAt,
+    npdReceiptNote: payment.npdReceiptNote,
     createdAt: payment.createdAt,
     paidAt: payment.paidAt,
-    failedAt: payment.failedAt
+    failedAt: payment.failedAt,
+    cancelledAt: payment.cancelledAt,
+    expiredAt: payment.expiredAt
   };
 }

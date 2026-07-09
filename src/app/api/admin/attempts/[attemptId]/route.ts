@@ -47,5 +47,5 @@ export async function GET(_request: Request, context: RouteContext) {
     return apiFailure({ code: "NOT_FOUND", message: "Attempt not found" }, 404);
   }
 
-  return apiSuccess({ result: serializeResult(attempt) });
+  return apiSuccess({ result: serializeResult(attempt, { audience: "admin" }) });
 }

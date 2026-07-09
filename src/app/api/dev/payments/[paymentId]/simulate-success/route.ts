@@ -1,55 +1,50 @@
 import { apiFailure, apiSuccess } from "@/lib/api-response";
-import { applyPaymentStatusUpdate } from "@/lib/payments/payment-service";
 import { isMockPaymentsEnabled } from "@/lib/payments/mock-payments-enabled";
-import { mockPaymentWebhookSchema } from "@/lib/payments/payment-schemas";
+import { applyPaymentStatusUpdate } from "@/lib/payments/payment-service";
 import { serializePayment } from "@/lib/payments/serialize";
+import { uuidSchema } from "@/lib/validation/schemas";
 import { prisma } from "@/server/db/client";
 import { sendAccessEmail } from "@/server/emails/send-access-email";
 import { logEvent } from "@/server/events/log-event";
 
+type RouteContext = {
+  params: Promise<{
+    paymentId: string;
+  }>;
+};
+
 function testLink(request: Request, slug: string) {
   const url = new URL(request.url);
-  return `${url.origin}/tests/${slug}`;
+  return `${process.env.APP_URL || url.origin}/tests/${slug}`;
 }
 
-export async function POST(request: Request) {
+export async function POST(request: Request, context: RouteContext) {
   if (!isMockPaymentsEnabled()) {
-    return apiFailure({ code: "PAYMENT_PROVIDER_DISABLED", message: "Mock payments are disabled" }, 403);
+    return apiFailure({ code: "DEV_ENDPOINT_DISABLED", message: "Dev payment endpoints are disabled" }, 404);
   }
 
-  const parsed = mockPaymentWebhookSchema.safeParse(await request.json().catch(() => null));
-  if (!parsed.success) {
-    return apiFailure(
-      {
-        code: "VALIDATION_ERROR",
-        message: "Invalid webhook data",
-        details: parsed.error.flatten()
-      },
-      422
-    );
-  }
-
-  const providerStatus = parsed.data.status;
-  let result;
-  try {
-    result = await applyPaymentStatusUpdate({
-      paymentId: parsed.data.paymentId,
-      provider: "MOCK",
-      providerStatus,
-      status: providerStatus,
-      rawPayload: {
-        provider: "mock",
-        paymentId: parsed.data.paymentId,
-        status: providerStatus,
-        receivedAt: new Date().toISOString()
-      }
-    });
-  } catch {
+  const { paymentId } = await context.params;
+  const parsedId = uuidSchema.safeParse(paymentId);
+  if (!parsedId.success) {
     return apiFailure({ code: "NOT_FOUND", message: "Payment not found" }, 404);
   }
 
+  const result = await applyPaymentStatusUpdate({
+    paymentId: parsedId.data,
+    provider: "MOCK",
+    providerStatus: "success",
+    status: "success",
+    rawPayload: {
+      provider: "mock",
+      paymentId: parsedId.data,
+      status: "success",
+      source: "dev_simulate_success",
+      receivedAt: new Date().toISOString()
+    }
+  });
+
   const payment = await prisma.payment.findUniqueOrThrow({
-    where: { id: parsed.data.paymentId },
+    where: { id: result.payment.id },
     include: {
       user: { select: { id: true, email: true } },
       test: { select: { title: true, slug: true } },
@@ -58,20 +53,16 @@ export async function POST(request: Request) {
   });
 
   await logEvent({
-    eventType: parsed.data.status === "success" ? "payment_success" : "payment_failed",
+    eventType: result.statusChanged ? "payment_success" : "payment_duplicate_webhook_ignored",
     actorUserId: payment.userId,
     entityType: "payment",
     entityId: payment.id,
-    payload: {
-      provider: "mock",
-      idempotent: !result.statusChanged,
-      createdAccess: result.createdAccess
-    }
+    payload: { provider: "mock", source: "dev_simulate_success", createdAccess: result.createdAccess }
   });
 
   if (result.createdAccess && payment.access) {
     await logEvent({
-      eventType: "access_created",
+      eventType: "payment_access_created",
       actorUserId: payment.userId,
       entityType: "access",
       entityId: payment.access.id,

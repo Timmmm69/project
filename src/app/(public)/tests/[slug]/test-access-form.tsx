@@ -32,7 +32,17 @@ type PaymentSummary = {
   amount: number;
   currency: string;
   status: string;
+  provider: string;
+  providerPaymentId: string | null;
+  providerInvoiceId: string | null;
+  providerAccountNumber: string | null;
+  paymentUrl: string | null;
+  qrCodeUrl: string | null;
+  qrCodePayload: string | null;
+  paymentInstructions: string | null;
+  providerStatus: string | null;
   accessId: string | null;
+  accessCreated: boolean;
 };
 
 type ApiSuccess<T> = {
@@ -49,6 +59,7 @@ type ApiFailure = {
 };
 
 type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
+type MessageTone = "error" | "info" | "success";
 
 async function readJson<T>(response: Response) {
   return (await response.json()) as ApiResponse<T>;
@@ -77,7 +88,18 @@ export function TestAccessForm({ testId }: { testId: string }) {
   const [payment, setPayment] = useState<PaymentSummary | null>(null);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
+  const [messageTone, setMessageTone] = useState<MessageTone>("info");
   const [accessResult, setAccessResult] = useState<AccessCheckResult | null>(null);
+
+  function showMessage(text: string, tone: MessageTone) {
+    setMessage(text);
+    setMessageTone(tone);
+  }
+
+  function clearMessage() {
+    setMessage(null);
+    setMessageTone("info");
+  }
 
   async function identifyEmail() {
     const response = await fetch("/api/students/identify", {
@@ -87,7 +109,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
     });
     const identifyBody = await readJson<{ student: { id: string; email: string } }>(response);
     if (!identifyBody.success) {
-      setMessage(identifyBody.error.message);
+      showMessage(identifyBody.error.message, "error");
       return null;
     }
 
@@ -105,7 +127,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
     const accessBody = await readJson<AccessCheckResult>(accessResponse);
 
     if (!accessBody.success) {
-      setMessage(accessBody.error.message);
+      showMessage(accessBody.error.message, "error");
       return null;
     }
 
@@ -116,7 +138,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
   async function handleSubmit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     setBusy(true);
-    setMessage(null);
+    clearMessage();
     setPayment(null);
     setAccessResult(null);
 
@@ -130,7 +152,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
 
   async function handleCreatePayment() {
     setBusy(true);
-    setMessage(null);
+    clearMessage();
     const normalizedEmail = await identifyEmail();
     if (!normalizedEmail) {
       setBusy(false);
@@ -140,48 +162,77 @@ export function TestAccessForm({ testId }: { testId: string }) {
     const response = await fetch("/api/payments/create", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ email: normalizedEmail, testId, provider: "mock" })
+      body: JSON.stringify({ email: normalizedEmail, testId })
     });
     const body = await readJson<{ payment: PaymentSummary }>(response);
     setBusy(false);
 
     if (!body.success) {
-      setMessage(body.error.message);
+      showMessage(body.error.message, "error");
       return;
     }
 
     setPayment(body.data.payment);
-    setMessage("Тестовая оплата создана. Подтвердите её, чтобы открыть доступ.");
+    showMessage("Тестовая оплата создана. Подтвердите её, чтобы открыть доступ.", "info");
   }
 
-  async function handleConfirmPayment() {
+  async function refreshPaymentStatus(paymentId: string) {
+    const response = await fetch(`/api/payments/${paymentId}/status`);
+    const body = await readJson<{ payment: PaymentSummary }>(response);
+    if (!body.success) {
+      showMessage(body.error.message, "error");
+      return null;
+    }
+
+    setPayment(body.data.payment);
+    return body.data.payment;
+  }
+
+  async function handleSimulatePayment(status: "success" | "failed") {
     if (!payment) {
       return;
     }
 
     setBusy(true);
-    setMessage(null);
-    const response = await fetch("/api/payments/webhook/mock", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ paymentId: payment.id, status: "success" })
-    });
+    clearMessage();
+    const response = await fetch(`/api/dev/payments/${payment.id}/simulate-${status}`, { method: "POST" });
     const body = await readJson<{ payment: PaymentSummary; createdAccess: boolean }>(response);
     if (!body.success) {
       setBusy(false);
-      setMessage(body.error.message);
+      showMessage(body.error.message, "error");
       return;
     }
 
     setPayment(body.data.payment);
     await checkAccessForEmail(email);
     setBusy(false);
-    setMessage(body.data.createdAccess ? "Доступ открыт." : "Оплата уже была подтверждена ранее.");
+    if (status === "success") {
+      showMessage(body.data.createdAccess ? "Доступ открыт." : "Оплата уже была подтверждена ранее.", "success");
+    } else {
+      showMessage("Тестовая оплата отмечена как failed. Access не создан.", "info");
+    }
+  }
+
+  async function handleCheckPayment() {
+    if (!payment) {
+      return;
+    }
+
+    setBusy(true);
+    clearMessage();
+    const updated = await refreshPaymentStatus(payment.id);
+    if (updated?.accessCreated) {
+      await checkAccessForEmail(email);
+      showMessage("Оплата подтверждена. Доступ открыт.", "success");
+    } else if (updated) {
+      showMessage(`Статус оплаты: ${updated.status}.`, "info");
+    }
+    setBusy(false);
   }
 
   async function handleActivateCode() {
     setBusy(true);
-    setMessage(null);
+    clearMessage();
     const normalizedEmail = await identifyEmail();
     if (!normalizedEmail) {
       setBusy(false);
@@ -196,19 +247,19 @@ export function TestAccessForm({ testId }: { testId: string }) {
     const body = await readJson<{ access: { id: string } }>(response);
     if (!body.success) {
       setBusy(false);
-      setMessage(body.error.message);
+      showMessage(body.error.message, "error");
       return;
     }
 
     setCode("");
     await checkAccessForEmail(normalizedEmail);
     setBusy(false);
-    setMessage("Код активирован. Доступ открыт.");
+    showMessage("Код активирован. Доступ открыт.", "success");
   }
 
   async function handleStartAttempt() {
     setBusy(true);
-    setMessage(null);
+    clearMessage();
     const normalizedEmail = await identifyEmail();
     if (!normalizedEmail) {
       setBusy(false);
@@ -224,7 +275,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
     setBusy(false);
 
     if (!body.success) {
-      setMessage(body.error.message);
+      showMessage(body.error.message, "error");
       return;
     }
 
@@ -249,7 +300,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
       <button className="button" type="submit" disabled={busy}>
         Проверить доступ
       </button>
-      {message ? <p className="form-error">{message}</p> : null}
+      {message ? <p className={`form-message ${messageTone}`}>{message}</p> : null}
       {text ? (
         <div className={accessResult?.hasAccess ? "state-box success" : "state-box"}>
           <p>{text}</p>
@@ -277,15 +328,38 @@ export function TestAccessForm({ testId }: { testId: string }) {
               Создать тестовую оплату
             </button>
             {payment?.status === "pending" ? (
-              <button className="button" type="button" disabled={busy} onClick={handleConfirmPayment}>
-                Подтвердить тестовую оплату
+              <button className="button secondary" type="button" disabled={busy} onClick={handleCheckPayment}>
+                Проверить оплату
               </button>
+            ) : null}
+            {payment?.provider === "mock" && payment.status === "pending" ? (
+              <>
+                <button className="button" type="button" disabled={busy} onClick={() => handleSimulatePayment("success")}>
+                  Simulate success payment
+                </button>
+                <button className="button secondary" type="button" disabled={busy} onClick={() => handleSimulatePayment("failed")}>
+                  Simulate failed payment
+                </button>
+              </>
             ) : null}
           </div>
           {payment ? (
-            <p className="muted">
-              Оплата: {payment.status}, сумма {(payment.amount / 100).toFixed(2)} {payment.currency}.
-            </p>
+            <div className="stack compact">
+              <p className="muted">
+                Оплата: {payment.status}, сумма {(payment.amount / 100).toFixed(2)} {payment.currency}.
+              </p>
+              <p className="muted">Provider: {payment.provider}{payment.providerStatus ? ` / ${payment.providerStatus}` : ""}</p>
+              {payment.providerAccountNumber ? (
+                <p className="muted">Account number: {payment.providerAccountNumber}</p>
+              ) : null}
+              {payment.paymentUrl ? (
+                <a className="text-link" href={payment.paymentUrl} target="_blank">
+                  Открыть страницу оплаты
+                </a>
+              ) : null}
+              {payment.qrCodePayload ? <p className="muted">QR payload: {payment.qrCodePayload}</p> : null}
+              {payment.paymentInstructions ? <p className="state-box">{payment.paymentInstructions}</p> : null}
+            </div>
           ) : null}
           <label className="field">
             <span>Код доступа</span>

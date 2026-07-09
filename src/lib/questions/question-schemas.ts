@@ -67,6 +67,14 @@ export const adminQuestionInputSchema = baseQuestionSchema
     }
 
     if (data.questionType === "multiple_choice") {
+      if (data.points !== 2) {
+        context.addIssue({
+          code: "custom",
+          path: ["points"],
+          message: "Для multiple_choice в MVP points должен быть равен 2"
+        });
+      }
+
       if (filledOptions(data).length < 2) {
         context.addIssue({
           code: "custom",

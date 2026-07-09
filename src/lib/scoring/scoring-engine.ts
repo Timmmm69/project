@@ -1,5 +1,5 @@
 import type { ScoringSchemeSnapshot, SnapshotQuestion, TestSnapshot } from "@/lib/attempts/snapshot";
-import { normalizeCorrectAnswer } from "@/lib/questions/normalization";
+import { normalizeCorrectAnswer, parseMultipleChoiceLetters } from "@/lib/questions/normalization";
 
 export type TopicStatus = "weak" | "requires_review" | "normal";
 
@@ -67,6 +67,55 @@ function isCorrectAnswer(question: SnapshotQuestion, selectedAnswer: string | nu
   }
 
   return selectedAnswer === normalizedCorrectAnswer;
+}
+
+function symmetricDifferenceSize(left: string[], right: string[]) {
+  const leftSet = new Set(left);
+  const rightSet = new Set(right);
+  let size = 0;
+
+  for (const value of leftSet) {
+    if (!rightSet.has(value)) {
+      size += 1;
+    }
+  }
+  for (const value of rightSet) {
+    if (!leftSet.has(value)) {
+      size += 1;
+    }
+  }
+
+  return size;
+}
+
+function scoreQuestion(question: SnapshotQuestion, selectedAnswer: string | null) {
+  if (!selectedAnswer) {
+    return {
+      isCorrect: false,
+      pointsEarned: 0
+    };
+  }
+
+  if (question.questionType === "multiple_choice") {
+    if (question.points !== 2) {
+      throw new Error("MULTIPLE_CHOICE_POINTS_UNSUPPORTED");
+    }
+
+    const correct = parseMultipleChoiceLetters(question.correctAnswer);
+    const selected = parseMultipleChoiceLetters(selectedAnswer);
+    const diffSize = symmetricDifferenceSize(correct, selected);
+
+    return {
+      isCorrect: diffSize === 0,
+      pointsEarned: diffSize === 0 ? 2 : diffSize === 1 ? 1 : 0
+    };
+  }
+
+  const isCorrect = isCorrectAnswer(question, selectedAnswer);
+  return {
+    isCorrect,
+    pointsEarned: isCorrect ? question.points : 0
+  };
 }
 
 export function getResultLevel(percent: number) {
@@ -178,6 +227,18 @@ function findScaledScore(rawScore: number, scoringSchemeSnapshot: ScoringSchemeS
   };
 }
 
+function canUseScaledScore(snapshot: TestSnapshot, scoringSchemeSnapshot: ScoringSchemeSnapshot | null) {
+  return (
+    snapshot.mode === "ce_ct" &&
+    snapshot.maxRawScore === 80 &&
+    scoringSchemeSnapshot?.subject === "russian" &&
+    scoringSchemeSnapshot.examType === "ce_ct" &&
+    scoringSchemeSnapshot.year === 2026 &&
+    scoringSchemeSnapshot.maxRawScore === 80 &&
+    scoringSchemeSnapshot.maxScaledScore === 100
+  );
+}
+
 export function scoreAttemptSnapshot(
   snapshot: TestSnapshot,
   answers: StudentAnswerInput[],
@@ -191,13 +252,13 @@ export function scoreAttemptSnapshot(
 
   const scoredAnswers = snapshot.questions.map((question) => {
     const selectedAnswer = normalizeStudentAnswer(question, answerByQuestion.get(question.snapshotQuestionId) ?? null);
-    const isCorrect = isCorrectAnswer(question, selectedAnswer);
+    const score = scoreQuestion(question, selectedAnswer);
     return {
       snapshotQuestionId: question.snapshotQuestionId,
       question,
       selectedAnswer,
-      isCorrect,
-      pointsEarned: isCorrect ? question.points : 0,
+      isCorrect: score.isCorrect,
+      pointsEarned: score.pointsEarned,
       maxPoints: question.points
     };
   });
@@ -210,7 +271,9 @@ export function scoreAttemptSnapshot(
 
   const percent = roundPercent((rawScore / maxRawScore) * 100);
   const topicResults = buildTopicResults(scoredAnswers);
-  const scaled = snapshot.mode === "ce_ct" ? findScaledScore(rawScore, scoringSchemeSnapshot) : { scaledScore: null, maxScaledScore: null };
+  const scaled = canUseScaledScore(snapshot, scoringSchemeSnapshot)
+    ? findScaledScore(rawScore, scoringSchemeSnapshot)
+    : { scaledScore: null, maxScaledScore: null };
 
   return {
     answers: scoredAnswers,

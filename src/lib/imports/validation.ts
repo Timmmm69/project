@@ -141,6 +141,12 @@ function validateChoiceAnswer(
   }
 
   const letters = parseMultipleChoiceLetters(candidate.correctAnswer);
+  if (candidate.points !== 2) {
+    errors.push(
+      issue(rowNumber, "points", "MULTIPLE_CHOICE_POINTS_UNSUPPORTED", "Для multiple_choice в MVP points должен быть равен 2.")
+    );
+  }
+
   if (letters.length === 0 || letters.some((letter) => !isOptionLetter(letter) || !optionExists(letter, candidate))) {
     errors.push(
       issue(rowNumber, "correct_answer", "INVALID_MULTIPLE_CHOICE_ANSWER", "correct_answer должен содержать A/B/C/D через запятую и указывать на заполненные варианты.")

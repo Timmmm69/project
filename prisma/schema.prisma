@@ -64,18 +64,20 @@ enum PaymentStatus {
   SUCCESS   @map("success")
   FAILED    @map("failed")
   CANCELLED @map("cancelled")
+  EXPIRED   @map("expired")
   REFUNDED  @map("refunded")
 
   @@map("payment_status")
 }
 
 enum PaymentProvider {
-  MOCK   @map("mock")
-  MANUAL @map("manual")
-  BEPAID @map("bepaid")
-  WEBPAY @map("webpay")
-  ERIP   @map("erip")
-  OTHER  @map("other")
+  MOCK            @map("mock")
+  MANUAL          @map("manual")
+  BEPAID          @map("bepaid")
+  WEBPAY          @map("webpay")
+  ERIP            @map("erip")
+  EXPRESSPAY_EPOS @map("expresspay_epos")
+  OTHER           @map("other")
 
   @@map("payment_provider")
 }
@@ -236,29 +238,46 @@ model Question {
 }
 
 model Payment {
-  id                String          @id @default(uuid()) @db.Uuid
-  userId            String          @map("user_id") @db.Uuid
-  testId            String          @map("test_id") @db.Uuid
-  amount            Int
-  currency          String          @default("BYN")
-  status            PaymentStatus   @default(PENDING)
-  provider          PaymentProvider
-  providerPaymentId String?         @map("provider_payment_id")
-  providerPayload   Json?           @map("provider_payload_json")
-  createdAt         DateTime        @default(now()) @map("created_at")
-  updatedAt         DateTime        @updatedAt @map("updated_at")
-  paidAt            DateTime?       @map("paid_at")
-  failedAt          DateTime?       @map("failed_at")
-  refundedAt        DateTime?       @map("refunded_at")
+  id                         String          @id @default(uuid()) @db.Uuid
+  userId                     String          @map("user_id") @db.Uuid
+  testId                     String          @map("test_id") @db.Uuid
+  amount                     Int
+  currency                   String          @default("BYN")
+  status                     PaymentStatus   @default(PENDING)
+  provider                   PaymentProvider
+  providerPaymentId          String?         @map("provider_payment_id")
+  providerInvoiceId          String?         @map("provider_invoice_id")
+  providerAccountNumber      String?         @map("provider_account_number")
+  paymentUrl                 String?         @map("payment_url")
+  qrCodeUrl                  String?         @map("qr_code_url")
+  qrCodePayload              String?         @map("qr_code_payload")
+  paymentInstructions        String?         @map("payment_instructions")
+  providerStatus             String?         @map("provider_status")
+  providerPayload            Json?           @map("provider_payload_json")
+  providerWebhookPayload     Json?           @map("provider_webhook_payload_json")
+  npdReceiptRequired         Boolean         @default(false) @map("npd_receipt_required")
+  npdReceiptCreated          Boolean         @default(false) @map("npd_receipt_created")
+  npdReceiptCreatedAt        DateTime?       @map("npd_receipt_created_at")
+  npdReceiptNote             String?         @map("npd_receipt_note")
+  createdAt                  DateTime        @default(now()) @map("created_at")
+  updatedAt                  DateTime        @updatedAt @map("updated_at")
+  paidAt                     DateTime?       @map("paid_at")
+  failedAt                   DateTime?       @map("failed_at")
+  cancelledAt                DateTime?       @map("cancelled_at")
+  expiredAt                  DateTime?       @map("expired_at")
+  refundedAt                 DateTime?       @map("refunded_at")
 
   user   User    @relation("PaymentUser", fields: [userId], references: [id])
   test   Test    @relation(fields: [testId], references: [id])
   access Access?
 
   @@unique([provider, providerPaymentId])
+  @@index([provider])
   @@index([userId])
   @@index([testId])
   @@index([status])
+  @@index([providerStatus])
+  @@index([npdReceiptRequired, npdReceiptCreated])
   @@map("payments")
 }
 
