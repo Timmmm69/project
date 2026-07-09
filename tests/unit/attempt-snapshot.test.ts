@@ -38,6 +38,8 @@ describe("attempt snapshot", () => {
       orderIndex: 1,
       questionText: "Choose A",
       questionType: "single_choice",
+      officialPart: null,
+      officialNumber: null,
       options: {
         A: "Alpha",
         B: "Beta"
@@ -209,5 +211,19 @@ describe("attempt snapshot", () => {
     expect(payload).not.toContain("SECRET_PART_B_EXPLANATION");
     expect(payload).not.toContain("scale");
     expect(payload).not.toContain("scaledScore");
+    expect(serialized.questions[0]).toMatchObject({
+      questionType: "multi_select_five",
+      officialPart: "A",
+      officialNumber: 1,
+      options: {
+        E: "Visible E"
+      }
+    });
+    expect(serialized.questions[1]).toMatchObject({
+      questionType: "short_answer_token",
+      officialPart: "B",
+      officialNumber: 1,
+      options: {}
+    });
   });
 });

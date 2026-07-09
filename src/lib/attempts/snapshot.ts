@@ -197,6 +197,8 @@ export function serializeQuestionForStudent(question: SnapshotQuestion) {
     orderIndex: question.orderIndex,
     questionText: question.questionText,
     questionType: question.questionType,
+    officialPart: question.officialPart ?? null,
+    officialNumber: question.officialNumber ?? null,
     options: question.options,
     topic: question.topic,
     subtopic: question.subtopic

@@ -9,5 +9,5 @@ export const startAttemptSchema = z.object({
 
 export const saveAttemptAnswerSchema = z.object({
   snapshotQuestionId: z.string().trim().min(1).max(40),
-  selectedAnswer: z.string().trim().max(2000).nullable()
+  selectedAnswer: z.string().max(2000).nullable()
 });

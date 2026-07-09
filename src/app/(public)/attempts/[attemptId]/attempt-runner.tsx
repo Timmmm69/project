@@ -6,12 +6,15 @@ type AttemptQuestion = {
   snapshotQuestionId: string;
   orderIndex: number;
   questionText: string;
-  questionType: "single_choice" | "multiple_choice" | "short_text";
+  questionType: "single_choice" | "multiple_choice" | "short_text" | "multi_select_five" | "short_answer_token";
+  officialPart: "A" | "B" | null;
+  officialNumber: number | null;
   options: {
     A?: string;
     B?: string;
     C?: string;
     D?: string;
+    E?: string;
   };
   topic: string;
   subtopic: string | null;
@@ -60,7 +63,7 @@ function formatRemaining(totalSeconds: number) {
   return `${minutes}:${seconds.toString().padStart(2, "0")}`;
 }
 
-function toggleMultipleAnswer(current: string, letter: string) {
+export function toggleMultipleAnswer(current: string, letter: string) {
   const values = new Set(current.split(",").filter(Boolean));
   if (values.has(letter)) {
     values.delete(letter);
@@ -68,6 +71,13 @@ function toggleMultipleAnswer(current: string, letter: string) {
     values.add(letter);
   }
   return Array.from(values).sort().join(",");
+}
+
+function questionLabel(question: AttemptQuestion) {
+  if (question.officialPart && question.officialNumber) {
+    return `Part ${question.officialPart}${question.officialNumber}`;
+  }
+  return `Question ${question.orderIndex}`;
 }
 
 export function AttemptRunner({ attemptId }: { attemptId: string }) {
@@ -257,6 +267,9 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                     Вопрос {question.orderIndex}. {question.topic}
                     {question.subtopic ? ` / ${question.subtopic}` : ""}
                   </p>
+                  {question.officialPart && question.officialNumber ? (
+                    <p className="muted">{questionLabel(question)}</p>
+                  ) : null}
                   <h2 className="card-title">{question.questionText}</h2>
                 </div>
 
@@ -279,7 +292,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                   </div>
                 ) : null}
 
-                {question.questionType === "multiple_choice" ? (
+                {question.questionType === "multiple_choice" || question.questionType === "multi_select_five" ? (
                   <div className="answer-options">
                     {Object.entries(question.options).map(([letter, label]) => (
                       <label className="choice-row" key={letter}>
@@ -297,7 +310,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                   </div>
                 ) : null}
 
-                {question.questionType === "short_text" ? (
+                {question.questionType === "short_text" || question.questionType === "short_answer_token" ? (
                   <label className="field">
                     <span>Ответ</span>
                     <input

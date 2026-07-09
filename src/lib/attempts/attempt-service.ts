@@ -1,17 +1,9 @@
 import { Prisma } from "@prisma/client";
-import type { MvpQuestionType } from "@/lib/questions/enums";
-import { normalizeCorrectAnswer } from "@/lib/questions/normalization";
+import { normalizeAttemptAnswer } from "@/lib/attempts/answer-normalization";
 import { buildScoringSchemeSnapshot, buildTestSnapshot, parseScoringSchemeSnapshot, parseTestSnapshot } from "@/lib/attempts/snapshot";
 import { scoreAttemptSnapshot } from "@/lib/scoring/scoring-engine";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
-
-function normalizeStudentAnswer(questionType: MvpQuestionType, answer: string | null) {
-  if (answer === null) {
-    return null;
-  }
-  return normalizeCorrectAnswer(questionType, answer);
-}
 
 export function resolveAttemptCompletion(input: {
   now: Date;
@@ -251,7 +243,7 @@ export async function saveAttemptAnswer(input: {
     throw new Error("QUESTION_NOT_FOUND");
   }
 
-  const selectedAnswer = normalizeStudentAnswer(question.questionType, input.selectedAnswer);
+  const selectedAnswer = normalizeAttemptAnswer(question.questionType, input.selectedAnswer);
   const answer = await prisma.answer.upsert({
     where: {
       attemptId_snapshotQuestionId: {
