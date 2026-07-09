@@ -1,5 +1,5 @@
 import type { Answer, Attempt, Prisma, Test, User } from "@prisma/client";
-import { parseTestSnapshot } from "@/lib/attempts/snapshot";
+import { parseTestSnapshot, type SnapshotQuestion } from "@/lib/attempts/snapshot";
 import type { Recommendation, TopicResult } from "@/lib/scoring/scoring-engine";
 
 type AttemptResultPayload = Attempt & {
@@ -38,6 +38,36 @@ function scaledScoreNote(snapshot: ReturnType<typeof parseTestSnapshot>, attempt
   return "Тестовый балл не рассчитан: для этой попытки нет подходящей шкалы РИКЗ.";
 }
 
+function serializeCompletedQuestionResult(input: {
+  question: SnapshotQuestion;
+  answer: Answer | undefined;
+  showCorrectAnswers: boolean;
+  showTopicReference: boolean;
+}) {
+  const { question, answer, showCorrectAnswers, showTopicReference } = input;
+  const selectedAnswer = answer?.selectedAnswer ?? null;
+
+  return {
+    snapshot_question_id: question.snapshotQuestionId,
+    order_index: question.orderIndex,
+    question_text: question.questionText,
+    question_type: question.questionType,
+    official_part: question.officialPart ?? null,
+    official_number: question.officialNumber ?? null,
+    response_subtype: question.responseSubtype ?? null,
+    selected_answer: displayAnswer(selectedAnswer),
+    normalized_answer: question.questionType === "short_answer_token" ? selectedAnswer : null,
+    correct_answer: showCorrectAnswers ? question.correctAnswer : null,
+    accepted_answers: showCorrectAnswers ? question.acceptedAnswers ?? null : null,
+    topic: showTopicReference ? question.topic : null,
+    subtopic: showTopicReference ? question.subtopic : null,
+    is_correct: answer?.isCorrect ?? false,
+    points_earned: answer?.pointsEarned ?? 0,
+    max_points: answer?.maxPoints ?? question.points,
+    explanation: showCorrectAnswers ? question.explanation : null
+  };
+}
+
 export function serializeResult(
   attempt: AttemptResultPayload,
   options: { audience?: ResultAudience } = {}
@@ -52,28 +82,15 @@ export function serializeResult(
       .map((answer) => [answer.snapshotQuestionId as string, answer])
   );
 
-  const mistakes = snapshot.questions.flatMap((question) => {
-    const answer = answerByQuestion.get(question.snapshotQuestionId);
-    if (answer?.isCorrect) {
-      return [];
-    }
-
-    return [
-      {
-        snapshot_question_id: question.snapshotQuestionId,
-        order_index: question.orderIndex,
-        question_text: question.questionText,
-        question_type: question.questionType,
-        selected_answer: displayAnswer(answer?.selectedAnswer ?? null),
-        correct_answer: showCorrectAnswers ? question.correctAnswer : null,
-        topic: showTopicReference ? question.topic : null,
-        subtopic: showTopicReference ? question.subtopic : null,
-        points_earned: answer?.pointsEarned ?? 0,
-        max_points: answer?.maxPoints ?? question.points,
-        explanation: showCorrectAnswers ? question.explanation : null
-      }
-    ];
-  });
+  const answerDetails = snapshot.questions.map((question) =>
+    serializeCompletedQuestionResult({
+      question,
+      answer: answerByQuestion.get(question.snapshotQuestionId),
+      showCorrectAnswers,
+      showTopicReference
+    })
+  );
+  const mistakes = answerDetails.filter((answer) => !answer.is_correct);
 
   return {
     attempt_id: attempt.id,
@@ -83,6 +100,7 @@ export function serializeResult(
     test_slug: attempt.test?.slug,
     status: attempt.status.toLowerCase(),
     mode: snapshot.mode,
+    exam_mode: snapshot.examMode ?? "generic",
     started_at: attempt.startedAt,
     finished_at: attempt.finishedAt,
     duration_seconds: attempt.durationSeconds,
@@ -95,6 +113,7 @@ export function serializeResult(
     scaled_score_note: scaledScoreNote(snapshot, attempt),
     topic_results: audience === "admin" ? jsonArray<TopicResult>(attempt.topicResults) : [],
     recommendations: audience === "admin" ? jsonArray<Recommendation>(attempt.recommendations) : [],
+    answer_details: answerDetails,
     mistakes
   };
 }
