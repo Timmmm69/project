@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
+import { AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, buildCsvTemplate, IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
 import { mapRecordToImportRow, validateImportRows } from "@/lib/imports/validation";
 
 const header = [...IMPORT_TEMPLATE_COLUMNS];
@@ -73,6 +73,24 @@ function authenticRows(overrides: Array<{ index: number; record: string[] }> = [
 }
 
 describe("import validation", () => {
+  it("keeps the generic template on the old columns", () => {
+    const template = buildCsvTemplate();
+
+    expect(template.split("\n")[0]).toBe(IMPORT_TEMPLATE_COLUMNS.join(","));
+    expect(template).not.toContain("exam_mode");
+  });
+
+  it("builds a placeholder-only rikz_russian_2026 template", () => {
+    const template = buildCsvTemplate("rikz_russian_2026");
+
+    expect(template.split("\n")[0]).toBe(AUTHENTIC_IMPORT_TEMPLATE_COLUMNS.join(","));
+    expect(template).toContain("rikz_russian_2026");
+    expect(template).toContain("Placeholder Part A question 1");
+    expect(template.toLowerCase()).not.toContain("official test");
+    expect(template.toLowerCase()).not.toContain("official simulator");
+    expect(template.toLowerCase()).not.toContain("copy of");
+  });
+
   it("accepts valid single, multiple and short text rows", () => {
     const result = validateImportRows({
       header,

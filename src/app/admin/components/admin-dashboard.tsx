@@ -14,6 +14,9 @@ type TestItem = {
   title: string;
   slug: string;
   mode: "training" | "ce_ct";
+  examMode: "generic" | "rikz_russian_2026";
+  subjectCode: string | null;
+  officialYear: number | null;
   status: "draft" | "published" | "hidden" | "archived";
   price: number;
   currency: string;
@@ -25,12 +28,17 @@ type TestItem = {
 type QuestionItem = {
   id: string;
   questionText: string;
-  questionType: "single_choice" | "multiple_choice" | "short_text";
+  questionType: "single_choice" | "multiple_choice" | "short_text" | "multi_select_five" | "short_answer_token";
   optionA: string | null;
   optionB: string | null;
   optionC: string | null;
   optionD: string | null;
+  optionE: string | null;
   correctAnswer: string;
+  officialPart: "A" | "B" | null;
+  officialNumber: number | null;
+  responseSubtype: "WORD" | "DIGITS" | "ALNUM" | null;
+  acceptedAnswers: unknown;
   topic: string;
   subtopic: string | null;
   difficulty: "easy" | "medium" | "hard" | null;
@@ -47,9 +55,15 @@ type ImportIssue = {
 };
 
 type ImportPreviewQuestion = {
+  examMode?: "generic" | "rikz_russian_2026";
+  officialPart: "A" | "B" | null;
+  officialNumber: number | null;
   questionText: string;
-  questionType: "single_choice" | "multiple_choice" | "short_text";
+  questionType: "single_choice" | "multiple_choice" | "short_text" | "multi_select_five" | "short_answer_token";
+  optionE: string | null;
   correctAnswer: string;
+  acceptedAnswers: string[] | null;
+  responseSubtype: "word" | "digits" | "alnum" | null;
   topic: string;
   points: number;
 };
@@ -142,6 +156,7 @@ type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
 const emptyCreateForm = {
   title: "",
   mode: "training",
+  examMode: "generic",
   price: "0",
   durationMinutes: "60",
   attemptsLimit: "1",
@@ -200,6 +215,28 @@ function statusClass(status: string) {
   return "status-pill";
 }
 
+function examModeLabel(examMode: TestItem["examMode"]) {
+  return examMode === "rikz_russian_2026" ? "CE/CT Russian 2026 format" : "Generic";
+}
+
+function isAuthenticTest(test: TestItem | null) {
+  return test?.examMode === "rikz_russian_2026";
+}
+
+function acceptedAnswersLabel(value: unknown) {
+  if (Array.isArray(value)) {
+    return value.filter((item): item is string => typeof item === "string").join(", ");
+  }
+  return "-";
+}
+
+function previewAnswerLabel(question: ImportPreviewQuestion) {
+  if (question.questionType === "short_answer_token") {
+    return question.acceptedAnswers?.join(", ") || "-";
+  }
+  return question.correctAnswer;
+}
+
 export function AdminDashboard() {
   const [user, setUser] = useState<AdminUser | null>(null);
   const [tests, setTests] = useState<TestItem[]>([]);
@@ -226,6 +263,7 @@ export function AdminDashboard() {
     () => tests.find((test) => test.id === selectedTestId) ?? null,
     [selectedTestId, tests]
   );
+  const selectedTestIsAuthentic = isAuthenticTest(selectedTest);
   const publishedCount = useMemo(() => tests.filter((test) => test.status === "published").length, [tests]);
   const activeAccessCount = useMemo(() => accesses.filter((access) => !access.revokedAt).length, [accesses]);
   const completedAttemptCount = useMemo(
@@ -350,10 +388,13 @@ export function AdminDashboard() {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         title: createForm.title,
-        mode: createForm.mode,
+        mode: createForm.examMode === "rikz_russian_2026" ? "ce_ct" : createForm.mode,
+        examMode: createForm.examMode,
+        subjectCode: createForm.examMode === "rikz_russian_2026" ? "russian" : undefined,
+        officialYear: createForm.examMode === "rikz_russian_2026" ? 2026 : undefined,
         price: Number(createForm.price),
         currency: "BYN",
-        durationMinutes: Number(createForm.durationMinutes),
+        durationMinutes: createForm.examMode === "rikz_russian_2026" ? 120 : Number(createForm.durationMinutes),
         attemptsLimit: Number(createForm.attemptsLimit),
         accessDays: Number(createForm.accessDays),
         shortDescription: createForm.shortDescription || undefined
@@ -706,8 +747,26 @@ export function AdminDashboard() {
           <label className="field">
             <span>Режим</span>
             <select
+              value={createForm.examMode}
+              onChange={(event) =>
+                setCreateForm({
+                  ...createForm,
+                  examMode: event.target.value,
+                  mode: event.target.value === "rikz_russian_2026" ? "ce_ct" : createForm.mode,
+                  durationMinutes: event.target.value === "rikz_russian_2026" ? "120" : createForm.durationMinutes
+                })
+              }
+            >
+              <option value="generic">Generic</option>
+              <option value="rikz_russian_2026">CE/CT Russian 2026 format</option>
+            </select>
+          </label>
+          <label className="field">
+            <span>Mode</span>
+            <select
               value={createForm.mode}
               onChange={(event) => setCreateForm({ ...createForm, mode: event.target.value })}
+              disabled={createForm.examMode === "rikz_russian_2026"}
             >
               <option value="training">Тренировочный</option>
               <option value="ce_ct">ЦЭ/ЦТ</option>
@@ -730,6 +789,7 @@ export function AdminDashboard() {
               onChange={(event) => setCreateForm({ ...createForm, durationMinutes: event.target.value })}
               type="number"
               min="1"
+              disabled={createForm.examMode === "rikz_russian_2026"}
               required
             />
           </label>
@@ -796,7 +856,7 @@ export function AdminDashboard() {
                       <div className="muted">{test.slug}</div>
                     </td>
                     <td><span className={statusClass(test.status)}>{test.status}</span></td>
-                    <td>{test.mode === "ce_ct" ? "ЦЭ/ЦТ" : "training"}</td>
+                    <td><div>{test.mode === "ce_ct" ? "CE/CT" : "training"}</div><div className="muted">{examModeLabel(test.examMode)}</div></td>
                     <td>{test.questionsCount}</td>
                     <td>{test.maxRawScore}</td>
                     <td>{formatMoney(test.price, test.currency)}</td>
@@ -834,7 +894,11 @@ export function AdminDashboard() {
             </div>
             <div>
               <dt>Режим</dt>
-              <dd>{selectedTest.mode === "ce_ct" ? "ЦЭ/ЦТ" : "training"}</dd>
+              <dd>{selectedTest.mode === "ce_ct" ? "CE/CT" : "training"}</dd>
+            </div>
+            <div>
+              <dt>Exam format</dt>
+              <dd>{examModeLabel(selectedTest.examMode)}</dd>
             </div>
             <div>
               <dt>Вопросы</dt>
@@ -862,10 +926,16 @@ export function AdminDashboard() {
               </p>
             </div>
             <div className="inline-actions">
-              <a className="button secondary small" href="/api/admin/import/template?format=xlsx">
+              <a
+                className="button secondary small"
+                href={`/api/admin/import/template?format=xlsx${selectedTestIsAuthentic ? "&examMode=rikz_russian_2026" : ""}`}
+              >
                 Скачать XLSX шаблон
               </a>
-              <a className="button secondary small" href="/api/admin/import/template?format=csv">
+              <a
+                className="button secondary small"
+                href={`/api/admin/import/template?format=csv${selectedTestIsAuthentic ? "&examMode=rikz_russian_2026" : ""}`}
+              >
                 Скачать CSV шаблон
               </a>
             </div>
@@ -927,20 +997,26 @@ export function AdminDashboard() {
                       <thead>
                         <tr>
                           <th>#</th>
-                          <th>Вопрос</th>
-                          <th>Тип</th>
-                          <th>Ответ</th>
-                          <th>Тема</th>
-                          <th>Балл</th>
+                          {selectedTestIsAuthentic ? <th>Part</th> : null}
+                          <th>Question</th>
+                          <th>Type</th>
+                          {selectedTestIsAuthentic ? <th>Subtype</th> : null}
+                          <th>Answer</th>
+                          {selectedTestIsAuthentic ? <th>Option E</th> : null}
+                          <th>Topic</th>
+                          <th>Points</th>
                         </tr>
                       </thead>
                       <tbody>
                         {importJob.preview.slice(0, 10).map((question, index) => (
                           <tr key={`${question.questionText}-${index}`}>
                             <td>{index + 1}</td>
+                            {selectedTestIsAuthentic ? <td>{question.officialPart}{question.officialNumber ?? ""}</td> : null}
                             <td>{question.questionText}</td>
                             <td>{question.questionType}</td>
-                            <td>{question.correctAnswer}</td>
+                            {selectedTestIsAuthentic ? <td>{question.responseSubtype ?? "-"}</td> : null}
+                            <td>{previewAnswerLabel(question)}</td>
+                            {selectedTestIsAuthentic ? <td>{question.optionE ?? "-"}</td> : null}
                             <td>{question.topic}</td>
                             <td>{question.points}</td>
                           </tr>
@@ -1259,6 +1335,14 @@ export function AdminDashboard() {
             </div>
           </section>
 
+          {selectedTestIsAuthentic ? (
+            <div className="state-box">
+              <p>Use the CE/CT Russian 2026 import template for this format.</p>
+              <p className="muted">
+                Manual question creation is kept for generic tests. This helps keep Part A/B, numbering, option E and accepted answers consistent.
+              </p>
+            </div>
+          ) : (
           <form className="form-grid" onSubmit={handleCreateQuestion}>
             <label className="field wide">
               <span>Текст вопроса</span>
@@ -1363,6 +1447,7 @@ export function AdminDashboard() {
               Добавить вопрос
             </button>
           </form>
+          )}
 
           {questions.length === 0 ? (
             <p className="muted">В этом тесте пока нет вопросов.</p>
@@ -1387,9 +1472,22 @@ export function AdminDashboard() {
                       <td>
                         <div className="table-title">{question.questionText}</div>
                         {question.subtopic ? <div className="muted">{question.subtopic}</div> : null}
+                        {selectedTestIsAuthentic ? (
+                          <div className="muted">
+                            Part {question.officialPart ?? "-"}{question.officialNumber ?? ""}. Option E: {question.optionE ?? "-"}
+                          </div>
+                        ) : null}
                       </td>
-                      <td>{question.questionType}</td>
-                      <td>{question.correctAnswer}</td>
+                      <td>
+                        <div>{question.questionType}</div>
+                        {selectedTestIsAuthentic ? <div className="muted">{question.responseSubtype ?? "-"}</div> : null}
+                      </td>
+                      <td>
+                        <div>{question.correctAnswer}</div>
+                        {selectedTestIsAuthentic && question.questionType === "short_answer_token" ? (
+                          <div className="muted">Accepted: {acceptedAnswersLabel(question.acceptedAnswers)}</div>
+                        ) : null}
+                      </td>
                       <td>{question.topic}</td>
                       <td>{question.points}</td>
                       <td>
