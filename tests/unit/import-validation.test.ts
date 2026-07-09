@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { parseCsvImport } from "@/lib/imports/parse";
 import { AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, buildCsvTemplate, IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
 import { mapRecordToImportRow, validateImportRows } from "@/lib/imports/validation";
 
@@ -89,6 +90,24 @@ describe("import validation", () => {
     expect(template.toLowerCase()).not.toContain("official test");
     expect(template.toLowerCase()).not.toContain("official simulator");
     expect(template.toLowerCase()).not.toContain("copy of");
+  });
+
+  it("builds a rikz_russian_2026 CSV template that can be imported back", () => {
+    const parsed = parseCsvImport(Buffer.from(buildCsvTemplate("rikz_russian_2026"), "utf8"));
+    const result = validateImportRows({
+      header: parsed.header,
+      rows: parsed.rows,
+      parseErrors: parsed.errors,
+      examMode: "rikz_russian_2026"
+    });
+
+    expect(parsed.errors).toEqual([]);
+    expect(result.errors).toEqual([]);
+    expect(result.preview).toHaveLength(40);
+    expect(result.preview[18]).toMatchObject({
+      questionType: "short_answer_token",
+      acceptedAnswers: ["placeholder"]
+    });
   });
 
   it("accepts valid single, multiple and short text rows", () => {

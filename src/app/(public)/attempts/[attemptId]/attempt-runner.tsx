@@ -316,13 +316,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                     <input
                       value={value}
                       disabled={isFinished}
-                      onChange={(event) =>
-                        setAnswers((current) => ({
-                          ...current,
-                          [question.snapshotQuestionId]: event.target.value
-                        }))
-                      }
-                      onBlur={(event) => saveAnswer(question, event.target.value)}
+                      onChange={(event) => saveAnswer(question, event.target.value)}
                     />
                   </label>
                 ) : null}

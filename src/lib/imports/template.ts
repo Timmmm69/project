@@ -97,12 +97,16 @@ export function columnsForImportTemplate(mode: ImportTemplateMode = "generic") {
   return mode === "rikz_russian_2026" ? AUTHENTIC_IMPORT_TEMPLATE_COLUMNS : GENERIC_IMPORT_TEMPLATE_COLUMNS;
 }
 
+function escapeCsvCell(value: string) {
+  return `"${value.replaceAll('"', '""')}"`;
+}
+
 export function buildCsvTemplate(mode: ImportTemplateMode = "generic") {
   const columns = columnsForImportTemplate(mode);
   const rows =
     mode === "rikz_russian_2026"
       ? AUTHENTIC_IMPORT_EXAMPLE_ROWS.map((row) =>
-          columns.map((column) => JSON.stringify(row[column] ?? "")).join(",")
+          columns.map((column) => escapeCsvCell(row[column] ?? "")).join(",")
         )
       : [];
 

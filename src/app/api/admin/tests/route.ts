@@ -85,6 +85,19 @@ export async function POST(request: Request) {
   const existing = await prisma.test.findUnique({ where: { slug: baseSlug }, select: { id: true } });
   const slug = existing ? appendSlugSuffix(baseSlug) : baseSlug;
   const isRikzRussian2026 = parsed.data.examMode === "rikz_russian_2026";
+  const defaultRikzScoringScheme = isRikzRussian2026
+    ? await prisma.scoringScheme.findFirst({
+        where: {
+          subject: "RUSSIAN",
+          examType: "ce_ct",
+          year: 2026,
+          maxRawScore: 80,
+          isActive: true
+        },
+        orderBy: { updatedAt: "desc" },
+        select: { id: true }
+      })
+    : null;
 
   const test = await prisma.test.create({
     data: {
@@ -102,6 +115,8 @@ export async function POST(request: Request) {
       durationMinutes: isRikzRussian2026 ? 120 : parsed.data.durationMinutes,
       attemptsLimit: parsed.data.attemptsLimit,
       accessDays: parsed.data.accessDays,
+      scoringSchemeId: defaultRikzScoringScheme?.id ?? null,
+      showScaledScore: isRikzRussian2026 && Boolean(defaultRikzScoringScheme),
       createdByAdminId: admin.id
     }
   });
