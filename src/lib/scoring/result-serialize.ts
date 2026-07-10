@@ -74,7 +74,11 @@ export function serializeResult(
 ) {
   const audience = options.audience ?? "student";
   const snapshot = parseTestSnapshot(attempt.testSnapshot);
-  const showCorrectAnswers = audience === "admin" || (attempt.test?.showCorrectAnswers ?? true);
+  // Authentic CE/CT results never expose answer keys. A review mode, if needed,
+  // must be introduced separately with its own access policy.
+  const isAuthenticRikzRussian = snapshot.examMode === "rikz_russian_2026";
+  const showCorrectAnswers =
+    !isAuthenticRikzRussian && (audience === "admin" || (attempt.test?.showCorrectAnswers ?? true));
   const showTopicReference = audience === "admin" || showCorrectAnswers;
   const answerByQuestion = new Map(
     attempt.answers

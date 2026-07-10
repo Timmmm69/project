@@ -121,6 +121,71 @@ function serializeScoredAttempt(input: {
 }
 
 describe("result serialization", () => {
+  it("keeps generic completed answer review when it is enabled", () => {
+    const genericSnapshot: TestSnapshot = {
+      ...fullRikzSnapshot,
+      examMode: "generic",
+      mode: "training"
+    };
+    const genericScoring = scoreAttemptSnapshot(
+      genericSnapshot,
+      [{ snapshotQuestionId: "a_1", selectedAnswer: "A,C" }],
+      null
+    );
+
+    const result = serializeScoredAttempt({
+      snapshot: genericSnapshot,
+      scoringSchemeSnapshot: null,
+      scoring: genericScoring
+    });
+
+    expect(result.answer_details[0]).toMatchObject({
+      correct_answer: "A,C",
+      explanation: "Part A explanation"
+    });
+  });
+
+  it("never exposes authentic answer keys in a completed result", () => {
+    const scoring = scoreAttemptSnapshot(
+      fullRikzSnapshot,
+      [
+        { snapshotQuestionId: "a_1", selectedAnswer: "A,C" },
+        { snapshotQuestionId: "b_1", selectedAnswer: "token" }
+      ],
+      rikz2026Scale
+    );
+
+    const result = serializeScoredAttempt({
+      snapshot: fullRikzSnapshot,
+      scoringSchemeSnapshot: rikz2026Scale,
+      scoring
+    });
+
+    expect(result.answer_details).toMatchObject([
+      {
+        selected_answer: "A,C",
+        points_earned: 2,
+        official_part: "A",
+        official_number: 1
+      },
+      {
+        selected_answer: "token",
+        points_earned: 78,
+        official_part: "B",
+        official_number: 1
+      }
+    ]);
+    expect(result.scaled_score).toBe(100);
+
+    for (const detail of result.answer_details) {
+      expect(detail.correct_answer).toBeNull();
+      expect(detail.accepted_answers).toBeNull();
+      expect(detail.explanation).toBeNull();
+    }
+    expect(JSON.stringify(result)).not.toContain("Part A explanation");
+    expect(JSON.stringify(result)).not.toContain("token\"]");
+  });
+
   it("serializes full RIKZ Russian 2026 primary and scaled score from snapshot lookup", () => {
     const scoring = scoreAttemptSnapshot(
       fullRikzSnapshot,
