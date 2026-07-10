@@ -1,0 +1,97 @@
+{
+  "schema_version": "rikz_russian_2026.qa.v1",
+  "test_id": "russian_training_variant_01_corrected",
+  "title": "Тренировочный вариант по русскому языку № 1",
+  "exam_mode": "rikz_russian_2026",
+  "exam_format": "ce_ct",
+  "subject_code": "russian",
+  "official_year": 2026,
+  "language": "ru",
+  "duration_minutes": 120,
+  "question_count": 40,
+  "part_counts": {
+    "A": 18,
+    "B": 22
+  },
+  "max_raw_score": 80,
+  "points_per_question": 2,
+  "question_types": {
+    "A": [
+      "multi_select_five"
+    ],
+    "B": [
+      "short_answer_token"
+    ]
+  },
+  "response_subtypes": {
+    "A": [
+      "letter_set_csv"
+    ],
+    "B": [
+      "word",
+      "digits",
+      "alnum"
+    ]
+  },
+  "scoring": {
+    "part_a_partial_policy": "one_error_half_credit",
+    "part_b_partial_policy": "none",
+    "scaled_score_policy": "show_only_if_official_2026_lookup_is_attached"
+  },
+  "normalization_policy": "conservative",
+  "shared_contexts": [
+    {
+      "id": "text_1",
+      "title": "Текст к заданиям A17–A18 и B1–B9",
+      "applies_to": [
+        "A17",
+        "A18",
+        "B1",
+        "B2",
+        "B3",
+        "B4",
+        "B5",
+        "B6",
+        "B7",
+        "B8",
+        "B9"
+      ],
+      "text": "(1) На окраине небольшого города есть старый кирпичный водонапорный резервуар, давно утративший своё назначение.\n\n(2) Несколько лет назад местные биологи предложили превратить его внутренний двор в миниатюрную станцию наблюдения за городскими птицами.\n\n(3) Сначала идея казалась почти невыполнимой: стены закрывали обзор, а рядом проходила шумная дорога.\n\n(4) Однако исследователи не стали перестраивать здание.\n\n(5) Они установили под крышей лёгкие деревянные площадки, высадили во дворе кустарники и оставили узкие щели, через которые птицы могли свободно залетать внутрь.\n\n(6) Уже первой весной здесь появились трясогузки, горихвостки и несколько пар стрижей.\n\n(7) Наблюдения показали, что птицам важна не внешняя «дикость» места, а сочетание укрытий, воды и спокойных участков.\n\n(8) Поэтому теперь станция служит не только лабораторией, но и учебной площадкой: школьники отмечают даты прилёта, сравнивают голоса птиц и учатся видеть закономерности в привычной городской среде.\n\n(9) Этот опыт напоминает, что забота о природе не всегда требует больших территорий; иногда достаточно внимательно переосмыслить пространство, которое кажется бесполезным."
+    }
+  ],
+  "files": {
+    "questions_json": "questions.final.json",
+    "questions_csv": "questions.final.csv",
+    "human_readable_test": "final_test_text.md",
+    "reconciliation_report": "reconciliation_report.md"
+  },
+  "qa": {
+    "review_date": "2026-07-10",
+    "status": "ready_for_human_methodological_review_and_trial_import",
+    "publication_status": "not_approved_for_publication",
+    "reconciliation_status": "completed",
+    "requires_human_decision": false,
+    "discrepancy_records_found": 22,
+    "discrepancy_records_resolved": 22,
+    "resolved_blockers": [
+      "missing_B1_B11_prompts_in_human_readable_source",
+      "B1_key_explanation_conflict",
+      "B16_ambiguous_lexical_norm",
+      "human_readable_text_not_synced_with_corrected_questions"
+    ],
+    "resolved_major_issues": [
+      "A10_context_dependent_distractor",
+      "A18_ambiguous_style_classification",
+      "B14_two_dictionary_equivalent_answers",
+      "B19_B22_missing_fifth_distractor_in_original_text",
+      "part_A_normalization_policy_mismatch"
+    ],
+    "notes": [
+      "Финальный JSON и CSV построены из одного согласованного массива из 40 заданий.",
+      "B1–B11 сохраняют формулировки, явно приведённые в приоритетном QA-отчёте.",
+      "B14 содержательно изменено при финальной сверке: неоднозначная пара «фразеологизм/идиома» заменена однозначным термином «лексикология».",
+      "Статус пакета не выше ready_for_human_methodological_review_and_trial_import.",
+      "Перед публикацией необходимы человеческая методическая проверка и пробный импорт в фактический импортёр."
+    ]
+  }
+}
