@@ -6,6 +6,7 @@ import { hashLookupToken } from "@/lib/commercial/security";
 
 test.skip(process.env.RUN_E2E_WITH_DB !== "true", "Set RUN_E2E_WITH_DB=true and provide local PostgreSQL.");
 test.describe.configure({ mode: "serial" });
+test.setTimeout(90_000);
 
 const prisma = new PrismaClient();
 const provider = new LocalFakeCommercialProvider();
@@ -129,7 +130,7 @@ test("parallel payment sessions leave one active payable attempt", async () => {
 });
 
 test("payment-session race with paid notification cannot downgrade the order", async () => {
-  for (let index = 0; index < 4; index += 1) {
+  for (let index = 0; index < 10; index += 1) {
     const order = await createOrder(`session-webhook-${index}`);
     const payment = await createSession(order.order.publicId, `initial-${index}-${suffix}`);
     const paid = await notification({ merchantReference: payment.merchantReference, eventKey: `race-paid-${index}-${suffix}`, status: "paid", paymentId: `race-payment-${index}-${suffix}` });
@@ -142,6 +143,118 @@ test("payment-session race with paid notification cannot downgrade the order", a
     expect(await prisma.access.count({ where: { commercialOrderId: order.order.id } })).toBe(1);
     expect(await prisma.commercialPaymentAttempt.count({ where: { commercialOrderId: order.order.id, status: { in: ["CREATED", "PENDING"] } } })).toBe(0);
   }
+});
+
+test("concurrent PAID and FAILED notifications keep a consistent terminal aggregate", async () => {
+  for (let index = 0; index < 10; index += 1) {
+    const order = await createOrder(`notify-paid-failed-${index}`);
+    const payment = await createSession(order.order.publicId, `notify-paid-failed-session-${index}-${suffix}`);
+    const providerPaymentId = `notify-paid-failed-id-${index}-${suffix}`;
+    const paid = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-paid-${index}-${suffix}`, status: "paid", paymentId: providerPaymentId });
+    const failed = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-failed-${index}-${suffix}`, status: "failed", paymentId: providerPaymentId });
+    await Promise.all([
+      processCommercialProviderNotification({ notification: paid.value, rawBody: paid.rawBody, provider: provider.provider }),
+      processCommercialProviderNotification({ notification: failed.value, rawBody: failed.rawBody, provider: provider.provider })
+    ]);
+    const [storedOrder, storedAttempt, accessCount, events] = await Promise.all([
+      prisma.commercialOrder.findUniqueOrThrow({ where: { id: order.order.id } }),
+      prisma.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: payment.id } }),
+      prisma.access.count({ where: { commercialOrderId: order.order.id } }),
+      prisma.commercialPaymentEvent.findMany({ where: { commercialPaymentAttemptId: payment.id, providerEventKey: { in: [`notify-paid-${index}-${suffix}`, `notify-failed-${index}-${suffix}`] } } })
+    ]);
+    expect(storedOrder.status).toBe(storedAttempt.status);
+    expect(["PAID", "FAILED"]).toContain(storedOrder.status);
+    expect(accessCount).toBe(storedOrder.status === "PAID" ? 1 : 0);
+    if (storedOrder.status === "PAID") {
+      expect(storedOrder.paidAt).not.toBeNull();
+      expect(storedAttempt.paidAt).not.toBeNull();
+      expect(storedAttempt.verifiedAt).not.toBeNull();
+    }
+    expect(events.filter((event) => event.processingStatus === "PROCESSED")).toHaveLength(1);
+    expect(events.filter((event) => event.processingStatus === "REJECTED" && event.processingErrorCode === "ILLEGAL_STATUS_TRANSITION")).toHaveLength(1);
+  }
+});
+
+test("concurrent PAID and CANCELLED notifications keep a consistent terminal aggregate", async () => {
+  for (let index = 0; index < 10; index += 1) {
+    const order = await createOrder(`notify-paid-cancelled-${index}`);
+    const payment = await createSession(order.order.publicId, `notify-paid-cancelled-session-${index}-${suffix}`);
+    const providerPaymentId = `notify-paid-cancelled-id-${index}-${suffix}`;
+    const paid = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-paid-c-${index}-${suffix}`, status: "paid", paymentId: providerPaymentId });
+    const cancelled = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-cancelled-${index}-${suffix}`, status: "cancelled", paymentId: providerPaymentId });
+    await Promise.all([
+      processCommercialProviderNotification({ notification: paid.value, rawBody: paid.rawBody, provider: provider.provider }),
+      processCommercialProviderNotification({ notification: cancelled.value, rawBody: cancelled.rawBody, provider: provider.provider })
+    ]);
+    const [storedOrder, storedAttempt, accessCount, events] = await Promise.all([
+      prisma.commercialOrder.findUniqueOrThrow({ where: { id: order.order.id } }),
+      prisma.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: payment.id } }),
+      prisma.access.count({ where: { commercialOrderId: order.order.id } }),
+      prisma.commercialPaymentEvent.findMany({ where: { commercialPaymentAttemptId: payment.id, providerEventKey: { in: [`notify-paid-c-${index}-${suffix}`, `notify-cancelled-${index}-${suffix}`] } } })
+    ]);
+    expect(storedOrder.status).toBe(storedAttempt.status);
+    expect(["PAID", "CANCELLED"]).toContain(storedOrder.status);
+    expect(accessCount).toBe(storedOrder.status === "PAID" ? 1 : 0);
+    if (storedOrder.status === "PAID") {
+      expect(storedOrder.paidAt).not.toBeNull();
+      expect(storedAttempt.paidAt).not.toBeNull();
+      expect(storedAttempt.verifiedAt).not.toBeNull();
+    }
+    expect(events.filter((event) => event.processingStatus === "PROCESSED")).toHaveLength(1);
+    expect(events.filter((event) => event.processingStatus === "REJECTED" && event.processingErrorCode === "ILLEGAL_STATUS_TRANSITION")).toHaveLength(1);
+  }
+});
+
+test("two concurrent PAID notifications with one provider payment ID are serialized no-ops", async () => {
+  for (let index = 0; index < 10; index += 1) {
+    const order = await createOrder(`notify-double-paid-${index}`);
+    const payment = await createSession(order.order.publicId, `notify-double-paid-session-${index}-${suffix}`);
+    const providerPaymentId = `notify-double-paid-id-${index}-${suffix}`;
+    const first = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-double-paid-a-${index}-${suffix}`, status: "paid", paymentId: providerPaymentId });
+    const second = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-double-paid-b-${index}-${suffix}`, status: "paid", paymentId: providerPaymentId });
+    const results = await Promise.all([
+      processCommercialProviderNotification({ notification: first.value, rawBody: first.rawBody, provider: provider.provider }),
+      processCommercialProviderNotification({ notification: second.value, rawBody: second.rawBody, provider: provider.provider })
+    ]);
+    expect(results.every((result) => !result.rejected)).toBe(true);
+    const [storedOrder, storedAttempt, accessCount, events] = await Promise.all([
+      prisma.commercialOrder.findUniqueOrThrow({ where: { id: order.order.id } }),
+      prisma.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: payment.id } }),
+      prisma.access.count({ where: { commercialOrderId: order.order.id } }),
+      prisma.commercialPaymentEvent.findMany({ where: { commercialPaymentAttemptId: payment.id, providerEventKey: { in: [`notify-double-paid-a-${index}-${suffix}`, `notify-double-paid-b-${index}-${suffix}`] } } })
+    ]);
+    expect(storedOrder.status).toBe("PAID");
+    expect(storedAttempt.status).toBe("PAID");
+    expect(storedAttempt.providerPaymentId).toBe(providerPaymentId);
+    expect(storedOrder.paidAt).not.toBeNull();
+    expect(storedAttempt.paidAt).not.toBeNull();
+    expect(storedAttempt.verifiedAt).not.toBeNull();
+    expect(accessCount).toBe(1);
+    expect(events).toHaveLength(2);
+    expect(events.every((event) => event.processingStatus === "PROCESSED")).toBe(true);
+  }
+});
+
+test("same-state PAID rejects a conflicting provider payment ID", async () => {
+  const order = await createOrder("notify-paid-id-conflict");
+  const payment = await createSession(order.order.publicId, `notify-paid-id-conflict-session-${suffix}`);
+  const first = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-paid-id-first-${suffix}`, status: "paid", paymentId: `notify-paid-id-a-${suffix}` });
+  await processCommercialProviderNotification({ notification: first.value, rawBody: first.rawBody, provider: provider.provider });
+  const conflict = await notification({ merchantReference: payment.merchantReference, eventKey: `notify-paid-id-conflict-${suffix}`, status: "paid", paymentId: `notify-paid-id-b-${suffix}` });
+  const result = await processCommercialProviderNotification({ notification: conflict.value, rawBody: conflict.rawBody, provider: provider.provider });
+  expect(result.rejected).toBe(true);
+  const [storedOrder, storedAttempt, accessCount, event] = await Promise.all([
+    prisma.commercialOrder.findUniqueOrThrow({ where: { id: order.order.id } }),
+    prisma.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: payment.id } }),
+    prisma.access.count({ where: { commercialOrderId: order.order.id } }),
+    prisma.commercialPaymentEvent.findFirstOrThrow({ where: { providerEventKey: `notify-paid-id-conflict-${suffix}` } })
+  ]);
+  expect(storedOrder.status).toBe("PAID");
+  expect(storedAttempt.status).toBe("PAID");
+  expect(storedAttempt.providerPaymentId).toBe(`notify-paid-id-a-${suffix}`);
+  expect(accessCount).toBe(1);
+  expect(event.processingStatus).toBe("REJECTED");
+  expect(event.processingErrorCode).toBe("PROVIDER_PAYMENT_ID_CONFLICT");
 });
 
 test("paid order rejects another payment session without changing access", async () => {

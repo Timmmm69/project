@@ -1,5 +1,6 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
+import { hasProviderPaymentIdConflict } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider, commercialProviderForRuntime, isLocalFakeCommercialProviderEnabled } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, lookupTokenMatches, normalizeCommercialEmail } from "@/lib/commercial/security";
 import { commercialOrderSchema } from "@/lib/commercial/schemas";
@@ -53,6 +54,10 @@ describe("commercial checkout safeguards", () => {
     expect(canOpenNewPaymentAttempt("CANCELLED")).toBe(true);
     expect(canOpenNewPaymentAttempt("EXPIRED")).toBe(true);
     expect(canOpenNewPaymentAttempt("PAID")).toBe(false);
+    expect(canTransitionPaymentAttempt("PAID", "FAILED")).toBe(false);
+    expect(canTransitionPaymentAttempt("PAID", "CANCELLED")).toBe(false);
+    expect(hasProviderPaymentIdConflict({ currentStatus: "PAID", currentProviderPaymentId: "payment-1", nextStatus: "PAID", nextProviderPaymentId: "payment-1" })).toBe(false);
+    expect(hasProviderPaymentIdConflict({ currentStatus: "PAID", currentProviderPaymentId: "payment-1", nextStatus: "PAID", nextProviderPaymentId: "payment-2" })).toBe(true);
   });
 
   it("verifies the deterministic fake provider without exposing an email", async () => {
@@ -60,6 +65,8 @@ describe("commercial checkout safeguards", () => {
     const notification = await provider.verifyNotification(JSON.stringify({ merchant_reference: "ref-1", event_key: "event-1", status: "paid", amount_minor: "1000", currency: "BYN", signature: "local-fake-valid" }));
     expect(notification.signatureValid).toBe(true);
     expect(JSON.stringify(notification.redactedPayload)).not.toContain("email");
+    expect(JSON.stringify(notification.redactedPayload)).not.toContain("signature");
+    expect(JSON.stringify(notification.redactedPayload)).not.toContain("secret");
   });
 
   it("rejects an invalid WebPay sandbox signature", async () => {

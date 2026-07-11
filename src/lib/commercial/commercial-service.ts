@@ -9,6 +9,14 @@ import { logEvent } from "@/server/events/log-event";
 
 type Tx = Prisma.TransactionClient;
 
+async function lockCommercialOrder(tx: Tx, orderId: string) {
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`);
+}
+
+async function lockCommercialPaymentAttempt(tx: Tx, attemptId: string) {
+  await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_payment_attempts" WHERE "id" = ${attemptId}::uuid FOR UPDATE`);
+}
+
 export type CommercialNextAction = "START_TEST" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
 
 function addDays(date: Date, days: number) {
@@ -250,14 +258,20 @@ export async function createCommercialPaymentSession(input: {
       const previous = await tx.commercialPaymentAttempt.findUnique({
         where: { commercialOrderId_checkoutIdempotencyKey: { commercialOrderId: order.id, checkoutIdempotencyKey: input.idempotencyKey } }
       });
-      if (previous) return { attempt: previous, order, created: false as const };
+      if (previous) {
+        await lockCommercialPaymentAttempt(tx, previous.id);
+        const current = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: previous.id } });
+        return { attempt: current, order, created: false as const };
+      }
 
       const active = await tx.commercialPaymentAttempt.findFirst({
         where: { commercialOrderId: order.id, status: { in: ["CREATED", "PENDING"] } },
         orderBy: { createdAt: "desc" }
       });
       if (active) {
-        if (active.paymentUrl && active.providerFields) return { attempt: active, order, created: false as const };
+        await lockCommercialPaymentAttempt(tx, active.id);
+        const current = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: active.id } });
+        if (current.paymentUrl && current.providerFields) return { attempt: current, order, created: false as const };
         throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
       }
       if (!canOpenNewPaymentAttempt(order.status)) throw new CommercialError("ORDER_ALREADY_PAID");
@@ -313,7 +327,8 @@ export async function createCommercialPaymentSession(input: {
     });
   } catch (error) {
     await prisma.$transaction(async (tx) => {
-      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_orders" WHERE "id" = ${decision.order.id}::uuid FOR UPDATE`);
+      await lockCommercialOrder(tx, decision.order.id);
+      await lockCommercialPaymentAttempt(tx, decision.attempt.id);
       const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
       const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id }, select: { status: true } });
       if (attempt.status === "PENDING") {
@@ -330,7 +345,8 @@ export async function createCommercialPaymentSession(input: {
   }
 
   const finalized = await prisma.$transaction(async (tx) => {
-    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_orders" WHERE "id" = ${decision.order.id}::uuid FOR UPDATE`);
+    await lockCommercialOrder(tx, decision.order.id);
+    await lockCommercialPaymentAttempt(tx, decision.attempt.id);
     const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
     const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id } });
     if (order.status === "PAID") {
@@ -358,16 +374,47 @@ function orderStatus(status: ProviderNotification["status"]): CommercialOrderSta
   return status.toUpperCase() as CommercialOrderStatus;
 }
 
+export function hasProviderPaymentIdConflict(input: {
+  currentStatus: CommercialPaymentAttemptStatus;
+  currentProviderPaymentId: string | null;
+  nextStatus: CommercialPaymentAttemptStatus;
+  nextProviderPaymentId: string | null;
+}) {
+  return input.currentStatus === "PAID" &&
+    input.nextStatus === "PAID" &&
+    input.currentProviderPaymentId !== input.nextProviderPaymentId;
+}
+
 export async function processCommercialProviderNotification(input: {
   notification: ProviderNotification;
   rawBody: string;
   provider: CommercialPaymentProvider;
 }) {
   const hash = payloadHash(input.rawBody);
-  const attempt = await prisma.commercialPaymentAttempt.findUnique({ where: { merchantReference: input.notification.merchantReference } });
+  const attempt = await prisma.commercialPaymentAttempt.findUnique({
+    where: { merchantReference: input.notification.merchantReference },
+    select: { id: true, commercialOrderId: true }
+  });
 
   try {
     return await prisma.$transaction(async (tx) => {
+      if (!attempt) {
+        const event = await tx.commercialPaymentEvent.create({
+          data: {
+            provider: input.provider,
+            providerEventKey: input.notification.providerEventKey,
+            payloadHash: hash,
+            eventType: input.notification.eventType,
+            signatureValid: input.notification.signatureValid,
+            redactedPayload: input.notification.redactedPayload
+          }
+        });
+        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "MERCHANT_REFERENCE_MISMATCH", processedAt: new Date() } });
+        return { duplicate: false, grantedAccess: false, rejected: true };
+      }
+
+      await lockCommercialOrder(tx, attempt.commercialOrderId);
+      await lockCommercialPaymentAttempt(tx, attempt.id);
       const event = await tx.commercialPaymentEvent.create({
         data: {
           commercialPaymentAttemptId: attempt?.id,
@@ -380,8 +427,8 @@ export async function processCommercialProviderNotification(input: {
         }
       });
 
-      if (!attempt || !input.notification.signatureValid) {
-        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: !attempt ? "MERCHANT_REFERENCE_MISMATCH" : "INVALID_SIGNATURE", processedAt: new Date() } });
+      if (!input.notification.signatureValid) {
+        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "INVALID_SIGNATURE", processedAt: new Date() } });
         return { duplicate: false, grantedAccess: false, rejected: true };
       }
 
@@ -389,6 +436,10 @@ export async function processCommercialProviderNotification(input: {
         where: { id: attempt.id },
         include: { order: { include: { product: true, access: true } } }
       });
+      if (current.commercialOrderId !== attempt.commercialOrderId || current.merchantReference !== input.notification.merchantReference) {
+        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "MERCHANT_REFERENCE_MISMATCH", processedAt: new Date() } });
+        return { duplicate: false, grantedAccess: false, rejected: true };
+      }
       if (current.provider !== input.provider) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "PROVIDER_MISMATCH", processedAt: new Date() } });
         return { duplicate: false, grantedAccess: false, rejected: true };
@@ -401,6 +452,10 @@ export async function processCommercialProviderNotification(input: {
       const now = new Date();
       const nextAttemptStatus = paymentAttemptStatus(input.notification.status);
       const nextOrderStatus = orderStatus(input.notification.status);
+      if (hasProviderPaymentIdConflict({ currentStatus: current.status, currentProviderPaymentId: current.providerPaymentId, nextStatus: nextAttemptStatus, nextProviderPaymentId: input.notification.providerPaymentId })) {
+        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "PROVIDER_PAYMENT_ID_CONFLICT", processedAt: now } });
+        return { duplicate: false, grantedAccess: false, rejected: true };
+      }
       if (current.status === nextAttemptStatus && current.order.status === nextOrderStatus) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "PROCESSED", processedAt: now } });
         return { duplicate: false, grantedAccess: Boolean(current.order.access), rejected: false };
