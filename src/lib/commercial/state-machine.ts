@@ -33,3 +33,7 @@ export function isTerminalPaymentAttempt(status: CommercialPaymentAttemptStatus)
 export function isActivePaymentAttempt(status: CommercialPaymentAttemptStatus) {
   return status === "CREATED" || status === "PENDING";
 }
+
+export function canOpenNewPaymentAttempt(status: CommercialOrderStatus) {
+  return status !== "PAID";
+}

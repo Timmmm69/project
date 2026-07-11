@@ -3,7 +3,7 @@ import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider, commercialProviderForRuntime, isLocalFakeCommercialProviderEnabled } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, lookupTokenMatches, normalizeCommercialEmail } from "@/lib/commercial/security";
 import { commercialOrderSchema } from "@/lib/commercial/schemas";
-import { canTransitionOrder, canTransitionPaymentAttempt, isActivePaymentAttempt, isTerminalPaymentAttempt } from "@/lib/commercial/state-machine";
+import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt, isActivePaymentAttempt, isTerminalPaymentAttempt } from "@/lib/commercial/state-machine";
 
 const originalEnv = { ...process.env };
 
@@ -49,6 +49,10 @@ describe("commercial checkout safeguards", () => {
     expect(isActivePaymentAttempt("PENDING")).toBe(true);
     expect(isActivePaymentAttempt("FAILED")).toBe(false);
     expect(isTerminalPaymentAttempt("FAILED")).toBe(true);
+    expect(canOpenNewPaymentAttempt("FAILED")).toBe(true);
+    expect(canOpenNewPaymentAttempt("CANCELLED")).toBe(true);
+    expect(canOpenNewPaymentAttempt("EXPIRED")).toBe(true);
+    expect(canOpenNewPaymentAttempt("PAID")).toBe(false);
   });
 
   it("verifies the deterministic fake provider without exposing an email", async () => {

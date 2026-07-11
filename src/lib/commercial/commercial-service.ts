@@ -2,7 +2,7 @@ import { Prisma, type CommercialPaymentAttemptStatus, type CommercialPaymentProv
 import { COMMERCIAL_CURRENCY, COMMERCIAL_PRICE_MINOR, commercialLegalConfig } from "@/lib/commercial/config";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
-import { canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
+import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
 import { normalizeEmail } from "@/lib/validation/email";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
@@ -65,6 +65,44 @@ function legalVersionMatches(version: string) {
   return Boolean(legal.version) && version === legal.version;
 }
 
+async function recoverConcurrentOrderCreation(input: {
+  productCode: string;
+  emailNormalized: string;
+  idempotencyKey: string;
+  lookupToken: string;
+}, integrityError: Prisma.PrismaClientKnownRequestError) {
+  const product = await prisma.commercialProduct.findUnique({
+    where: { code: input.productCode },
+    select: { id: true }
+  });
+  if (!product) throw integrityError;
+
+  const sameRequest = await prisma.commercialOrder.findUnique({
+    where: { commercialProductId_idempotencyKey: { commercialProductId: product.id, idempotencyKey: input.idempotencyKey } }
+  });
+  if (sameRequest) {
+    if (sameRequest.emailNormalized !== input.emailNormalized) {
+      throw new CommercialError("IDEMPOTENCY_KEY_CONFLICT");
+    }
+    const order = await prisma.commercialOrder.update({
+      where: { id: sameRequest.id },
+      data: { lookupTokenHash: hashLookupToken(input.lookupToken) }
+    });
+    return { order, lookupToken: input.lookupToken, idempotent: true };
+  }
+
+  const openOrder = await prisma.commercialOrder.findFirst({
+    where: {
+      commercialProductId: product.id,
+      emailNormalized: input.emailNormalized,
+      status: { in: ["CREATED", "PENDING"] }
+    },
+    select: { id: true }
+  });
+  if (openOrder) throw new CommercialError("ORDER_ALREADY_PENDING");
+  throw integrityError;
+}
+
 export async function createCommercialOrder(input: {
   productCode: string;
   email: string;
@@ -84,7 +122,9 @@ export async function createCommercialOrder(input: {
   const legal = commercialLegalConfig();
   const token = createLookupToken();
 
-  const outcome = await prisma.$transaction(async (tx) => {
+  let outcome;
+  try {
+    outcome = await prisma.$transaction(async (tx) => {
     const product = await tx.commercialProduct.findFirst({
       where: { code: input.productCode, isActive: true },
       include: { test: { select: { id: true, status: true, deletedAt: true } } }
@@ -146,7 +186,18 @@ export async function createCommercialOrder(input: {
       data: { eventType: "order_created", entityType: "commercial_order", entityId: order.id, payload: { productCode: product.code, priceMinor: product.priceMinor, currency: product.currency } }
     });
     return { kind: "created" as const, order, lookupToken: token, idempotent: false };
-  });
+    });
+  } catch (error) {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+      return recoverConcurrentOrderCreation({
+        productCode: input.productCode,
+        emailNormalized,
+        idempotencyKey: input.idempotencyKey,
+        lookupToken: token
+      }, error);
+    }
+    throw error;
+  }
 
   if (outcome.kind === "existing") {
     await logEvent({
@@ -182,26 +233,34 @@ export async function createCommercialPaymentSession(input: {
   provider: CommercialPaymentProviderAdapter;
   appUrl: string;
 }) {
-  const order = await getCommercialOrder(input.publicId);
-  if (order.status === "PAID") throw new CommercialError("ORDER_ALREADY_PAID");
-
-  const merchantReference = `rto-${order.publicId}-${createLookupToken().slice(0, 12)}`;
-  let pendingAttempt;
+  const merchantReference = `rto-${input.publicId}-${createLookupToken().slice(0, 12)}`;
+  let decision;
   try {
-    pendingAttempt = await prisma.$transaction(async (tx) => {
+    decision = await prisma.$transaction(async (tx) => {
+      const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+        SELECT "id" FROM "commercial_orders" WHERE "public_id" = ${input.publicId} FOR UPDATE
+      `);
+      if (locked.length !== 1) throw new CommercialError("ORDER_NOT_FOUND");
+      const order = await tx.commercialOrder.findUniqueOrThrow({
+        where: { publicId: input.publicId },
+        include: { product: { include: { test: { select: { slug: true } } } } }
+      });
+      if (order.status === "PAID") throw new CommercialError("ORDER_ALREADY_PAID");
+
       const previous = await tx.commercialPaymentAttempt.findUnique({
         where: { commercialOrderId_checkoutIdempotencyKey: { commercialOrderId: order.id, checkoutIdempotencyKey: input.idempotencyKey } }
       });
-      if (previous) return previous;
+      if (previous) return { attempt: previous, order, created: false as const };
 
       const active = await tx.commercialPaymentAttempt.findFirst({
         where: { commercialOrderId: order.id, status: { in: ["CREATED", "PENDING"] } },
         orderBy: { createdAt: "desc" }
       });
       if (active) {
-        if (active.paymentUrl && active.providerFields) return active;
+        if (active.paymentUrl && active.providerFields) return { attempt: active, order, created: false as const };
         throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
       }
+      if (!canOpenNewPaymentAttempt(order.status)) throw new CommercialError("ORDER_ALREADY_PAID");
 
       const attempt = await tx.commercialPaymentAttempt.create({
         data: {
@@ -216,47 +275,79 @@ export async function createCommercialPaymentSession(input: {
       });
       await tx.commercialOrder.update({ where: { id: order.id }, data: { status: "PENDING" } });
       await tx.eventLog.create({ data: { eventType: "payment_redirect_started", entityType: "commercial_payment_attempt", entityId: attempt.id, payload: { provider: input.provider.provider, amountMinor: order.priceMinor, currency: order.currency } } });
-      return attempt;
+      return { attempt, order, created: true as const };
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const active = await prisma.commercialPaymentAttempt.findFirst({
-        where: { commercialOrderId: order.id, status: { in: ["CREATED", "PENDING"] } },
-        orderBy: { createdAt: "desc" }
-      });
-      if (active?.paymentUrl && active.providerFields) return active;
-      throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
+      const order = await prisma.commercialOrder.findUnique({ where: { publicId: input.publicId }, select: { id: true } });
+      if (order) {
+        const active = await prisma.commercialPaymentAttempt.findFirst({
+          where: { commercialOrderId: order.id, status: { in: ["CREATED", "PENDING"] } },
+          orderBy: { createdAt: "desc" }
+        });
+        if (active?.paymentUrl && active.providerFields) return active;
+        if (active) throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
+      }
     }
     throw error;
   }
 
-  if (pendingAttempt.paymentUrl && pendingAttempt.providerFields) return pendingAttempt;
+  if (!decision.created) {
+    if (decision.attempt.paymentUrl && decision.attempt.providerFields) return decision.attempt;
+    throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
+  }
 
+  let checkout;
   try {
-    const returnQuery = new URLSearchParams({ commercialOrder: order.publicId, paymentReturn: "1" }).toString();
-    const returnUrl = `${input.appUrl}/tests/${order.product.test.slug}?${returnQuery}`;
-    const checkout = await input.provider.createCheckout({
-      merchantReference: pendingAttempt.merchantReference,
-      amountMinor: order.priceMinor,
-      currency: order.currency,
-      productName: order.productNameSnapshot,
+    const returnQuery = new URLSearchParams({ commercialOrder: decision.order.publicId, paymentReturn: "1" }).toString();
+    const returnUrl = `${input.appUrl}/tests/${decision.order.product.test.slug}?${returnQuery}`;
+    checkout = await input.provider.createCheckout({
+      merchantReference: decision.attempt.merchantReference,
+      amountMinor: decision.order.priceMinor,
+      currency: decision.order.currency,
+      productName: decision.order.productNameSnapshot,
       returnUrl,
       cancelUrl: `${returnUrl}&paymentCancelled=1`,
       notificationUrl: `${input.appUrl}/api/payments/webpay/notify`,
       checkoutProxyUrl: `${input.appUrl}/api/commercial/fake-checkout`
     });
-    return prisma.commercialPaymentAttempt.update({
-      where: { id: pendingAttempt.id },
-      data: { paymentUrl: checkout.actionUrl, providerFields: checkout.fields, expiresAt: checkout.expiresAt }
-    });
   } catch (error) {
-    await prisma.commercialPaymentAttempt.update({
-      where: { id: pendingAttempt.id },
-      data: { status: "FAILED", failureCode: error instanceof Error ? error.message : "CHECKOUT_CREATE_FAILED", failureMessageSafe: "Не удалось создать платёжную сессию." }
+    await prisma.$transaction(async (tx) => {
+      await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_orders" WHERE "id" = ${decision.order.id}::uuid FOR UPDATE`);
+      const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
+      const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id }, select: { status: true } });
+      if (attempt.status === "PENDING") {
+        await tx.commercialPaymentAttempt.update({
+          where: { id: decision.attempt.id },
+          data: { status: "FAILED", failureCode: error instanceof Error ? error.message : "CHECKOUT_CREATE_FAILED", failureMessageSafe: "Не удалось создать платёжную сессию." }
+        });
+      }
+      if (order.status === "PENDING") {
+        await tx.commercialOrder.update({ where: { id: decision.order.id }, data: { status: "FAILED" } });
+      }
     });
-    await prisma.commercialOrder.update({ where: { id: order.id }, data: { status: "FAILED" } });
     throw error;
   }
+
+  const finalized = await prisma.$transaction(async (tx) => {
+    await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_orders" WHERE "id" = ${decision.order.id}::uuid FOR UPDATE`);
+    const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
+    const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id } });
+    if (order.status === "PAID") {
+      if (attempt.status === "PENDING") {
+        await tx.commercialPaymentAttempt.update({ where: { id: attempt.id }, data: { status: "CANCELLED", failureCode: "ORDER_ALREADY_PAID" } });
+      }
+      return { kind: "paid" as const };
+    }
+    if (attempt.status !== "PENDING") throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
+    const updated = await tx.commercialPaymentAttempt.update({
+      where: { id: attempt.id },
+      data: { paymentUrl: checkout.actionUrl, providerFields: checkout.fields, expiresAt: checkout.expiresAt }
+    });
+    return { kind: "ready" as const, attempt: updated };
+  });
+  if (finalized.kind === "paid") throw new CommercialError("ORDER_ALREADY_PAID");
+  return finalized.attempt;
 }
 
 function paymentAttemptStatus(status: ProviderNotification["status"]): CommercialPaymentAttemptStatus {
