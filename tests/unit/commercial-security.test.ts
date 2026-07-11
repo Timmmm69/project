@@ -1,6 +1,6 @@
-import { afterEach, describe, expect, it } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
-import { hasProviderPaymentIdConflict } from "@/lib/commercial/commercial-service";
+import { commercialNotificationMismatch, hasProviderPaymentIdConflict } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider, commercialProviderForRuntime, isLocalFakeCommercialProviderEnabled } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, lookupTokenMatches, normalizeCommercialEmail } from "@/lib/commercial/security";
 import { commercialOrderSchema } from "@/lib/commercial/schemas";
@@ -10,7 +10,22 @@ const originalEnv = { ...process.env };
 
 afterEach(() => {
   process.env = { ...originalEnv };
+  vi.unstubAllGlobals();
 });
+
+function configureWebPayStatus() {
+  process.env.WEBPAY_SANDBOX_STORE_ID = "store";
+  process.env.WEBPAY_SANDBOX_SECRET_KEY = "secret";
+  process.env.WEBPAY_SANDBOX_CHECKOUT_URL = "https://checkout.example.test";
+  process.env.WEBPAY_SANDBOX_STATUS_URL = "https://status.example.test/payment";
+}
+
+function mockWebPayStatus(body: URLSearchParams) {
+  vi.stubGlobal("fetch", vi.fn(async () => new Response(body.toString(), {
+    status: 200,
+    headers: { "content-type": "application/x-www-form-urlencoded" }
+  })));
+}
 
 describe("commercial checkout safeguards", () => {
   it("normalizes email and requires adult confirmation", () => {
@@ -77,7 +92,7 @@ describe("commercial checkout safeguards", () => {
     expect(notification.signatureValid).toBe(false);
   });
 
-  it("verifies a signed WebPay sandbox paid notification", async () => {
+  it("does not treat signed checkout fields with an appended paid status as payment proof", async () => {
     process.env.WEBPAY_SANDBOX_STORE_ID = "store";
     process.env.WEBPAY_SANDBOX_SECRET_KEY = "secret";
     process.env.WEBPAY_SANDBOX_CHECKOUT_URL = "https://sandbox.invalid";
@@ -105,8 +120,92 @@ describe("commercial checkout safeguards", () => {
         wsb_transaction_id: "transaction-1"
       }).toString()
     );
-    expect(notification.signatureValid).toBe(true);
-    expect(notification.status).toBe("paid");
+    expect(notification.redactedPayload.checkout_fields_valid).toBe("true");
+    expect(notification.signatureValid).toBe(false);
+    expect(notification.status).toBe("pending");
+    expect(notification.providerPaymentId).toBeNull();
     expect(notification.amountMinor).toBe(1000);
+  });
+
+  it("accepts a complete server-to-server paid status for the requested merchant reference", async () => {
+    configureWebPayStatus();
+    mockWebPayStatus(new URLSearchParams({
+      wsb_order_num: "order-1",
+      wsb_result_code: "1",
+      wsb_transaction_id: "transaction-1",
+      wsb_total: "10.00",
+      wsb_currency_id: "BYN"
+    }));
+    const notification = await new WebPaySandboxProvider().fetchPaymentStatus({ merchantReference: "order-1", providerPaymentId: null });
+    expect(notification).toMatchObject({
+      merchantReference: "order-1",
+      providerPaymentId: "transaction-1",
+      status: "paid",
+      amountMinor: 1000,
+      currency: "BYN",
+      signatureValid: true
+    });
+  });
+
+  it.each([
+    ["missing amount", { wsb_currency_id: "BYN" }, false, "AMOUNT_MISMATCH"],
+    ["missing currency", { wsb_total: "10.00" }, false, "CURRENCY_MISMATCH"],
+    ["different amount", { wsb_total: "9.99", wsb_currency_id: "BYN" }, true, "AMOUNT_MISMATCH"],
+    ["different currency", { wsb_total: "10.00", wsb_currency_id: "USD" }, true, "CURRENCY_MISMATCH"]
+  ])("rejects an authoritative status with %s", async (_name, fields, signatureValid, expectedMismatch) => {
+    configureWebPayStatus();
+    mockWebPayStatus(new URLSearchParams({
+      wsb_order_num: "order-1",
+      wsb_result_code: "1",
+      wsb_transaction_id: "transaction-1",
+      ...fields
+    }));
+    const provider = new WebPaySandboxProvider();
+    const notification = await provider.fetchPaymentStatus({ merchantReference: "order-1", providerPaymentId: null });
+    expect(notification.signatureValid).toBe(signatureValid);
+    expect(commercialNotificationMismatch({
+      expectedProvider: "WEBPAY_SANDBOX",
+      expectedMerchantReference: "order-1",
+      expectedAmountMinor: 1000,
+      expectedCurrency: "BYN",
+      provider: provider.provider,
+      notification
+    })).toBe(expectedMismatch);
+  });
+
+  it("rejects a status response for a different merchant reference", async () => {
+    configureWebPayStatus();
+    mockWebPayStatus(new URLSearchParams({
+      wsb_order_num: "other-order",
+      wsb_result_code: "1",
+      wsb_transaction_id: "transaction-1",
+      wsb_total: "10.00",
+      wsb_currency_id: "BYN"
+    }));
+    const notification = await new WebPaySandboxProvider().fetchPaymentStatus({ merchantReference: "order-1", providerPaymentId: null });
+    expect(notification.signatureValid).toBe(false);
+    expect(notification.merchantReference).toBe("other-order");
+  });
+
+  it("rejects a notification from a provider different from the payment attempt", () => {
+    const notification = {
+      merchantReference: "order-1",
+      providerPaymentId: "transaction-1",
+      providerEventKey: "transaction-1",
+      status: "paid" as const,
+      amountMinor: 1000,
+      currency: "BYN",
+      signatureValid: true,
+      eventType: "webpay_status_response",
+      redactedPayload: {}
+    };
+    expect(commercialNotificationMismatch({
+      expectedProvider: "WEBPAY_SANDBOX",
+      expectedMerchantReference: "order-1",
+      expectedAmountMinor: 1000,
+      expectedCurrency: "BYN",
+      provider: "LOCAL_FAKE",
+      notification
+    })).toBe("PROVIDER_MISMATCH");
   });
 });

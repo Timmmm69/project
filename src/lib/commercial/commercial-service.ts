@@ -287,7 +287,11 @@ export async function createCommercialPaymentSession(input: {
           checkoutIdempotencyKey: input.idempotencyKey
         }
       });
-      await tx.commercialOrder.update({ where: { id: order.id }, data: { status: "PENDING" } });
+      const movedToPending = await tx.commercialOrder.updateMany({
+        where: { id: order.id, status: order.status },
+        data: { status: "PENDING" }
+      });
+      if (movedToPending.count !== 1) throw new CommercialError("PAYMENT_STATE_CHANGED");
       await tx.eventLog.create({ data: { eventType: "payment_redirect_started", entityType: "commercial_payment_attempt", entityId: attempt.id, payload: { provider: input.provider.provider, amountMinor: order.priceMinor, currency: order.currency } } });
       return { attempt, order, created: true as const };
     });
@@ -331,14 +335,14 @@ export async function createCommercialPaymentSession(input: {
       await lockCommercialPaymentAttempt(tx, decision.attempt.id);
       const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
       const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id }, select: { status: true } });
-      if (attempt.status === "PENDING") {
-        await tx.commercialPaymentAttempt.update({
-          where: { id: decision.attempt.id },
+      if (attempt.status === "PENDING" && canTransitionPaymentAttempt(attempt.status, "FAILED")) {
+        await tx.commercialPaymentAttempt.updateMany({
+          where: { id: decision.attempt.id, status: attempt.status },
           data: { status: "FAILED", failureCode: error instanceof Error ? error.message : "CHECKOUT_CREATE_FAILED", failureMessageSafe: "Не удалось создать платёжную сессию." }
         });
       }
-      if (order.status === "PENDING") {
-        await tx.commercialOrder.update({ where: { id: decision.order.id }, data: { status: "FAILED" } });
+      if (order.status === "PENDING" && canTransitionOrder(order.status, "FAILED")) {
+        await tx.commercialOrder.updateMany({ where: { id: decision.order.id, status: order.status }, data: { status: "FAILED" } });
       }
     });
     throw error;
@@ -350,8 +354,8 @@ export async function createCommercialPaymentSession(input: {
     const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
     const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id } });
     if (order.status === "PAID") {
-      if (attempt.status === "PENDING") {
-        await tx.commercialPaymentAttempt.update({ where: { id: attempt.id }, data: { status: "CANCELLED", failureCode: "ORDER_ALREADY_PAID" } });
+      if (attempt.status === "PENDING" && canTransitionPaymentAttempt(attempt.status, "CANCELLED")) {
+        await tx.commercialPaymentAttempt.updateMany({ where: { id: attempt.id, status: attempt.status }, data: { status: "CANCELLED", failureCode: "ORDER_ALREADY_PAID" } });
       }
       return { kind: "paid" as const };
     }
@@ -385,6 +389,28 @@ export function hasProviderPaymentIdConflict(input: {
     input.currentProviderPaymentId !== input.nextProviderPaymentId;
 }
 
+export function commercialNotificationMismatch(input: {
+  expectedProvider: CommercialPaymentProvider;
+  expectedMerchantReference: string;
+  expectedAmountMinor: number;
+  expectedCurrency: string;
+  provider: CommercialPaymentProvider;
+  notification: ProviderNotification;
+}) {
+  if (input.expectedMerchantReference !== input.notification.merchantReference) return "MERCHANT_REFERENCE_MISMATCH";
+  if (input.expectedProvider !== input.provider) return "PROVIDER_MISMATCH";
+  if (input.expectedAmountMinor !== input.notification.amountMinor) return "AMOUNT_MISMATCH";
+  if (input.expectedCurrency !== input.notification.currency) return "CURRENCY_MISMATCH";
+  return null;
+}
+
+function isCommercialPaymentEventUniqueConflict(error: Prisma.PrismaClientKnownRequestError) {
+  if (error.meta?.modelName === "CommercialPaymentEvent") return true;
+  const target = error.meta?.target;
+  const value = Array.isArray(target) ? target.join(",") : String(target ?? "");
+  return /commercial_payment_events|payload_?hash|provider_?event_?key/i.test(value);
+}
+
 export async function processCommercialProviderNotification(input: {
   notification: ProviderNotification;
   rawBody: string;
@@ -402,7 +428,7 @@ export async function processCommercialProviderNotification(input: {
         const event = await tx.commercialPaymentEvent.create({
           data: {
             provider: input.provider,
-            providerEventKey: input.notification.providerEventKey,
+            providerEventKey: input.notification.signatureValid ? input.notification.providerEventKey : null,
             payloadHash: hash,
             eventType: input.notification.eventType,
             signatureValid: input.notification.signatureValid,
@@ -419,7 +445,7 @@ export async function processCommercialProviderNotification(input: {
         data: {
           commercialPaymentAttemptId: attempt?.id,
           provider: input.provider,
-          providerEventKey: input.notification.providerEventKey,
+          providerEventKey: input.notification.signatureValid ? input.notification.providerEventKey : null,
           payloadHash: hash,
           eventType: input.notification.eventType,
           signatureValid: input.notification.signatureValid,
@@ -436,36 +462,44 @@ export async function processCommercialProviderNotification(input: {
         where: { id: attempt.id },
         include: { order: { include: { product: true, access: true } } }
       });
-      if (current.commercialOrderId !== attempt.commercialOrderId || current.merchantReference !== input.notification.merchantReference) {
+      if (current.commercialOrderId !== attempt.commercialOrderId) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "MERCHANT_REFERENCE_MISMATCH", processedAt: new Date() } });
         return { duplicate: false, grantedAccess: false, rejected: true };
       }
-      if (current.provider !== input.provider) {
-        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "PROVIDER_MISMATCH", processedAt: new Date() } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
-      }
-      if (current.amountMinor !== input.notification.amountMinor || current.currency !== input.notification.currency) {
-        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: current.amountMinor !== input.notification.amountMinor ? "AMOUNT_MISMATCH" : "CURRENCY_MISMATCH", processedAt: new Date() } });
+      const mismatch = commercialNotificationMismatch({
+        expectedProvider: current.provider,
+        expectedMerchantReference: current.merchantReference,
+        expectedAmountMinor: current.amountMinor,
+        expectedCurrency: current.currency,
+        provider: input.provider,
+        notification: input.notification
+      });
+      if (mismatch) {
+        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: mismatch, processedAt: new Date() } });
         return { duplicate: false, grantedAccess: false, rejected: true };
       }
 
       const now = new Date();
       const nextAttemptStatus = paymentAttemptStatus(input.notification.status);
       const nextOrderStatus = orderStatus(input.notification.status);
+      const processedEventKey = input.notification.providerEventKey;
       if (hasProviderPaymentIdConflict({ currentStatus: current.status, currentProviderPaymentId: current.providerPaymentId, nextStatus: nextAttemptStatus, nextProviderPaymentId: input.notification.providerPaymentId })) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "PROVIDER_PAYMENT_ID_CONFLICT", processedAt: now } });
         return { duplicate: false, grantedAccess: false, rejected: true };
       }
       if (current.status === nextAttemptStatus && current.order.status === nextOrderStatus) {
-        await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "PROCESSED", processedAt: now } });
+        await tx.commercialPaymentEvent.update({
+          where: { id: event.id },
+          data: { providerEventKey: processedEventKey, processingStatus: "PROCESSED", processedAt: now }
+        });
         return { duplicate: false, grantedAccess: Boolean(current.order.access), rejected: false };
       }
       if (!canTransitionPaymentAttempt(current.status, nextAttemptStatus) || !canTransitionOrder(current.order.status, nextOrderStatus)) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "ILLEGAL_STATUS_TRANSITION", processedAt: now } });
         return { duplicate: false, grantedAccess: false, rejected: true };
       }
-      await tx.commercialPaymentAttempt.update({
-        where: { id: current.id },
+      const attemptUpdate = await tx.commercialPaymentAttempt.updateMany({
+        where: { id: current.id, status: current.status },
         data: {
           status: nextAttemptStatus,
           providerPaymentId: input.notification.providerPaymentId,
@@ -473,7 +507,12 @@ export async function processCommercialProviderNotification(input: {
           ...(nextAttemptStatus === "PAID" ? { paidAt: now } : { failureCode: nextAttemptStatus === "FAILED" ? "PAYMENT_FAILED" : null })
         }
       });
-      await tx.commercialOrder.update({ where: { id: current.order.id }, data: { status: nextOrderStatus, ...(nextOrderStatus === "PAID" ? { paidAt: now } : {}) } });
+      if (attemptUpdate.count !== 1) throw new CommercialError("PAYMENT_STATE_CHANGED");
+      const orderUpdate = await tx.commercialOrder.updateMany({
+        where: { id: current.order.id, status: current.order.status },
+        data: { status: nextOrderStatus, ...(nextOrderStatus === "PAID" ? { paidAt: now } : {}) }
+      });
+      if (orderUpdate.count !== 1) throw new CommercialError("PAYMENT_STATE_CHANGED");
 
       let grantedAccess = false;
       if (nextAttemptStatus === "PAID") {
@@ -502,17 +541,22 @@ export async function processCommercialProviderNotification(input: {
           await tx.eventLog.create({ data: { eventType: "access_granted", actorUserId: user.id, entityType: "commercial_order", entityId: current.order.id, payload: { source: "commercial", attempts: current.order.product.attemptLimit } } });
         }
       }
-      await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "PROCESSED", processedAt: now } });
+      await tx.commercialPaymentEvent.update({
+        where: { id: event.id },
+        data: { providerEventKey: processedEventKey, processingStatus: "PROCESSED", processedAt: now }
+      });
       await tx.eventLog.create({ data: { eventType: "payment_status_changed", entityType: "commercial_payment_attempt", entityId: current.id, payload: { provider: input.provider, status: nextAttemptStatus } } });
       return { duplicate: false, grantedAccess, rejected: false };
     });
   } catch (error) {
-    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
+    if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && isCommercialPaymentEventUniqueConflict(error)) {
       const duplicate = await prisma.commercialPaymentEvent.findFirst({
         where: {
           provider: input.provider,
           OR: [
-            ...(input.notification.providerEventKey ? [{ providerEventKey: input.notification.providerEventKey }] : []),
+            ...(input.notification.signatureValid && input.notification.providerEventKey
+              ? [{ providerEventKey: input.notification.providerEventKey, signatureValid: true }]
+              : []),
             { payloadHash: hash }
           ]
         },
