@@ -110,8 +110,46 @@ enum AccessSource {
   PAYMENT     @map("payment")
   MANUAL      @map("manual")
   ACCESS_CODE @map("access_code")
+  COMMERCIAL  @map("commercial")
 
   @@map("access_source")
+}
+
+enum CommercialOrderStatus {
+  CREATED   @map("created")
+  PENDING   @map("pending")
+  PAID      @map("paid")
+  FAILED    @map("failed")
+  CANCELLED @map("cancelled")
+  EXPIRED   @map("expired")
+
+  @@map("commercial_order_status")
+}
+
+enum CommercialPaymentProvider {
+  WEBPAY_SANDBOX @map("webpay_sandbox")
+  LOCAL_FAKE     @map("local_fake")
+
+  @@map("commercial_payment_provider")
+}
+
+enum CommercialPaymentAttemptStatus {
+  CREATED   @map("created")
+  PENDING   @map("pending")
+  PAID      @map("paid")
+  FAILED    @map("failed")
+  CANCELLED @map("cancelled")
+  EXPIRED   @map("expired")
+
+  @@map("commercial_payment_attempt_status")
+}
+
+enum CommercialPaymentEventStatus {
+  RECEIVED  @map("received")
+  PROCESSED @map("processed")
+  REJECTED  @map("rejected")
+
+  @@map("commercial_payment_event_status")
 }
 
 enum AccessCodeStatus {
@@ -217,15 +255,16 @@ model Test {
   updatedAt           DateTime   @updatedAt @map("updated_at")
   deletedAt           DateTime?  @map("deleted_at")
 
-  createdByAdmin User?             @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  scoringScheme  ScoringScheme?    @relation(fields: [scoringSchemeId], references: [id])
-  questions      Question[]
-  payments       Payment[]
-  accesses       Access[]
-  accessCodes    AccessCode[]
-  attempts       Attempt[]
-  importJobs     ImportJob[]
-  manualLogs     ManualAccessLog[]
+  createdByAdmin     User?               @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  scoringScheme      ScoringScheme?      @relation(fields: [scoringSchemeId], references: [id])
+  questions          Question[]
+  payments           Payment[]
+  accesses           Access[]
+  accessCodes        AccessCode[]
+  attempts           Attempt[]
+  importJobs         ImportJob[]
+  manualLogs         ManualAccessLog[]
+  commercialProducts CommercialProduct[]
 
   @@index([status])
   @@index([subject])
@@ -321,36 +360,152 @@ model Payment {
 }
 
 model Access {
-  id                String       @id @default(uuid()) @db.Uuid
-  userId            String       @map("user_id") @db.Uuid
-  testId            String       @map("test_id") @db.Uuid
-  paymentId         String?      @unique @map("payment_id") @db.Uuid
-  accessCodeId      String?      @unique @map("access_code_id") @db.Uuid
-  source            AccessSource
-  attemptsTotal     Int          @default(1) @map("attempts_total")
-  attemptsAvailable Int          @default(1) @map("attempts_available")
-  expiresAt         DateTime     @map("expires_at")
-  revokedAt         DateTime?    @map("revoked_at")
-  revokedByAdminId  String?      @map("revoked_by_admin_id") @db.Uuid
-  revokedReason     String?      @map("revoked_reason")
-  createdByAdminId  String?      @map("created_by_admin_id") @db.Uuid
-  createdAt         DateTime     @default(now()) @map("created_at")
-  updatedAt         DateTime     @updatedAt @map("updated_at")
+  id                         String       @id @default(uuid()) @db.Uuid
+  userId                     String       @map("user_id") @db.Uuid
+  testId                     String       @map("test_id") @db.Uuid
+  paymentId                  String?      @unique @map("payment_id") @db.Uuid
+  accessCodeId               String?      @unique @map("access_code_id") @db.Uuid
+  source                     AccessSource
+  attemptsTotal              Int          @default(1) @map("attempts_total")
+  attemptsAvailable          Int          @default(1) @map("attempts_available")
+  expiresAt                  DateTime     @map("expires_at")
+  revokedAt                  DateTime?    @map("revoked_at")
+  revokedByAdminId           String?      @map("revoked_by_admin_id") @db.Uuid
+  revokedReason              String?      @map("revoked_reason")
+  createdByAdminId           String?      @map("created_by_admin_id") @db.Uuid
+  commercialProductId        String?      @map("commercial_product_id") @db.Uuid
+  commercialOrderId          String?      @unique @map("commercial_order_id") @db.Uuid
+  commercialPaymentAttemptId String?      @unique @map("commercial_payment_attempt_id") @db.Uuid
+  grantedAt                  DateTime?    @map("granted_at")
+  startDeadlineAt            DateTime?    @map("start_deadline_at")
+  createdAt                  DateTime     @default(now()) @map("created_at")
+  updatedAt                  DateTime     @updatedAt @map("updated_at")
 
-  user           User              @relation("AccessUser", fields: [userId], references: [id])
-  test           Test              @relation(fields: [testId], references: [id])
-  payment        Payment?          @relation(fields: [paymentId], references: [id])
-  accessCode     AccessCode?       @relation(fields: [accessCodeId], references: [id])
-  revokedByAdmin User?             @relation("AccessRevokedByAdmin", fields: [revokedByAdminId], references: [id])
-  createdByAdmin User?             @relation("AccessCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  attempts       Attempt[]
-  manualLogs     ManualAccessLog[]
+  user                     User                      @relation("AccessUser", fields: [userId], references: [id])
+  test                     Test                      @relation(fields: [testId], references: [id])
+  payment                  Payment?                  @relation(fields: [paymentId], references: [id])
+  accessCode               AccessCode?               @relation(fields: [accessCodeId], references: [id])
+  revokedByAdmin           User?                     @relation("AccessRevokedByAdmin", fields: [revokedByAdminId], references: [id])
+  createdByAdmin           User?                     @relation("AccessCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  commercialProduct        CommercialProduct?        @relation(fields: [commercialProductId], references: [id])
+  commercialOrder          CommercialOrder?          @relation(fields: [commercialOrderId], references: [id])
+  commercialPaymentAttempt CommercialPaymentAttempt? @relation(fields: [commercialPaymentAttemptId], references: [id])
+  attempts                 Attempt[]
+  manualLogs               ManualAccessLog[]
 
   @@index([userId])
   @@index([testId])
   @@index([userId, testId])
   @@index([expiresAt])
+  @@index([commercialProductId])
   @@map("accesses")
+}
+
+model CommercialProduct {
+  id                  String   @id @default(uuid()) @db.Uuid
+  code                String   @unique
+  testId              String   @map("test_id") @db.Uuid
+  name                String
+  priceMinor          Int      @map("price_minor")
+  currency            String   @default("BYN")
+  attemptLimit        Int      @default(1) @map("attempt_limit")
+  startWindowDays     Int      @default(90) @map("start_window_days")
+  resultRetentionDays Int      @default(365) @map("result_retention_days")
+  isActive            Boolean  @default(true) @map("is_active")
+  createdAt           DateTime @default(now()) @map("created_at")
+  updatedAt           DateTime @updatedAt @map("updated_at")
+
+  test     Test              @relation(fields: [testId], references: [id])
+  orders   CommercialOrder[]
+  accesses Access[]
+
+  @@index([testId])
+  @@index([isActive])
+  @@map("commercial_products")
+}
+
+model CommercialOrder {
+  id                    String                @id @default(uuid()) @db.Uuid
+  publicId              String                @unique @default(cuid()) @map("public_id")
+  commercialProductId   String                @map("commercial_product_id") @db.Uuid
+  testIdSnapshot        String                @map("test_id_snapshot") @db.Uuid
+  productNameSnapshot   String                @map("product_name_snapshot")
+  priceMinor            Int                   @map("price_minor")
+  currency              String                @default("BYN")
+  emailOriginal         String                @map("email_original")
+  emailNormalized       String                @map("email_normalized")
+  status                CommercialOrderStatus @default(CREATED)
+  offerVersion          String                @map("offer_version")
+  privacyVersion        String                @map("privacy_version")
+  refundPolicyVersion   String                @map("refund_policy_version")
+  disclaimerVersion     String                @map("disclaimer_version")
+  adultBuyerConfirmedAt DateTime              @map("adult_buyer_confirmed_at")
+  idempotencyKey        String                @map("idempotency_key")
+  lookupTokenHash       String                @map("lookup_token_hash")
+  paidAt                DateTime?             @map("paid_at")
+  createdAt             DateTime              @default(now()) @map("created_at")
+  updatedAt             DateTime              @updatedAt @map("updated_at")
+
+  product         CommercialProduct          @relation(fields: [commercialProductId], references: [id])
+  paymentAttempts CommercialPaymentAttempt[]
+  access          Access?
+
+  @@unique([commercialProductId, idempotencyKey])
+  @@index([emailNormalized, status])
+  @@index([testIdSnapshot])
+  @@map("commercial_orders")
+}
+
+model CommercialPaymentAttempt {
+  id                     String                         @id @default(uuid()) @db.Uuid
+  commercialOrderId      String                         @map("commercial_order_id") @db.Uuid
+  provider               CommercialPaymentProvider
+  merchantReference      String                         @unique @map("merchant_reference")
+  providerPaymentId      String?                        @map("provider_payment_id")
+  status                 CommercialPaymentAttemptStatus @default(CREATED)
+  amountMinor            Int                            @map("amount_minor")
+  currency               String                         @default("BYN")
+  paymentUrl             String?                        @map("payment_url")
+  providerFields         Json?                          @map("provider_fields_json")
+  expiresAt              DateTime?                      @map("expires_at")
+  verifiedAt             DateTime?                      @map("verified_at")
+  paidAt                 DateTime?                      @map("paid_at")
+  failureCode            String?                        @map("failure_code")
+  failureMessageSafe     String?                        @map("failure_message_safe")
+  checkoutIdempotencyKey String?                        @map("checkout_idempotency_key")
+  createdAt              DateTime                       @default(now()) @map("created_at")
+  updatedAt              DateTime                       @updatedAt @map("updated_at")
+
+  order  CommercialOrder          @relation(fields: [commercialOrderId], references: [id])
+  events CommercialPaymentEvent[]
+  access Access?
+
+  @@unique([commercialOrderId, checkoutIdempotencyKey])
+  @@unique([provider, providerPaymentId])
+  @@index([commercialOrderId, status])
+  @@map("commercial_payment_attempts")
+}
+
+model CommercialPaymentEvent {
+  id                         String                       @id @default(uuid()) @db.Uuid
+  commercialPaymentAttemptId String?                      @map("commercial_payment_attempt_id") @db.Uuid
+  provider                   CommercialPaymentProvider
+  providerEventKey           String?                      @map("provider_event_key")
+  payloadHash                String                       @map("payload_hash")
+  eventType                  String                       @map("event_type")
+  signatureValid             Boolean                      @map("signature_valid")
+  processingStatus           CommercialPaymentEventStatus @default(RECEIVED) @map("processing_status")
+  processingErrorCode        String?                      @map("processing_error_code")
+  redactedPayload            Json?                        @map("redacted_payload_json")
+  receivedAt                 DateTime                     @default(now()) @map("received_at")
+  processedAt                DateTime?                    @map("processed_at")
+
+  paymentAttempt CommercialPaymentAttempt? @relation(fields: [commercialPaymentAttemptId], references: [id])
+
+  @@unique([provider, payloadHash])
+  @@index([commercialPaymentAttemptId])
+  @@index([provider, providerEventKey])
+  @@map("commercial_payment_events")
 }
 
 model AccessCode {

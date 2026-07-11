@@ -1,6 +1,8 @@
 import Link from "next/link";
 import { notFound } from "next/navigation";
 import { serializePublicTest } from "@/lib/public-tests/serialize";
+import { commercialLegalConfig, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
+import { CommercialCheckoutForm } from "./commercial-checkout-form";
 import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
 
@@ -32,6 +34,7 @@ export default async function PublicTestPage({ params }: PageProps) {
 
   const publicTest = serializePublicTest(test);
   const isFullCeCt = publicTest.mode === "ce_ct" && publicTest.maxRawScore === 80;
+  const showCommercialCheckout = isCommercialCheckoutEnabled() && test.slug === "russian_training_variant_01_corrected";
 
   return (
     <main className="page-shell stack">
@@ -111,6 +114,7 @@ export default async function PublicTestPage({ params }: PageProps) {
             <h2 className="section-title">{formatPrice(publicTest.price, publicTest.currency)}</h2>
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
+          {showCommercialCheckout ? <CommercialCheckoutForm legal={commercialLegalConfig()} /> : null}
           <TestAccessForm testId={publicTest.id} />
         </aside>
       </section>

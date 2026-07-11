@@ -17,6 +17,7 @@
     "db:logs": "docker compose logs -f postgres",
     "seed:admin": "node scripts/seed-admin.mjs",
     "seed:demo": "node scripts/seed-demo-content.mjs",
+    "seed:commercial": "node scripts/seed-commercial-product.mjs",
     "prisma:generate": "prisma generate",
     "prisma:migrate": "prisma migrate dev",
     "setup:local": "pnpm db:up && pnpm prisma:migrate && pnpm prisma:generate && pnpm seed:admin && pnpm seed:demo"
