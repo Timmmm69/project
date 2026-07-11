@@ -19,6 +19,9 @@ export async function POST(request: Request, context: Context) {
     const latest = await getCommercialOrder(publicId);
     const attempt = latest.paymentAttempts[0];
     if (attempt) {
+      if (attempt.provider === "WEBPAY_SANDBOX") {
+        return apiFailure({ code: "PROVIDER_STATUS_REFRESH_UNAVAILABLE", message: "Provider status refresh is not available." }, 422);
+      }
       const provider = commercialProviderForRuntime();
       const notification = await provider.fetchPaymentStatus({ merchantReference: attempt.merchantReference, providerPaymentId: attempt.providerPaymentId });
       await processCommercialProviderNotification({ notification: { ...notification, amountMinor: notification.amountMinor || attempt.amountMinor, currency: notification.currency || attempt.currency }, rawBody: JSON.stringify(notification.redactedPayload), provider: attempt.provider });

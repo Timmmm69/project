@@ -3,10 +3,13 @@ import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
 import { createCommercialOrder } from "@/lib/commercial/commercial-service";
 import { setCommercialOrderToken } from "@/lib/commercial/order-token";
 import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
+import { allowCommercialAction } from "@/lib/commercial/rate-limit";
 import { commercialIdempotencyKeySchema, commercialOrderSchema } from "@/lib/commercial/schemas";
 
 export async function POST(request: Request) {
   if (!isSameOriginRequest(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
+  const clientKey = request.headers.get("x-forwarded-for") ?? "local";
+  if (!allowCommercialAction(`order:${clientKey}`, 5)) return apiFailure({ code: "RATE_LIMITED", message: "Try again later." }, 429);
   const unavailable = commercialCheckoutUnavailableReason();
   if (unavailable) return apiFailure({ code: unavailable, message: "Checkout сейчас недоступен." }, 403);
   const body = commercialOrderSchema.safeParse(await request.json().catch(() => null));

@@ -25,3 +25,11 @@ export function canTransitionOrder(from: CommercialOrderStatus, to: CommercialOr
 export function canTransitionPaymentAttempt(from: CommercialPaymentAttemptStatus, to: CommercialPaymentAttemptStatus) {
   return paymentTransitions[from].includes(to);
 }
+
+export function isTerminalPaymentAttempt(status: CommercialPaymentAttemptStatus) {
+  return status === "PAID" || status === "FAILED" || status === "CANCELLED" || status === "EXPIRED";
+}
+
+export function isActivePaymentAttempt(status: CommercialPaymentAttemptStatus) {
+  return status === "CREATED" || status === "PENDING";
+}

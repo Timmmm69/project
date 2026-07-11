@@ -3,6 +3,7 @@ import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
 import { createCommercialPaymentSession } from "@/lib/commercial/commercial-service";
 import { requireCommercialOrderToken } from "@/lib/commercial/order-token";
 import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
+import { allowCommercialAction } from "@/lib/commercial/rate-limit";
 import { commercialIdempotencyKeySchema, commercialPublicIdSchema } from "@/lib/commercial/schemas";
 import { commercialProviderForRuntime } from "@/lib/commercial/providers";
 
@@ -15,6 +16,8 @@ export async function POST(request: Request, context: Context) {
   const { publicId } = await context.params;
   if (!commercialPublicIdSchema.safeParse(publicId).success) return apiFailure({ code: "ORDER_NOT_FOUND", message: "Заказ не найден." }, 404);
   const key = commercialIdempotencyKeySchema.safeParse(request.headers.get("Idempotency-Key"));
+  const clientKey = request.headers.get("x-forwarded-for") ?? "local";
+  if (!allowCommercialAction(`session:${clientKey}:${publicId}`, 10)) return apiFailure({ code: "RATE_LIMITED", message: "Try again later." }, 429);
   if (!key.success) return apiFailure({ code: "VALIDATION_ERROR", message: "Нужен Idempotency-Key." }, 422);
   if (!(await requireCommercialOrderToken(publicId))) return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Заказ недоступен в этой сессии." }, 403);
 

@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it } from "vitest";
 import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
-import { LocalFakeCommercialProvider, WebPaySandboxProvider } from "@/lib/commercial/providers";
+import { LocalFakeCommercialProvider, WebPaySandboxProvider, commercialProviderForRuntime, isLocalFakeCommercialProviderEnabled } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, lookupTokenMatches, normalizeCommercialEmail } from "@/lib/commercial/security";
 import { commercialOrderSchema } from "@/lib/commercial/schemas";
-import { canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
+import { canTransitionOrder, canTransitionPaymentAttempt, isActivePaymentAttempt, isTerminalPaymentAttempt } from "@/lib/commercial/state-machine";
 
 const originalEnv = { ...process.env };
 
@@ -23,6 +23,16 @@ describe("commercial checkout safeguards", () => {
     expect(commercialCheckoutUnavailableReason()).toBe("COMMERCIAL_LEGAL_CONFIGURATION_MISSING");
   });
 
+  it("keeps the local fake provider behind an explicit non-production test flag", () => {
+    const env = process.env as Record<string, string | undefined>;
+    env.NODE_ENV = "development";
+    process.env.COMMERCIAL_FAKE_PROVIDER_TEST_ONLY = "true";
+    expect(isLocalFakeCommercialProviderEnabled()).toBe(true);
+    expect(commercialProviderForRuntime()).toBeInstanceOf(LocalFakeCommercialProvider);
+    env.NODE_ENV = "production";
+    expect(isLocalFakeCommercialProviderEnabled()).toBe(false);
+  });
+
   it("uses opaque lookup tokens that only match their hash", () => {
     const token = createLookupToken();
     expect(lookupTokenMatches(token, hashLookupToken(token))).toBe(true);
@@ -35,6 +45,10 @@ describe("commercial checkout safeguards", () => {
     expect(canTransitionOrder("PAID", "FAILED")).toBe(false);
     expect(canTransitionPaymentAttempt("PENDING", "PAID")).toBe(true);
     expect(canTransitionPaymentAttempt("PAID", "CANCELLED")).toBe(false);
+    expect(canTransitionPaymentAttempt("FAILED", "PENDING")).toBe(false);
+    expect(isActivePaymentAttempt("PENDING")).toBe(true);
+    expect(isActivePaymentAttempt("FAILED")).toBe(false);
+    expect(isTerminalPaymentAttempt("FAILED")).toBe(true);
   });
 
   it("verifies the deterministic fake provider without exposing an email", async () => {

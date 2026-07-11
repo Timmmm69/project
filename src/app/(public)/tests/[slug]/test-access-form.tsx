@@ -93,7 +93,7 @@ function paymentStatusText(payment: PaymentSummary) {
   return `Статус оплаты: ${payment.status}, сумма ${amount}.`;
 }
 
-export function TestAccessForm({ testId }: { testId: string }) {
+export function TestAccessForm({ testId, hidePayment = false }: { testId: string; hidePayment?: boolean }) {
   const [email, setEmail] = useState("");
   const [code, setCode] = useState("");
   const [payment, setPayment] = useState<PaymentSummary | null>(null);
@@ -339,6 +339,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
 
       {showAccessActions ? (
         <section className="stack">
+          {!hidePayment ? (
           <div className="subpanel stack compact">
             <div>
               <h3 className="subsection-title">Оплата</h3>
@@ -379,6 +380,7 @@ export function TestAccessForm({ testId }: { testId: string }) {
               </div>
             ) : null}
           </div>
+          ) : null}
 
           <div className="subpanel stack compact">
             <div>

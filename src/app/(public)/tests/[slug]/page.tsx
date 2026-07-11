@@ -33,8 +33,15 @@ export default async function PublicTestPage({ params }: PageProps) {
   }
 
   const publicTest = serializePublicTest(test);
-  const isFullCeCt = publicTest.mode === "ce_ct" && publicTest.maxRawScore === 80;
-  const showCommercialCheckout = isCommercialCheckoutEnabled() && test.slug === "russian_training_variant_01_corrected";
+  let isFullCeCt = publicTest.mode === "ce_ct" && publicTest.maxRawScore === 80;
+  const commercialProduct = isCommercialCheckoutEnabled()
+    ? await prisma.commercialProduct.findFirst({
+      where: { code: "russian-training-variant-01", testId: test.id, isActive: true },
+      select: { priceMinor: true, currency: true, attemptLimit: true, startWindowDays: true }
+    })
+    : null;
+  const showCommercialCheckout = Boolean(commercialProduct);
+  isFullCeCt &&= !showCommercialCheckout;
 
   return (
     <main className="page-shell stack">
@@ -76,15 +83,15 @@ export default async function PublicTestPage({ params }: PageProps) {
               </div>
               <div>
                 <dt>Попытки</dt>
-                <dd>{publicTest.attemptsLimit}</dd>
+                <dd>{showCommercialCheckout ? commercialProduct?.attemptLimit : publicTest.attemptsLimit}</dd>
               </div>
               <div>
                 <dt>Доступ</dt>
-                <dd>{publicTest.accessDays} дней</dd>
+                <dd>{showCommercialCheckout ? "90 дней до старта" : `${publicTest.accessDays} дней`}</dd>
               </div>
               <div>
                 <dt>Цена</dt>
-                <dd>{formatPrice(publicTest.price, publicTest.currency)}</dd>
+                <dd>{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</dd>
               </div>
             </dl>
           </section>
@@ -102,7 +109,7 @@ export default async function PublicTestPage({ params }: PageProps) {
               </div>
               <div>
                 <dt>3. Результат</dt>
-                <dd>Первичный балл и разбор ошибок</dd>
+                <dd>{showCommercialCheckout ? "Первичный результат" : "Первичный балл и разбор ошибок"}</dd>
               </div>
             </div>
           </section>
@@ -111,11 +118,11 @@ export default async function PublicTestPage({ params }: PageProps) {
         <aside className="panel stack">
           <div>
             <p className="eyebrow">Доступ к тесту</p>
-            <h2 className="section-title">{formatPrice(publicTest.price, publicTest.currency)}</h2>
+            <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
-          {showCommercialCheckout ? <CommercialCheckoutForm legal={commercialLegalConfig()} /> : null}
-          <TestAccessForm testId={publicTest.id} />
+          {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} /> : null}
+          <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} />
         </aside>
       </section>
     </main>

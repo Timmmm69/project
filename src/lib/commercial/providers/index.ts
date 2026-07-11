@@ -3,7 +3,14 @@ import type { CommercialPaymentProviderAdapter } from "@/lib/commercial/provider
 import { WebPaySandboxProvider } from "@/lib/commercial/providers/webpay-sandbox-provider";
 
 export function commercialProviderForRuntime(): CommercialPaymentProviderAdapter {
-  return process.env.NODE_ENV === "test" ? new LocalFakeCommercialProvider() : new WebPaySandboxProvider();
+  if (process.env.NODE_ENV !== "production" && process.env.COMMERCIAL_FAKE_PROVIDER_TEST_ONLY === "true") {
+    return new LocalFakeCommercialProvider();
+  }
+  return new WebPaySandboxProvider();
+}
+
+export function isLocalFakeCommercialProviderEnabled() {
+  return process.env.NODE_ENV !== "production" && process.env.COMMERCIAL_FAKE_PROVIDER_TEST_ONLY === "true";
 }
 
 export { LocalFakeCommercialProvider, WebPaySandboxProvider };

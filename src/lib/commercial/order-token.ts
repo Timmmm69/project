@@ -3,9 +3,13 @@ import { getCommercialOrder, orderTokenCookieName } from "@/lib/commercial/comme
 import { lookupTokenMatches } from "@/lib/commercial/security";
 
 export async function requireCommercialOrderToken(publicId: string) {
-  const order = await getCommercialOrder(publicId);
-  const token = (await cookies()).get(orderTokenCookieName(publicId))?.value;
-  return lookupTokenMatches(token, order.lookupTokenHash) ? order : null;
+  try {
+    const order = await getCommercialOrder(publicId);
+    const token = (await cookies()).get(orderTokenCookieName(publicId))?.value;
+    return lookupTokenMatches(token, order.lookupTokenHash) ? order : null;
+  } catch {
+    return null;
+  }
 }
 
 export async function setCommercialOrderToken(publicId: string, token: string) {

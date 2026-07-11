@@ -3,7 +3,12 @@ import { CommercialError } from "@/lib/commercial/commercial-service";
 
 export function commercialErrorResponse(error: unknown) {
   if (error instanceof CommercialError) {
-    return apiFailure({ code: error.code, message: commercialMessage(error.code), ...(error.nextAction ? { details: { nextAction: error.nextAction } } : {}) }, error.code === "EXISTING_ACCESS" ? 409 : 422);
+    const status = error.code === "EXISTING_ACCESS" || error.code === "ORDER_ALREADY_PENDING" || error.code === "PAYMENT_SESSION_ALREADY_ACTIVE"
+      ? 409
+      : error.code === "ORDER_TOKEN_REQUIRED"
+        ? 403
+        : 422;
+    return apiFailure({ code: error.code, message: commercialMessage(error.code), ...(error.nextAction ? { details: { nextAction: error.nextAction } } : {}) }, status);
   }
   return apiFailure({ code: "COMMERCIAL_CHECKOUT_ERROR", message: "Не удалось обработать запрос. Повторите попытку позже." }, 409);
 }

@@ -18,9 +18,18 @@ export default defineConfig({
     reuseExistingServer: true,
     env: {
       DATABASE_URL:
-        process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/ce_ct_tests_dev?schema=public",
+        process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=public",
       SESSION_SECRET: process.env.SESSION_SECRET ?? "dev_session_secret_for_e2e_1234567890",
-      ENABLE_MOCK_PAYMENTS: process.env.ENABLE_MOCK_PAYMENTS ?? "true"
+      ENABLE_MOCK_PAYMENTS: process.env.ENABLE_MOCK_PAYMENTS ?? "true",
+      COMMERCIAL_CHECKOUT_ENABLED: "true",
+      PAYMENTS_MODE: "webpay_sandbox",
+      COMMERCIAL_FAKE_PROVIDER_TEST_ONLY: "true",
+      LEGAL_BUNDLE_VERSION: "e2e-v1",
+      OFFER_URL: "https://example.test/offer",
+      PRIVACY_URL: "https://example.test/privacy",
+      REFUND_POLICY_URL: "https://example.test/refund",
+      DISCLAIMER_URL: "https://example.test/disclaimer",
+      SUPPORT_EMAIL: "support@example.test"
     }
   }
 });

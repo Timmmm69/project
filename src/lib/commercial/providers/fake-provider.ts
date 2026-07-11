@@ -5,9 +5,15 @@ export class LocalFakeCommercialProvider implements CommercialPaymentProviderAda
 
   async createCheckout(input: Parameters<CommercialPaymentProviderAdapter["createCheckout"]>[0]): Promise<CheckoutSession> {
     return {
-      actionUrl: "http://local-fake.invalid/checkout",
+      actionUrl: input.checkoutProxyUrl ?? "http://local-fake.invalid/checkout",
       method: "POST",
-      fields: { merchant_reference: input.merchantReference, amount_minor: String(input.amountMinor), currency: input.currency },
+      fields: {
+        merchant_reference: input.merchantReference,
+        amount_minor: String(input.amountMinor),
+        currency: input.currency,
+        return_url: input.returnUrl,
+        cancel_url: input.cancelUrl
+      },
       expiresAt: null
     };
   }
