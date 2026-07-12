@@ -5,6 +5,8 @@ import {
   accessGrantedPropertiesSchema,
   analyticsEventRegistry,
   backendOperationFailedPropertiesSchema,
+  checkoutStartedPropertiesSchema,
+  orderCreatedPropertiesSchema,
   parseAnalyticsEvent,
   paymentConfirmedPropertiesSchema
 } from "@/lib/analytics/schemas";
@@ -44,13 +46,37 @@ const access = {
 };
 
 describe("analytics event contracts", () => {
-  it("registers only the four implemented event names", () => {
+  it("registers only the six implemented event names", () => {
     expect(Object.keys(analyticsEventRegistry)).toEqual([
+      "checkout_started", "order_created",
       "payment_confirmed", "access_granted", "payment_validation_failed", "backend_operation_failed"
     ]);
   });
 
   it("accepts each strict event schema", () => {
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      event_name: "checkout_started",
+      properties: {
+        checkout_flow_id: "33333333-3333-4333-8333-333333333333",
+        product_id: "russian-2026",
+        test_id: "russian-training-1",
+        exam_mode: "rikz_russian_2026"
+      }
+    }).event_name).toBe("checkout_started");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "order_created",
+      properties: {
+        checkout_flow_id: "33333333-3333-4333-8333-333333333333",
+        order_public_id_hash: hash,
+        product_id: "russian-2026",
+        test_id: "russian-training-1",
+        amount: 1000,
+        currency: "BYN"
+      }
+    }).event_name).toBe("order_created");
     expect(parseAnalyticsEvent({ ...envelope, analytics_id_key_version: "v1", event_name: "payment_confirmed", properties: paid }).event_name).toBe("payment_confirmed");
     expect(parseAnalyticsEvent({ ...envelope, analytics_id_key_version: "v1", event_name: "access_granted", properties: access }).event_name).toBe("access_granted");
     expect(parseAnalyticsEvent({
@@ -82,6 +108,27 @@ describe("analytics event contracts", () => {
   it("rejects unknown properties and schema_version", () => {
     expect(() => paymentConfirmedPropertiesSchema.parse({ ...paid, amount: 1000 })).toThrow();
     expect(() => parseAnalyticsEvent({ ...envelope, schema_version: 1, event_name: "payment_confirmed", properties: paid })).toThrow();
+  });
+
+  it("keeps checkout and order payloads closed", () => {
+    const flow = {
+      checkout_flow_id: "33333333-3333-4333-8333-333333333333",
+      product_id: "russian-2026",
+      test_id: "russian-training-1",
+      exam_mode: "rikz_russian_2026"
+    };
+    const order = {
+      checkout_flow_id: flow.checkout_flow_id,
+      order_public_id_hash: hash,
+      product_id: flow.product_id,
+      test_id: flow.test_id,
+      amount: 1000,
+      currency: "BYN"
+    };
+    expect(checkoutStartedPropertiesSchema.parse(flow)).toEqual(flow);
+    expect(orderCreatedPropertiesSchema.parse(order)).toEqual(order);
+    expect(() => checkoutStartedPropertiesSchema.parse({ ...flow, email: "student@example.test" })).toThrow();
+    expect(() => orderCreatedPropertiesSchema.parse({ ...order, email: "student@example.test" })).toThrow();
   });
 
   it("allows only authoritative verification methods", () => {

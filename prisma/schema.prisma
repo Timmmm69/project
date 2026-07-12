@@ -416,13 +416,29 @@ model CommercialProduct {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  test     Test              @relation(fields: [testId], references: [id])
-  orders   CommercialOrder[]
-  accesses Access[]
+  test          Test                     @relation(fields: [testId], references: [id])
+  orders        CommercialOrder[]
+  checkoutFlows CommercialCheckoutFlow[]
+  accesses      Access[]
 
   @@index([testId])
   @@index([isActive])
   @@map("commercial_products")
+}
+
+model CommercialCheckoutFlow {
+  id                  String   @id @db.Uuid
+  commercialProductId String   @map("commercial_product_id") @db.Uuid
+  testIdSnapshot      String   @map("test_id_snapshot") @db.Uuid
+  examModeSnapshot    ExamMode @map("exam_mode_snapshot")
+  createdAt           DateTime @default(now()) @map("created_at")
+
+  product CommercialProduct @relation(fields: [commercialProductId], references: [id])
+  order   CommercialOrder?
+
+  @@index([commercialProductId])
+  @@index([testIdSnapshot])
+  @@map("commercial_checkout_flows")
 }
 
 model CommercialOrder {
@@ -442,12 +458,14 @@ model CommercialOrder {
   disclaimerVersion     String                @map("disclaimer_version")
   adultBuyerConfirmedAt DateTime              @map("adult_buyer_confirmed_at")
   idempotencyKey        String                @map("idempotency_key")
+  checkoutFlowId        String?               @unique @map("checkout_flow_id") @db.Uuid
   lookupTokenHash       String                @map("lookup_token_hash")
   paidAt                DateTime?             @map("paid_at")
   createdAt             DateTime              @default(now()) @map("created_at")
   updatedAt             DateTime              @updatedAt @map("updated_at")
 
   product         CommercialProduct          @relation(fields: [commercialProductId], references: [id])
+  checkoutFlow    CommercialCheckoutFlow?    @relation(fields: [checkoutFlowId], references: [id])
   paymentAttempts CommercialPaymentAttempt[]
   access          Access?
 

@@ -46,7 +46,14 @@ test("commercial checkout returns, claims access, and resumes the existing attem
   await expect(checkout).not.toContainText("шкала РИКЗ");
   await checkout.locator('input[type="email"]').fill(email);
   await checkout.locator('input[type="checkbox"]').check();
+  const flowResponsePromise = page.waitForResponse((response) =>
+    response.url().endsWith("/api/commercial/checkout-flows") && response.request().method() === "POST"
+  );
   await checkout.getByRole("button", { name: /Перейти к оплате/ }).click();
+  const flowResponse = await flowResponsePromise;
+  const flowBody = await flowResponse.json() as { success: boolean; data?: { checkout_flow_id?: string } };
+  expect(flowResponse.status()).toBe(201);
+  expect(flowBody.data?.checkout_flow_id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i);
   await checkout.getByRole("button", { name: /Открыть тестовую оплату/ }).click();
 
   await expect(page).toHaveURL(/commercialOrder=.*paymentReturn=1/);
