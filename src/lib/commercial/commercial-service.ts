@@ -1,4 +1,7 @@
+import { randomUUID } from "node:crypto";
 import { Prisma, type CommercialPaymentAttemptStatus, type CommercialPaymentProvider, type CommercialOrderStatus } from "@prisma/client";
+import { analyticsConfig, hashAnalyticsId } from "@/lib/analytics/analytics-id";
+import { safelyWriteAnalyticsEvent, type AnalyticsWriteInput, type AnalyticsWriter } from "@/lib/analytics/analytics-service";
 import { COMMERCIAL_CURRENCY, COMMERCIAL_PRICE_MINOR, commercialLegalConfig } from "@/lib/commercial/config";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
@@ -8,6 +11,191 @@ import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
 
 type Tx = Prisma.TransactionClient;
+
+function analyticsPaymentProvider(provider: CommercialPaymentProvider) {
+  return provider === "LOCAL_FAKE" ? "fake" as const : "webpay" as const;
+}
+
+function analyticsPaymentEnvironment(provider: CommercialPaymentProvider) {
+  return provider === "LOCAL_FAKE" ? "test" as const : "sandbox" as const;
+}
+
+function analyticsHashes(input: { orderPublicId?: string; paymentAttemptPublicId?: string; accessPublicId?: string }) {
+  const config = analyticsConfig();
+  if (!config.enabled || (!input.orderPublicId && !input.paymentAttemptPublicId && !input.accessPublicId)) {
+    return { properties: {}, analyticsIdKeyVersion: undefined };
+  }
+  return {
+    properties: {
+      ...(input.orderPublicId ? { order_public_id_hash: hashAnalyticsId("order", input.orderPublicId, config) } : {}),
+      ...(input.paymentAttemptPublicId ? { payment_attempt_public_id_hash: hashAnalyticsId("payment_attempt", input.paymentAttemptPublicId, config) } : {}),
+      ...(input.accessPublicId ? { access_public_id_hash: hashAnalyticsId("access", input.accessPublicId, config) } : {})
+    },
+    analyticsIdKeyVersion: config.keyVersion
+  };
+}
+
+async function ensureAnalytics(build: () => AnalyticsWriteInput, writer?: AnalyticsWriter) {
+  try {
+    return await safelyWriteAnalyticsEvent(build(), writer);
+  } catch {
+    return { enabled: false, inserted: false } as const;
+  }
+}
+
+async function writePaymentValidationFailed(input: {
+  transitionKey: string;
+  provider: CommercialPaymentProvider;
+  reason: "invalid_callback_signal" | "invalid_signature" | "merchant_reference_mismatch" | "provider_mismatch" |
+    "amount_mismatch" | "currency_mismatch" | "provider_payment_id_conflict" | "illegal_status_transition" |
+    "status_verification_unavailable";
+  orderPublicId?: string;
+  paymentAttemptPublicId?: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes(input);
+    return {
+      eventName: "payment_validation_failed",
+      transitionKey: input.transitionKey,
+      occurredAt: new Date(),
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        payment_provider: analyticsPaymentProvider(input.provider),
+        payment_environment: analyticsPaymentEnvironment(input.provider),
+        error_category: "payment_verification_error",
+        validation_reason: input.reason
+      }
+    };
+  }, writer);
+}
+
+type PaidAnalyticsFacts = {
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderId: string;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  access?: { publicId: string; occurredAt: Date; productCode: string; testSlug: string; examMode: string };
+};
+
+async function ensurePaidAnalytics(facts: PaidAnalyticsFacts, writer?: AnalyticsWriter) {
+  await ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: facts.orderPublicId, paymentAttemptPublicId: facts.paymentAttemptPublicId });
+    return {
+      eventName: "payment_confirmed",
+      transitionKey: `commercial-payment-paid:${facts.paymentAttemptId}`,
+      occurredAt: facts.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        payment_provider: analyticsPaymentProvider(facts.provider),
+        payment_environment: analyticsPaymentEnvironment(facts.provider),
+        payment_status: "paid",
+        verification_method: facts.provider === "LOCAL_FAKE" ? "fake_provider" : "status_api"
+      }
+    };
+  }, writer);
+  if (!facts.access) return;
+  await ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: facts.orderPublicId, paymentAttemptPublicId: facts.paymentAttemptPublicId, accessPublicId: facts.access!.publicId });
+    return {
+      eventName: "access_granted",
+      transitionKey: `commercial-access-granted:${facts.orderId}`,
+      occurredAt: facts.access!.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        product_id: facts.access!.productCode,
+        test_id: facts.access!.testSlug,
+        exam_mode: facts.access!.examMode.toLowerCase(),
+        access_source: "paid",
+        grant_reason: "confirmed_payment"
+      }
+    };
+  }, writer);
+}
+
+async function ensureCheckoutFailureAnalytics(input: { occurredAt: Date; orderPublicId: string; paymentAttemptId: string; paymentAttemptPublicId: string }, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    return {
+      eventName: "backend_operation_failed",
+      transitionKey: `backend-operation-failed:checkout:${input.paymentAttemptId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        error_event_id: randomUUID(),
+        error_category: "payment_provider_error",
+        failure_stage: "checkout",
+        error_code: "provider_unavailable",
+        retryable: true,
+        severity: "sev1"
+      }
+    };
+  }, writer);
+}
+
+async function recoverPaidAnalyticsFromExactDuplicate(input: {
+  notification: ProviderNotification;
+  provider: CommercialPaymentProvider;
+  analyticsWriter?: AnalyticsWriter;
+}) {
+  try {
+    if (!input.notification.signatureValid || input.notification.status !== "paid") return false;
+    const attempt = await prisma.commercialPaymentAttempt.findUnique({
+      where: { merchantReference: input.notification.merchantReference },
+      include: {
+        order: { include: { product: { include: { test: { select: { slug: true, examMode: true } } } }, access: true } }
+      }
+    });
+    if (!attempt ||
+      attempt.provider !== input.provider ||
+      attempt.merchantReference !== input.notification.merchantReference ||
+      attempt.amountMinor !== input.notification.amountMinor ||
+      attempt.currency !== input.notification.currency ||
+      hasProviderPaymentIdConflict({ currentStatus: attempt.status, currentProviderPaymentId: attempt.providerPaymentId, nextStatus: "PAID", nextProviderPaymentId: input.notification.providerPaymentId }) ||
+      attempt.status !== "PAID" ||
+      attempt.order.status !== "PAID" ||
+      !attempt.order.access ||
+      attempt.order.access.commercialOrderId !== attempt.order.id ||
+      attempt.order.access.commercialPaymentAttemptId !== attempt.id) return false;
+
+    await ensurePaidAnalytics({
+      occurredAt: attempt.paidAt ?? attempt.verifiedAt ?? new Date(),
+      provider: input.provider,
+      orderId: attempt.order.id,
+      orderPublicId: attempt.order.publicId,
+      paymentAttemptId: attempt.id,
+      paymentAttemptPublicId: attempt.publicId,
+      access: {
+        publicId: attempt.order.access.publicId,
+        occurredAt: attempt.order.access.grantedAt ?? attempt.order.access.createdAt,
+        productCode: attempt.order.product.code,
+        testSlug: attempt.order.product.test.slug,
+        examMode: attempt.order.product.test.examMode
+      }
+    }, input.analyticsWriter);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+function validationReason(code: string) {
+  const values = {
+    INVALID_SIGNATURE: "invalid_signature",
+    MERCHANT_REFERENCE_MISMATCH: "merchant_reference_mismatch",
+    PROVIDER_MISMATCH: "provider_mismatch",
+    AMOUNT_MISMATCH: "amount_mismatch",
+    CURRENCY_MISMATCH: "currency_mismatch",
+    PROVIDER_PAYMENT_ID_CONFLICT: "provider_payment_id_conflict",
+    ILLEGAL_STATUS_TRANSITION: "illegal_status_transition"
+  } as const;
+  return values[code as keyof typeof values];
+}
 
 async function lockCommercialOrder(tx: Tx, orderId: string) {
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_orders" WHERE "id" = ${orderId}::uuid FOR UPDATE`);
@@ -240,6 +428,7 @@ export async function createCommercialPaymentSession(input: {
   idempotencyKey: string;
   provider: CommercialPaymentProviderAdapter;
   appUrl: string;
+  analyticsWriter?: AnalyticsWriter;
 }) {
   const merchantReference = `rto-${input.publicId}-${createLookupToken().slice(0, 12)}`;
   let decision;
@@ -330,11 +519,11 @@ export async function createCommercialPaymentSession(input: {
       checkoutProxyUrl: `${input.appUrl}/api/commercial/fake-checkout`
     });
   } catch (error) {
-    await prisma.$transaction(async (tx) => {
+    const failureFacts = await prisma.$transaction(async (tx) => {
       await lockCommercialOrder(tx, decision.order.id);
       await lockCommercialPaymentAttempt(tx, decision.attempt.id);
-      const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true } });
-      const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id }, select: { status: true } });
+      const order = await tx.commercialOrder.findUniqueOrThrow({ where: { id: decision.order.id }, select: { status: true, publicId: true } });
+      const attempt = await tx.commercialPaymentAttempt.findUniqueOrThrow({ where: { id: decision.attempt.id }, select: { status: true, publicId: true } });
       if (attempt.status === "PENDING" && canTransitionPaymentAttempt(attempt.status, "FAILED")) {
         await tx.commercialPaymentAttempt.updateMany({
           where: { id: decision.attempt.id, status: attempt.status },
@@ -344,7 +533,9 @@ export async function createCommercialPaymentSession(input: {
       if (order.status === "PENDING" && canTransitionOrder(order.status, "FAILED")) {
         await tx.commercialOrder.updateMany({ where: { id: decision.order.id, status: order.status }, data: { status: "FAILED" } });
       }
+      return { occurredAt: new Date(), orderPublicId: order.publicId, paymentAttemptId: decision.attempt.id, paymentAttemptPublicId: attempt.publicId };
     });
+    await ensureCheckoutFailureAnalytics(failureFacts, input.analyticsWriter);
     throw error;
   }
 
@@ -415,15 +606,16 @@ export async function processCommercialProviderNotification(input: {
   notification: ProviderNotification;
   rawBody: string;
   provider: CommercialPaymentProvider;
+  analyticsWriter?: AnalyticsWriter;
 }) {
   const hash = payloadHash(input.rawBody);
   const attempt = await prisma.commercialPaymentAttempt.findUnique({
     where: { merchantReference: input.notification.merchantReference },
-    select: { id: true, commercialOrderId: true }
+    select: { id: true, publicId: true, commercialOrderId: true, order: { select: { publicId: true } } }
   });
 
   try {
-    return await prisma.$transaction(async (tx) => {
+    const outcome = await prisma.$transaction(async (tx) => {
       if (!attempt) {
         const event = await tx.commercialPaymentEvent.create({
           data: {
@@ -436,7 +628,7 @@ export async function processCommercialProviderNotification(input: {
           }
         });
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "MERCHANT_REFERENCE_MISMATCH", processedAt: new Date() } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
+        return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "merchant_reference_mismatch" as const } };
       }
 
       await lockCommercialOrder(tx, attempt.commercialOrderId);
@@ -455,16 +647,16 @@ export async function processCommercialProviderNotification(input: {
 
       if (!input.notification.signatureValid) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "INVALID_SIGNATURE", processedAt: new Date() } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
+        return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "invalid_signature" as const, orderPublicId: attempt.order.publicId, paymentAttemptPublicId: attempt.publicId } };
       }
 
       const current = await tx.commercialPaymentAttempt.findUniqueOrThrow({
         where: { id: attempt.id },
-        include: { order: { include: { product: true, access: true } } }
+        include: { order: { include: { product: { include: { test: { select: { slug: true, examMode: true } } } }, access: true } } }
       });
       if (current.commercialOrderId !== attempt.commercialOrderId) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "MERCHANT_REFERENCE_MISMATCH", processedAt: new Date() } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
+        return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "merchant_reference_mismatch" as const, orderPublicId: current.order.publicId, paymentAttemptPublicId: current.publicId } };
       }
       const mismatch = commercialNotificationMismatch({
         expectedProvider: current.provider,
@@ -476,7 +668,7 @@ export async function processCommercialProviderNotification(input: {
       });
       if (mismatch) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: mismatch, processedAt: new Date() } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
+        return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: validationReason(mismatch)!, orderPublicId: current.order.publicId, paymentAttemptPublicId: current.publicId } };
       }
 
       const now = new Date();
@@ -485,18 +677,35 @@ export async function processCommercialProviderNotification(input: {
       const processedEventKey = input.notification.providerEventKey;
       if (hasProviderPaymentIdConflict({ currentStatus: current.status, currentProviderPaymentId: current.providerPaymentId, nextStatus: nextAttemptStatus, nextProviderPaymentId: input.notification.providerPaymentId })) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "PROVIDER_PAYMENT_ID_CONFLICT", processedAt: now } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
+        return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "provider_payment_id_conflict" as const, orderPublicId: current.order.publicId, paymentAttemptPublicId: current.publicId } };
       }
       if (current.status === nextAttemptStatus && current.order.status === nextOrderStatus) {
         await tx.commercialPaymentEvent.update({
           where: { id: event.id },
           data: { providerEventKey: processedEventKey, processingStatus: "PROCESSED", processedAt: now }
         });
-        return { duplicate: false, grantedAccess: Boolean(current.order.access), rejected: false };
+        const paid = nextAttemptStatus === "PAID" && current.order.access
+          ? {
+              occurredAt: current.paidAt ?? current.verifiedAt ?? now,
+              provider: input.provider,
+              orderId: current.order.id,
+              orderPublicId: current.order.publicId,
+              paymentAttemptId: current.id,
+              paymentAttemptPublicId: current.publicId,
+              access: {
+                publicId: current.order.access.publicId,
+                occurredAt: current.order.access.grantedAt ?? current.order.access.createdAt,
+                productCode: current.order.product.code,
+                testSlug: current.order.product.test.slug,
+                examMode: current.order.product.test.examMode
+              }
+            } satisfies PaidAnalyticsFacts
+          : undefined;
+        return { duplicate: false, grantedAccess: Boolean(current.order.access), rejected: false, paid };
       }
       if (!canTransitionPaymentAttempt(current.status, nextAttemptStatus) || !canTransitionOrder(current.order.status, nextOrderStatus)) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "ILLEGAL_STATUS_TRANSITION", processedAt: now } });
-        return { duplicate: false, grantedAccess: false, rejected: true };
+        return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "illegal_status_transition" as const, orderPublicId: current.order.publicId, paymentAttemptPublicId: current.publicId } };
       }
       const attemptUpdate = await tx.commercialPaymentAttempt.updateMany({
         where: { id: current.id, status: current.status },
@@ -515,6 +724,7 @@ export async function processCommercialProviderNotification(input: {
       if (orderUpdate.count !== 1) throw new CommercialError("PAYMENT_STATE_CHANGED");
 
       let grantedAccess = false;
+      let grantedAccessRecord = current.order.access;
       if (nextAttemptStatus === "PAID") {
         const student = await tx.user.findUnique({ where: { email: current.order.emailNormalized } });
         const user = student ?? await tx.user.create({ data: { email: current.order.emailNormalized, role: "STUDENT" } });
@@ -522,7 +732,7 @@ export async function processCommercialProviderNotification(input: {
         const existing = await tx.access.findUnique({ where: { commercialOrderId: current.order.id } });
         if (!existing) {
           const deadline = addDays(now, current.order.product.startWindowDays);
-          await tx.access.create({
+          grantedAccessRecord = await tx.access.create({
             data: {
               userId: user.id,
               testId: current.order.testIdSnapshot,
@@ -546,8 +756,28 @@ export async function processCommercialProviderNotification(input: {
         data: { providerEventKey: processedEventKey, processingStatus: "PROCESSED", processedAt: now }
       });
       await tx.eventLog.create({ data: { eventType: "payment_status_changed", entityType: "commercial_payment_attempt", entityId: current.id, payload: { provider: input.provider, status: nextAttemptStatus } } });
-      return { duplicate: false, grantedAccess, rejected: false };
+      const paid = nextAttemptStatus === "PAID" && grantedAccessRecord
+        ? {
+            occurredAt: now,
+            provider: input.provider,
+            orderId: current.order.id,
+            orderPublicId: current.order.publicId,
+            paymentAttemptId: current.id,
+            paymentAttemptPublicId: current.publicId,
+            access: {
+              publicId: grantedAccessRecord.publicId,
+              occurredAt: grantedAccessRecord.grantedAt ?? grantedAccessRecord.createdAt,
+              productCode: current.order.product.code,
+              testSlug: current.order.product.test.slug,
+              examMode: current.order.product.test.examMode
+            }
+          } satisfies PaidAnalyticsFacts
+        : undefined;
+      return { duplicate: false, grantedAccess, rejected: false, paid };
     });
+    if (outcome.validation) await writePaymentValidationFailed(outcome.validation, input.analyticsWriter);
+    if (outcome.paid) await ensurePaidAnalytics(outcome.paid, input.analyticsWriter);
+    return { duplicate: outcome.duplicate, grantedAccess: outcome.grantedAccess, rejected: outcome.rejected };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && isCommercialPaymentEventUniqueConflict(error)) {
       const duplicate = await prisma.commercialPaymentEvent.findFirst({
@@ -562,9 +792,37 @@ export async function processCommercialProviderNotification(input: {
         },
         select: { id: true }
       });
-      if (duplicate) return { duplicate: true, grantedAccess: false, rejected: false };
+      if (duplicate) {
+        await recoverPaidAnalyticsFromExactDuplicate({
+          notification: input.notification,
+          provider: input.provider,
+          analyticsWriter: input.analyticsWriter
+        });
+        return { duplicate: true, grantedAccess: false, rejected: false };
+      }
     }
     throw error;
+  }
+}
+
+export async function recordCommercialPaymentValidationFailure(input: {
+  provider: CommercialPaymentProvider;
+  reason: "invalid_callback_signal" | "status_verification_unavailable" | "merchant_reference_mismatch";
+  merchantReference?: string;
+}) {
+  try {
+    const attempt = input.merchantReference
+      ? await prisma.commercialPaymentAttempt.findUnique({ where: { merchantReference: input.merchantReference }, include: { order: { select: { publicId: true } } } })
+      : null;
+    return writePaymentValidationFailed({
+      transitionKey: `payment-validation-route:${randomUUID()}`,
+      provider: input.provider,
+      reason: input.reason,
+      orderPublicId: attempt?.order.publicId,
+      paymentAttemptPublicId: attempt?.publicId
+    });
+  } catch {
+    return { enabled: false, inserted: false } as const;
   }
 }
 

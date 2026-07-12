@@ -361,6 +361,7 @@ model Payment {
 
 model Access {
   id                         String       @id @default(uuid()) @db.Uuid
+  publicId                   String       @unique @default(cuid()) @map("public_id")
   userId                     String       @map("user_id") @db.Uuid
   testId                     String       @map("test_id") @db.Uuid
   paymentId                  String?      @unique @map("payment_id") @db.Uuid
@@ -458,6 +459,7 @@ model CommercialOrder {
 
 model CommercialPaymentAttempt {
   id                     String                         @id @default(uuid()) @db.Uuid
+  publicId               String                         @unique @default(cuid()) @map("public_id")
   commercialOrderId      String                         @map("commercial_order_id") @db.Uuid
   provider               CommercialPaymentProvider
   merchantReference      String                         @unique @map("merchant_reference")
@@ -664,6 +666,29 @@ model EventLog {
   @@index([entityType, entityId])
   @@index([createdAt])
   @@map("event_logs")
+}
+
+model AnalyticsEvent {
+  id                           String   @id @default(uuid()) @db.Uuid
+  eventId                      String   @unique @map("event_id")
+  transitionKey               String   @unique @map("transition_key")
+  eventName                    String   @map("event_name")
+  eventVersion                 Int      @map("event_version")
+  occurredAt                   DateTime @map("occurred_at")
+  receivedAt                   DateTime @map("received_at")
+  environment                  String
+  trafficClass                 String   @map("traffic_class")
+  trafficClassAssignmentSource String   @map("traffic_class_assignment_source")
+  emittingLayer                String   @map("emitting_layer")
+  analyticsIdKeyVersion        String?  @map("analytics_id_key_version")
+  properties                   Json     @map("properties_json")
+  createdAt                    DateTime @default(now()) @map("created_at")
+
+  @@index([eventName])
+  @@index([occurredAt])
+  @@index([environment])
+  @@index([trafficClass])
+  @@map("analytics_events")
 }
 
 model ScoringScheme {

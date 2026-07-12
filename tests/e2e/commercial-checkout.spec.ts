@@ -1,13 +1,16 @@
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { POST as webPayNotify } from "@/app/api/payments/webpay/notify/route";
-import { createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification } from "@/lib/commercial/commercial-service";
+import { createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification, recordCommercialPaymentValidationFailure } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider } from "@/lib/commercial/providers";
+import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
+import type { AnalyticsWriter } from "@/lib/analytics/analytics-service";
 
 test.skip(process.env.RUN_E2E_WITH_DB !== "true", "Set RUN_E2E_WITH_DB=true and provide PostgreSQL to run commercial checkout integration.");
 
 const prisma = new PrismaClient();
 const suffix = Date.now().toString();
+const suiteStartedAt = new Date();
 const productCode = `commercial-e2e-${suffix}`;
 const email = `commercial-e2e-${suffix}@example.test`;
 const webPayEmail = `commercial-webpay-e2e-${suffix}@example.test`;
@@ -17,6 +20,10 @@ const doublePaidEmail = `commercial-double-paid-${suffix}@example.test`;
 const reusedKeyEmail = `commercial-reused-key-${suffix}@example.test`;
 const conflictEmail = `commercial-conflict-${suffix}@example.test`;
 const conflictHolderEmail = `commercial-conflict-holder-${suffix}@example.test`;
+const analyticsDisabledEmail = `commercial-analytics-disabled-${suffix}@example.test`;
+const validationEmail = `commercial-validation-${suffix}@example.test`;
+const analyticsFailureEmail = `commercial-analytics-failure-${suffix}@example.test`;
+const checkoutFailureEmail = `commercial-checkout-failure-${suffix}@example.test`;
 let productId = "";
 
 async function createPendingFixture(fixtureEmail: string, key: string) {
@@ -71,6 +78,9 @@ async function fakeEvent(input: {
 
 test.beforeAll(async () => {
   process.env.LEGAL_BUNDLE_VERSION = "e2e-v1";
+  process.env.ANALYTICS_ENABLED = "true";
+  process.env.ANALYTICS_ID_HMAC_KEY = "synthetic-e2e-analytics-key-at-least-32-characters";
+  process.env.ANALYTICS_ID_KEY_VERSION = "e2e-v1";
   const testRecord = await prisma.test.findFirst({
     where: { examMode: "RIKZ_RUSSIAN_2026", status: "PUBLISHED", deletedAt: null },
     select: { id: true }
@@ -97,6 +107,7 @@ test.afterAll(async () => {
   const attempts = await prisma.commercialPaymentAttempt.findMany({ where: { commercialOrderId: { in: orders.map((order) => order.id) } }, select: { id: true } });
   const accesses = await prisma.access.findMany({ where: { commercialOrderId: { in: orders.map((order) => order.id) } }, select: { id: true } });
   const completedAttempts = await prisma.attempt.findMany({ where: { accessId: { in: accesses.map((access) => access.id) } }, select: { id: true } });
+  await prisma.analyticsEvent.deleteMany({ where: { occurredAt: { gte: suiteStartedAt }, environment: "test" } });
   await prisma.commercialPaymentEvent.deleteMany({ where: { commercialPaymentAttemptId: { in: attempts.map((attempt) => attempt.id) } } });
   await prisma.answer.deleteMany({ where: { attemptId: { in: completedAttempts.map((attempt) => attempt.id) } } });
   await prisma.attempt.deleteMany({ where: { id: { in: completedAttempts.map((attempt) => attempt.id) } } });
@@ -107,11 +118,12 @@ test.afterAll(async () => {
   await prisma.user.deleteMany({
     where: {
       email: {
-        in: [email, webPayEmail, stateEmail, raceEmail, doublePaidEmail, reusedKeyEmail, conflictEmail, conflictHolderEmail]
+        in: [email, webPayEmail, stateEmail, raceEmail, doublePaidEmail, reusedKeyEmail, conflictEmail, conflictHolderEmail, analyticsDisabledEmail, validationEmail, analyticsFailureEmail, checkoutFailureEmail]
       }
     }
   });
   await prisma.$disconnect();
+  process.env.ANALYTICS_ENABLED = "false";
 });
 
 test("fake provider grants one access and replay is a no-op", async () => {
@@ -166,6 +178,19 @@ test("fake provider grants one access and replay is a no-op", async () => {
   expect(replay.duplicate).toBe(true);
   expect(await prisma.access.count({ where: { commercialOrderId: created.order.id } })).toBe(1);
   expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).status).toBe("PAID");
+  const paidAnalytics = await prisma.analyticsEvent.findMany({
+    where: { transitionKey: { in: [`commercial-payment-paid:${payment.id}`, `commercial-access-granted:${created.order.id}`] } }
+  });
+  expect(paidAnalytics).toHaveLength(2);
+  expect(paidAnalytics.find((event) => event.eventName === "payment_confirmed")?.properties).toMatchObject({
+    payment_provider: "fake", payment_environment: "test", verification_method: "fake_provider"
+  });
+  expect(paidAnalytics.every((event) => event.analyticsIdKeyVersion === "e2e-v1")).toBe(true);
+  expect(paidAnalytics.every((event) => !("analytics_id_key_version" in (event.properties as Record<string, unknown>)))).toBe(true);
+  expect(paidAnalytics.find((event) => event.eventName === "access_granted")?.properties).toMatchObject({
+    access_source: "paid", grant_reason: "confirmed_payment"
+  });
+  expect(JSON.stringify(paidAnalytics)).not.toContain(email);
 
   const access = await prisma.access.findUniqueOrThrow({ where: { commercialOrderId: created.order.id } });
   await prisma.access.update({ where: { id: access.id }, data: { attemptsAvailable: 0 } });
@@ -266,6 +291,9 @@ test("forged WebPay callback cannot pay, while an exact status response grants o
   expect(processed).toMatchObject({ rejected: false, grantedAccess: true });
   expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).status).toBe("PAID");
   expect(await prisma.access.count({ where: { commercialOrderId: created.order.id } })).toBe(1);
+  expect((await prisma.analyticsEvent.findUniqueOrThrow({ where: { transitionKey: `commercial-payment-paid:${payment.id}` } })).properties).toMatchObject({
+    verification_method: "status_api", payment_provider: "webpay", payment_environment: "sandbox"
+  });
 });
 
 test("a paid order is not downgraded by callbacks for another payment attempt", async () => {
@@ -353,6 +381,79 @@ test("parallel paid callbacks with different event keys grant one access", async
   expect(results.every((result) => !result.rejected)).toBe(true);
   expect(await prisma.access.count({ where: { commercialOrderId: fixture.order.id } })).toBe(1);
   expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: fixture.order.id } })).status).toBe("PAID");
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-access-granted:${fixture.order.id}` } })).toBe(1);
+});
+
+test("analytics disabled preserves the paid access outcome without events", async () => {
+  const fixture = await createPendingFixture(analyticsDisabledEmail, "analytics-disabled");
+  const paid = await fakeEvent({
+    merchantReference: fixture.attempt.merchantReference,
+    status: "paid",
+    eventKey: `analytics-disabled-paid-${suffix}`
+  });
+  process.env.ANALYTICS_ENABLED = "false";
+  try {
+    expect(await paid.process()).toMatchObject({ rejected: false, grantedAccess: true });
+  } finally {
+    process.env.ANALYTICS_ENABLED = "true";
+  }
+  expect(await prisma.access.count({ where: { commercialOrderId: fixture.order.id } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(0);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-access-granted:${fixture.order.id}` } })).toBe(0);
+});
+
+test("exact duplicate retries recover paid analytics without changing the domain state", async () => {
+  const fixture = await createPendingFixture(analyticsFailureEmail, "analytics-failure");
+  const provider = new LocalFakeCommercialProvider();
+  const failingWriter: AnalyticsWriter = async () => { throw new Error("synthetic analytics persistence failure"); };
+  const paid = await fakeEvent({ merchantReference: fixture.attempt.merchantReference, status: "paid", eventKey: `analytics-exact-retry-${suffix}`, paymentId: `analytics-paid-id-${suffix}` });
+  const originalKey = process.env.ANALYTICS_ID_HMAC_KEY;
+  process.env.ANALYTICS_ID_HMAC_KEY = "short";
+  try {
+    expect(await paid.process()).toMatchObject({ rejected: false, grantedAccess: true });
+  } finally {
+    process.env.ANALYTICS_ID_HMAC_KEY = originalKey;
+  }
+  expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: fixture.order.id } })).status).toBe("PAID");
+  expect(await prisma.access.count({ where: { commercialOrderId: fixture.order.id } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(0);
+
+  expect(await processCommercialProviderNotification({ notification: paid.notification, rawBody: paid.raw, provider: provider.provider, analyticsWriter: failingWriter })).toMatchObject({ duplicate: true, rejected: false });
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(0);
+
+  expect(await paid.process()).toMatchObject({ duplicate: true, rejected: false });
+  expect(await prisma.access.count({ where: { commercialOrderId: fixture.order.id } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-access-granted:${fixture.order.id}` } })).toBe(1);
+  for (let index = 0; index < 3; index += 1) expect(await paid.process()).toMatchObject({ duplicate: true, rejected: false });
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-access-granted:${fixture.order.id}` } })).toBe(1);
+
+  expect(await processCommercialProviderNotification({
+    notification: { ...paid.notification, signatureValid: false }, rawBody: paid.raw, provider: provider.provider
+  })).toMatchObject({ duplicate: true, rejected: false });
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-payment-paid:${fixture.attempt.id}` } })).toBe(1);
+});
+
+test("checkout provider error retains domain failure when analytics writer fails", async () => {
+  const created = await createCommercialOrder({
+    productCode, email: checkoutFailureEmail, adultBuyerConfirmed: true, legalBundleVersion: "e2e-v1", idempotencyKey: `checkout-failure-order-${suffix}`
+  });
+  const brokenProvider = {
+    provider: "LOCAL_FAKE" as const,
+    createCheckout: async () => { throw new Error("ORIGINAL_PROVIDER_ERROR"); },
+    verifyNotification: async () => { throw new Error("unused"); },
+    fetchPaymentStatus: async () => { throw new Error("unused"); }
+  };
+  const failingWriter: AnalyticsWriter = async () => { throw new Error("synthetic analytics persistence failure"); };
+  await expect(createCommercialPaymentSession({
+    publicId: created.order.publicId, idempotencyKey: `checkout-failure-${suffix}`, provider: brokenProvider, appUrl: "http://localhost:3000", analyticsWriter: failingWriter
+  })).rejects.toThrow("ORIGINAL_PROVIDER_ERROR");
+  const order = await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } });
+  const attempt = await prisma.commercialPaymentAttempt.findFirstOrThrow({ where: { commercialOrderId: created.order.id } });
+  expect(order.status).toBe("FAILED");
+  expect(attempt.status).toBe("FAILED");
 });
 
 test("an invalid event does not reserve its provider event key", async () => {
@@ -366,6 +467,9 @@ test("an invalid event does not reserve its provider event key", async () => {
     signature: "invalid"
   });
   expect(await invalid.process()).toMatchObject({ rejected: true });
+  expect(await prisma.analyticsEvent.count({
+    where: { eventName: "payment_validation_failed", occurredAt: { gte: suiteStartedAt } }
+  })).toBeGreaterThan(0);
   const valid = await fakeEvent({
     merchantReference: fixture.attempt.merchantReference,
     status: "paid",
@@ -375,6 +479,42 @@ test("an invalid event does not reserve its provider event key", async () => {
   });
   expect(await valid.process()).toMatchObject({ rejected: false, grantedAccess: true });
   expect(await prisma.access.count({ where: { commercialOrderId: fixture.order.id } })).toBe(1);
+});
+
+test("invalid amount, currency, reference, and unavailable status emit only safe validation events", async () => {
+  const fixture = await createPendingFixture(validationEmail, "validation");
+  const provider = new LocalFakeCommercialProvider();
+  const cases = [
+    { reason: "amount_mismatch", body: { merchant_reference: fixture.attempt.merchantReference, amount_minor: "999", currency: "BYN" } },
+    { reason: "currency_mismatch", body: { merchant_reference: fixture.attempt.merchantReference, amount_minor: "1000", currency: "USD" } },
+    { reason: "merchant_reference_mismatch", body: { merchant_reference: `unknown-${suffix}`, amount_minor: "1000", currency: "BYN" } }
+  ] as const;
+  for (const [index, item] of cases.entries()) {
+    const raw = JSON.stringify({
+      ...item.body,
+      payment_id: `validation-payment-${index}-${suffix}`,
+      event_key: `validation-event-${index}-${suffix}`,
+      status: "paid",
+      signature: "local-fake-valid"
+    });
+    const notification = await provider.verifyNotification(raw);
+    expect(await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider }))
+      .toMatchObject({ rejected: true, grantedAccess: false });
+  }
+  await recordCommercialPaymentValidationFailure({
+    provider: provider.provider,
+    reason: "status_verification_unavailable",
+    merchantReference: fixture.attempt.merchantReference
+  });
+  expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: fixture.order.id } })).status).toBe("PENDING");
+  expect(await prisma.access.count({ where: { commercialOrderId: fixture.order.id } })).toBe(0);
+  const failures = await prisma.analyticsEvent.findMany({
+    where: { eventName: "payment_validation_failed", occurredAt: { gte: suiteStartedAt } },
+    select: { properties: true }
+  });
+  const reasons = failures.map((event) => (event.properties as Record<string, unknown>).validation_reason);
+  for (const item of [...cases, { reason: "status_verification_unavailable" }]) expect(reasons).toContain(item.reason);
+  failures.forEach((event) => expect(() => assertNoForbiddenAnalyticsPayload(event.properties)).not.toThrow());
 });
 
 test("a provider payment id P2002 is not reported as a duplicate payment event", async () => {
