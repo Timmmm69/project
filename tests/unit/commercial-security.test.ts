@@ -39,6 +39,19 @@ describe("commercial checkout safeguards", () => {
     expect(commercialCheckoutUnavailableReason()).toBe("COMMERCIAL_LEGAL_CONFIGURATION_MISSING");
   });
 
+  it("keeps checkout disabled without the dedicated order token secret", () => {
+    process.env.COMMERCIAL_CHECKOUT_ENABLED = "true";
+    process.env.PAYMENTS_MODE = "webpay_sandbox";
+    process.env.LEGAL_BUNDLE_VERSION = "v1";
+    process.env.OFFER_URL = "https://example.test/offer";
+    process.env.PRIVACY_URL = "https://example.test/privacy";
+    process.env.REFUND_POLICY_URL = "https://example.test/refund";
+    process.env.DISCLAIMER_URL = "https://example.test/disclaimer";
+    process.env.SUPPORT_EMAIL = "support@example.test";
+    delete process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY;
+    expect(commercialCheckoutUnavailableReason()).toBe("COMMERCIAL_ORDER_TOKEN_CONFIGURATION_MISSING");
+  });
+
   it("keeps the local fake provider behind an explicit non-production test flag", () => {
     const env = process.env as Record<string, string | undefined>;
     env.NODE_ENV = "development";

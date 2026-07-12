@@ -24,6 +24,7 @@ export default defineConfig({
       COMMERCIAL_CHECKOUT_ENABLED: "true",
       PAYMENTS_MODE: "webpay_sandbox",
       COMMERCIAL_FAKE_PROVIDER_TEST_ONLY: "true",
+      COMMERCIAL_ORDER_TOKEN_HMAC_KEY: process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY ?? "synthetic-e2e-commercial-order-token-key-32-bytes",
       LEGAL_BUNDLE_VERSION: "e2e-v1",
       OFFER_URL: "https://example.test/offer",
       PRIVACY_URL: "https://example.test/privacy",

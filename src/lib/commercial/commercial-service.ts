@@ -6,7 +6,14 @@ import { COMMERCIAL_CURRENCY, COMMERCIAL_PRICE_MINOR, commercialLegalConfig } fr
 import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties } from "@/lib/commercial/checkout-flow";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
-import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
+import {
+  commercialOrderTokenSecret,
+  createLookupToken,
+  deriveCommercialOrderLookupToken,
+  hashLookupToken,
+  lookupTokenMatches,
+  payloadHash
+} from "@/lib/commercial/security";
 import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
 import { normalizeEmail } from "@/lib/validation/email";
 import { prisma } from "@/server/db/client";
@@ -357,7 +364,7 @@ async function recoverConcurrentOrderCreation(input: {
   emailNormalized: string;
   idempotencyKey: string;
   checkoutFlowId: string;
-  lookupToken: string;
+  orderTokenSecret: string;
 }, integrityError: Prisma.PrismaClientKnownRequestError) {
   const product = await prisma.commercialProduct.findUnique({
     where: { code: input.productCode },
@@ -371,11 +378,8 @@ async function recoverConcurrentOrderCreation(input: {
         sameRequest.idempotencyKey !== input.idempotencyKey) {
       throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
     }
-    const order = await prisma.commercialOrder.update({
-      where: { id: sameRequest.id },
-      data: { lookupTokenHash: hashLookupToken(input.lookupToken) }
-    });
-    return { order, lookupToken: input.lookupToken, idempotent: true };
+    const lookupToken = stableOrderLookupToken(sameRequest, input.orderTokenSecret);
+    return { order: sameRequest, lookupToken, idempotent: true };
   }
 
   const openOrder = await prisma.commercialOrder.findFirst({
@@ -388,6 +392,24 @@ async function recoverConcurrentOrderCreation(input: {
   });
   if (openOrder) throw new CommercialError("ORDER_ALREADY_PENDING");
   throw integrityError;
+}
+
+function stableOrderLookupToken(order: {
+  id: string;
+  checkoutFlowId: string | null;
+  idempotencyKey: string;
+  lookupTokenHash: string;
+}, secret: string) {
+  if (!order.checkoutFlowId) throw new CommercialError("ORDER_TOKEN_INTEGRITY_ERROR");
+  const token = deriveCommercialOrderLookupToken({
+    orderId: order.id,
+    checkoutFlowId: order.checkoutFlowId,
+    idempotencyKey: order.idempotencyKey
+  }, secret);
+  if (!lookupTokenMatches(token, order.lookupTokenHash)) {
+    throw new CommercialError("ORDER_TOKEN_INTEGRITY_ERROR");
+  }
+  return token;
 }
 
 export async function createCommercialOrder(input: {
@@ -412,7 +434,13 @@ export async function createCommercialOrder(input: {
   const now = new Date();
   const emailNormalized = normalizeEmail(input.email);
   const legal = commercialLegalConfig();
-  const token = createLookupToken();
+  const orderTokenSecret = commercialOrderTokenSecret();
+  const orderId = randomUUID();
+  const token = deriveCommercialOrderLookupToken({
+    orderId,
+    checkoutFlowId: input.checkoutFlowId,
+    idempotencyKey: input.idempotencyKey
+  }, orderTokenSecret);
 
   let outcome;
   try {
@@ -441,11 +469,8 @@ export async function createCommercialOrder(input: {
       if (checkoutFlow.order.emailNormalized !== emailNormalized || checkoutFlow.order.idempotencyKey !== input.idempotencyKey) {
         throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
       }
-      const updated = await tx.commercialOrder.update({
-        where: { id: checkoutFlow.order.id },
-        data: { lookupTokenHash: hashLookupToken(token) }
-      });
-      return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
+      const lookupToken = stableOrderLookupToken(checkoutFlow.order, orderTokenSecret);
+      return { kind: "created" as const, order: checkoutFlow.order, lookupToken, idempotent: true, product, newOrder: false };
     }
 
     const nextAction = await existingAccessAction(tx, emailNormalized, product.testId, now);
@@ -460,11 +485,8 @@ export async function createCommercialOrder(input: {
       if (existingByKey.emailNormalized !== emailNormalized || existingByKey.checkoutFlowId !== input.checkoutFlowId) {
         throw new CommercialError("IDEMPOTENCY_KEY_CONFLICT");
       }
-      const updated = await tx.commercialOrder.update({
-        where: { id: existingByKey.id },
-        data: { lookupTokenHash: hashLookupToken(token) }
-      });
-      return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
+      const lookupToken = stableOrderLookupToken(existingByKey, orderTokenSecret);
+      return { kind: "created" as const, order: existingByKey, lookupToken, idempotent: true, product, newOrder: false };
     }
 
     const pending = await tx.commercialOrder.findFirst({
@@ -477,6 +499,7 @@ export async function createCommercialOrder(input: {
 
     const order = await tx.commercialOrder.create({
       data: {
+        id: orderId,
         commercialProductId: product.id,
         testIdSnapshot: product.testId,
         productNameSnapshot: product.name,
@@ -507,7 +530,7 @@ export async function createCommercialOrder(input: {
         emailNormalized,
         idempotencyKey: input.idempotencyKey,
         checkoutFlowId: input.checkoutFlowId,
-        lookupToken: token
+        orderTokenSecret
       }, error);
     }
     throw error;
