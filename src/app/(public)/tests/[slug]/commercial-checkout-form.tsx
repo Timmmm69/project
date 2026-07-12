@@ -42,6 +42,7 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency }: 
   const [message, setMessage] = useState<string | null>(null);
   const [existingAccess, setExistingAccess] = useState(false);
   const orderKey = useRef<string | null>(null);
+  const checkoutFlowId = useRef<string | null>(null);
   const paymentKey = useRef<string | null>(null);
 
   async function loadStatus(publicId: string) {
@@ -67,10 +68,30 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency }: 
     setMessage(null);
     setExistingAccess(false);
     orderKey.current ??= newKey();
+    if (!checkoutFlowId.current) {
+      const flowResponse = await fetch("/api/commercial/checkout-flows", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ productCode: "russian-training-variant-01" })
+      });
+      const flowBody = await flowResponse.json() as ApiResponse<{ checkout_flow_id: string }>;
+      if (!flowBody.success) {
+        setBusy(false);
+        setMessage(flowBody.error.message);
+        return;
+      }
+      checkoutFlowId.current = flowBody.data.checkout_flow_id;
+    }
     const response = await fetch("/api/commercial/orders", {
       method: "POST",
       headers: { "Content-Type": "application/json", "Idempotency-Key": orderKey.current },
-      body: JSON.stringify({ productCode: "russian-training-variant-01", email, adultBuyerConfirmed: adult, legalBundleVersion: legal.version })
+      body: JSON.stringify({
+        productCode: "russian-training-variant-01",
+        checkout_flow_id: checkoutFlowId.current,
+        email,
+        adultBuyerConfirmed: adult,
+        legalBundleVersion: legal.version
+      })
     });
     const body = await response.json() as ApiResponse<{ order: { publicId: string; status: string } }>;
     setBusy(false);

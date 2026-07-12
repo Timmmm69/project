@@ -32,6 +32,22 @@ export const accessGrantedPropertiesSchema = z.object({
   grant_reason: z.literal("confirmed_payment")
 }).strict();
 
+export const checkoutStartedPropertiesSchema = z.object({
+  checkout_flow_id: z.string().uuid(),
+  product_id: bounded,
+  test_id: bounded,
+  exam_mode: z.enum(["generic", "rikz_russian_2026"])
+}).strict();
+
+export const orderCreatedPropertiesSchema = z.object({
+  checkout_flow_id: z.string().uuid(),
+  order_public_id_hash: hash,
+  product_id: bounded,
+  test_id: bounded,
+  amount: z.number().int().nonnegative(),
+  currency: z.string().regex(/^[A-Z]{3}$/)
+}).strict();
+
 export const paymentValidationFailedPropertiesSchema = z.object({
   ...entityHashFields,
   access_public_id_hash: z.never().optional(),
@@ -79,6 +95,8 @@ function eventSchema<T extends z.ZodType>(eventName: string, properties: T) {
 }
 
 export const analyticsEventRegistry = {
+  checkout_started: eventSchema("checkout_started", checkoutStartedPropertiesSchema),
+  order_created: eventSchema("order_created", orderCreatedPropertiesSchema),
   payment_confirmed: eventSchema("payment_confirmed", paymentConfirmedPropertiesSchema),
   access_granted: eventSchema("access_granted", accessGrantedPropertiesSchema),
   payment_validation_failed: eventSchema("payment_validation_failed", paymentValidationFailedPropertiesSchema),

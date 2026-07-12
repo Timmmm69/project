@@ -17,7 +17,14 @@ export async function POST(request: Request) {
   if (!body.success || !idempotencyKey.success) return apiFailure({ code: "VALIDATION_ERROR", message: "Некорректные данные заказа." }, 422);
 
   try {
-    const result = await createCommercialOrder({ ...body.data, idempotencyKey: idempotencyKey.data });
+    const result = await createCommercialOrder({
+      productCode: body.data.productCode,
+      checkoutFlowId: body.data.checkout_flow_id,
+      email: body.data.email,
+      adultBuyerConfirmed: body.data.adultBuyerConfirmed,
+      legalBundleVersion: body.data.legalBundleVersion,
+      idempotencyKey: idempotencyKey.data
+    });
     await setCommercialOrderToken(result.order.publicId, result.lookupToken);
     return apiSuccess({ order: { publicId: result.order.publicId, status: result.order.status.toLowerCase(), idempotent: result.idempotent } }, { status: 201 });
   } catch (error) {

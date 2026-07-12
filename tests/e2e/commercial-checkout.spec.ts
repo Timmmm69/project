@@ -1,10 +1,12 @@
 import { expect, test } from "@playwright/test";
+import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { POST as webPayNotify } from "@/app/api/payments/webpay/notify/route";
-import { createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification, recordCommercialPaymentValidationFailure } from "@/lib/commercial/commercial-service";
+import { createCommercialCheckoutFlow, createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification, recordCommercialPaymentValidationFailure } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider } from "@/lib/commercial/providers";
 import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
 import type { AnalyticsWriter } from "@/lib/analytics/analytics-service";
+import { hashLookupToken, lookupTokenMatches } from "@/lib/commercial/security";
 
 test.skip(process.env.RUN_E2E_WITH_DB !== "true", "Set RUN_E2E_WITH_DB=true and provide PostgreSQL to run commercial checkout integration.");
 
@@ -24,10 +26,20 @@ const analyticsDisabledEmail = `commercial-analytics-disabled-${suffix}@example.
 const validationEmail = `commercial-validation-${suffix}@example.test`;
 const analyticsFailureEmail = `commercial-analytics-failure-${suffix}@example.test`;
 const checkoutFailureEmail = `commercial-checkout-failure-${suffix}@example.test`;
+const linkageEmail = `commercial-linkage-${suffix}@example.test`;
+const linkageRaceEmail = `commercial-linkage-race-${suffix}@example.test`;
+const linkageFailureEmail = `commercial-linkage-failure-${suffix}@example.test`;
+const tokenConflictEmail = `commercial-token-conflict-${suffix}@example.test`;
+const tokenIntegrityEmail = `commercial-token-integrity-${suffix}@example.test`;
 let productId = "";
 
+async function createCheckoutOrder(input: Omit<Parameters<typeof createCommercialOrder>[0], "checkoutFlowId">) {
+  const flow = await createCommercialCheckoutFlow({ productCode: input.productCode, analyticsWriter: input.analyticsWriter });
+  return createCommercialOrder({ ...input, checkoutFlowId: flow.id });
+}
+
 async function createPendingFixture(fixtureEmail: string, key: string) {
-  const created = await createCommercialOrder({
+  const created = await createCheckoutOrder({
     productCode,
     email: fixtureEmail,
     adultBuyerConfirmed: true,
@@ -78,6 +90,7 @@ async function fakeEvent(input: {
 
 test.beforeAll(async () => {
   process.env.LEGAL_BUNDLE_VERSION = "e2e-v1";
+  process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY = "synthetic-e2e-commercial-order-token-key-32-bytes";
   process.env.ANALYTICS_ENABLED = "true";
   process.env.ANALYTICS_ID_HMAC_KEY = "synthetic-e2e-analytics-key-at-least-32-characters";
   process.env.ANALYTICS_ID_KEY_VERSION = "e2e-v1";
@@ -114,11 +127,12 @@ test.afterAll(async () => {
   await prisma.access.deleteMany({ where: { id: { in: accesses.map((access) => access.id) } } });
   await prisma.commercialPaymentAttempt.deleteMany({ where: { id: { in: attempts.map((attempt) => attempt.id) } } });
   await prisma.commercialOrder.deleteMany({ where: { id: { in: orders.map((order) => order.id) } } });
+  await prisma.commercialCheckoutFlow.deleteMany({ where: { commercialProductId: productId } });
   await prisma.commercialProduct.deleteMany({ where: { id: productId } });
   await prisma.user.deleteMany({
     where: {
       email: {
-        in: [email, webPayEmail, stateEmail, raceEmail, doublePaidEmail, reusedKeyEmail, conflictEmail, conflictHolderEmail, analyticsDisabledEmail, validationEmail, analyticsFailureEmail, checkoutFailureEmail]
+        in: [email, webPayEmail, stateEmail, raceEmail, doublePaidEmail, reusedKeyEmail, conflictEmail, conflictHolderEmail, analyticsDisabledEmail, validationEmail, analyticsFailureEmail, checkoutFailureEmail, linkageEmail, linkageRaceEmail, linkageFailureEmail, tokenConflictEmail, tokenIntegrityEmail]
       }
     }
   });
@@ -126,8 +140,200 @@ test.afterAll(async () => {
   process.env.ANALYTICS_ENABLED = "false";
 });
 
-test("fake provider grants one access and replay is a no-op", async () => {
+test("checkout flow links exactly one checkout_started to exactly one order_created", async () => {
+  const flow = await createCommercialCheckoutFlow({ productCode });
+  const input = {
+    productCode,
+    checkoutFlowId: flow.id,
+    email: linkageEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `linkage-order-${suffix}`
+  };
+  const created = await createCommercialOrder(input);
+  const hashAfterCreate = (await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash;
+  const retried = await createCommercialOrder(input);
+  const hashAfterRetry = (await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash;
+
+  expect(retried.order.id).toBe(created.order.id);
+  expect(retried.idempotent).toBe(true);
+  expect(retried.lookupToken).toBe(created.lookupToken);
+  expect(hashAfterRetry).toBe(hashAfterCreate);
+  expect(hashAfterCreate).toBe(hashLookupToken(created.lookupToken));
+  expect(lookupTokenMatches(retried.lookupToken, hashAfterRetry)).toBe(true);
+  expect(JSON.stringify(created.order)).not.toContain(created.lookupToken);
+  expect(await prisma.commercialOrder.count({ where: { checkoutFlowId: flow.id } })).toBe(1);
+  const events = await prisma.analyticsEvent.findMany({
+    where: { transitionKey: { in: [`commercial-checkout-started:${flow.id}`, `commercial-order-created:${created.order.id}`] } },
+    orderBy: { occurredAt: "asc" }
+  });
+  expect(events).toHaveLength(2);
+  expect(events.map((event) => event.eventName)).toEqual(["checkout_started", "order_created"]);
+  expect(events.map((event) => (event.properties as Record<string, unknown>).checkout_flow_id)).toEqual([flow.id, flow.id]);
+  events.forEach((event) => expect(() => assertNoForbiddenAnalyticsPayload(event.properties)).not.toThrow());
+  expect(JSON.stringify(events)).not.toContain(created.lookupToken);
+  expect(JSON.stringify(await prisma.eventLog.findMany({ where: { entityId: created.order.id } }))).not.toContain(created.lookupToken);
+  expect(events.find((event) => event.eventName === "order_created")?.properties).toMatchObject({
+    product_id: productCode,
+    amount: 1000,
+    currency: "BYN"
+  });
+});
+
+test("lookup token conflicts do not rotate the stored authorization hash", async () => {
+  const flow = await createCommercialCheckoutFlow({ productCode });
+  const idempotencyKey = `token-conflict-${suffix}`;
   const created = await createCommercialOrder({
+    productCode,
+    checkoutFlowId: flow.id,
+    email: tokenConflictEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey
+  });
+  const originalHash = (await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash;
+
+  await expect(createCommercialOrder({
+    productCode,
+    checkoutFlowId: flow.id,
+    email: `wrong-${tokenConflictEmail}`,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey
+  })).rejects.toMatchObject({ code: "CHECKOUT_FLOW_CONFLICT" });
+  await expect(createCommercialOrder({
+    productCode,
+    checkoutFlowId: flow.id,
+    email: tokenConflictEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `${idempotencyKey}-different`
+  })).rejects.toMatchObject({ code: "CHECKOUT_FLOW_CONFLICT" });
+  const otherFlow = await createCommercialCheckoutFlow({ productCode });
+  await expect(createCommercialOrder({
+    productCode,
+    checkoutFlowId: otherFlow.id,
+    email: tokenConflictEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey
+  })).rejects.toMatchObject({ code: "IDEMPOTENCY_KEY_CONFLICT" });
+
+  expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash).toBe(originalHash);
+  expect(lookupTokenMatches(created.lookupToken, originalHash)).toBe(true);
+});
+
+test("lookup token hash mismatch fails safely without automatic rotation", async () => {
+  const flow = await createCommercialCheckoutFlow({ productCode });
+  const input = {
+    productCode,
+    checkoutFlowId: flow.id,
+    email: tokenIntegrityEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `token-integrity-${suffix}`
+  };
+  const created = await createCommercialOrder(input);
+  const invalidHash = "f".repeat(64);
+  await prisma.commercialOrder.update({
+    where: { id: created.order.id },
+    data: { lookupTokenHash: invalidHash }
+  });
+  await expect(createCommercialOrder(input)).rejects.toMatchObject({ code: "ORDER_TOKEN_INTEGRITY_ERROR" });
+  expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash).toBe(invalidHash);
+});
+
+test("invalid, unknown, and incompatible checkout flows are rejected", async () => {
+  await expect(createCommercialOrder({
+    productCode,
+    checkoutFlowId: "not-a-uuid",
+    email: `invalid-${suffix}@example.test`,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `invalid-flow-${suffix}`
+  })).rejects.toMatchObject({ code: "INVALID_CHECKOUT_FLOW" });
+  await expect(createCommercialOrder({
+    productCode,
+    checkoutFlowId: randomUUID(),
+    email: `unknown-${suffix}@example.test`,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `unknown-flow-${suffix}`
+  })).rejects.toMatchObject({ code: "CHECKOUT_FLOW_NOT_FOUND" });
+
+  const flow = await createCommercialCheckoutFlow({ productCode });
+  const product = await prisma.commercialProduct.findUniqueOrThrow({ where: { code: productCode } });
+  const other = await prisma.commercialProduct.create({
+    data: {
+      code: `commercial-other-${suffix}`,
+      testId: product.testId,
+      name: "Other checkout context",
+      priceMinor: 1000,
+      currency: "BYN",
+      attemptLimit: 1,
+      startWindowDays: 90,
+      resultRetentionDays: 365,
+      isActive: true
+    }
+  });
+  try {
+    await expect(createCommercialOrder({
+      productCode: other.code,
+      checkoutFlowId: flow.id,
+      email: `context-${suffix}@example.test`,
+      adultBuyerConfirmed: true,
+      legalBundleVersion: "e2e-v1",
+      idempotencyKey: `context-flow-${suffix}`
+    })).rejects.toMatchObject({ code: "CHECKOUT_FLOW_CONTEXT_MISMATCH" });
+  } finally {
+    await prisma.commercialProduct.delete({ where: { id: other.id } });
+  }
+});
+
+test("concurrent retries create one order and one order_created event", async () => {
+  const flow = await createCommercialCheckoutFlow({ productCode });
+  const input = {
+    productCode,
+    checkoutFlowId: flow.id,
+    email: linkageRaceEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `linkage-race-${suffix}`
+  };
+  const results = await Promise.all([createCommercialOrder(input), createCommercialOrder(input)]);
+  expect(results[0].order.id).toBe(results[1].order.id);
+  expect(results[0].lookupToken).toBe(results[1].lookupToken);
+  expect(await prisma.commercialOrder.count({ where: { checkoutFlowId: flow.id } })).toBe(1);
+  const stored = await prisma.commercialOrder.findUniqueOrThrow({ where: { checkoutFlowId: flow.id } });
+  expect(lookupTokenMatches(results[0].lookupToken, stored.lookupTokenHash)).toBe(true);
+  expect(lookupTokenMatches(results[1].lookupToken, stored.lookupTokenHash)).toBe(true);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-order-created:${results[0].order.id}` } })).toBe(1);
+});
+
+test("analytics failure does not roll back a checkout flow or create a second order", async () => {
+  const failingWriter: AnalyticsWriter = async () => { throw new Error("synthetic analytics persistence failure"); };
+  const flow = await createCommercialCheckoutFlow({ productCode, analyticsWriter: failingWriter });
+  const input = {
+    productCode,
+    checkoutFlowId: flow.id,
+    email: linkageFailureEmail,
+    adultBuyerConfirmed: true,
+    legalBundleVersion: "e2e-v1",
+    idempotencyKey: `linkage-failure-${suffix}`,
+    analyticsWriter: failingWriter
+  };
+  const created = await createCommercialOrder(input);
+  const originalHash = (await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash;
+  const retried = await createCommercialOrder(input);
+  expect(retried.order.id).toBe(created.order.id);
+  expect(retried.lookupToken).toBe(created.lookupToken);
+  expect(await prisma.commercialCheckoutFlow.count({ where: { id: flow.id } })).toBe(1);
+  expect(await prisma.commercialOrder.count({ where: { checkoutFlowId: flow.id } })).toBe(1);
+  expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash).toBe(originalHash);
+});
+
+test("fake provider grants one access and replay is a no-op", async () => {
+  const created = await createCheckoutOrder({
     productCode,
     email,
     adultBuyerConfirmed: true,
@@ -151,7 +357,7 @@ test("fake provider grants one access and replay is a no-op", async () => {
     appUrl: "http://localhost:3000"
   });
   expect(sameActive.id).toBe(payment.id);
-  await expect(createCommercialOrder({
+  await expect(createCheckoutOrder({
     productCode,
     email,
     adultBuyerConfirmed: true,
@@ -205,7 +411,7 @@ test("fake provider grants one access and replay is a no-op", async () => {
       testSnapshot: {}
     }
   });
-  const repurchase = await createCommercialOrder({
+  const repurchase = await createCheckoutOrder({
     productCode,
     email,
     adultBuyerConfirmed: true,
@@ -221,7 +427,7 @@ test("forged WebPay callback cannot pay, while an exact status response grants o
   process.env.WEBPAY_SANDBOX_CHECKOUT_URL = "https://checkout.example.test";
   process.env.WEBPAY_SANDBOX_STATUS_URL = "https://status.example.test/payment";
 
-  const created = await createCommercialOrder({
+  const created = await createCheckoutOrder({
     productCode,
     email: webPayEmail,
     adultBuyerConfirmed: true,
@@ -437,7 +643,7 @@ test("exact duplicate retries recover paid analytics without changing the domain
 });
 
 test("checkout provider error retains domain failure when analytics writer fails", async () => {
-  const created = await createCommercialOrder({
+  const created = await createCheckoutOrder({
     productCode, email: checkoutFailureEmail, adultBuyerConfirmed: true, legalBundleVersion: "e2e-v1", idempotencyKey: `checkout-failure-order-${suffix}`
   });
   const brokenProvider = {

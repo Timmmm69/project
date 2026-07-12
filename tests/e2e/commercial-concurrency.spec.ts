@@ -1,6 +1,6 @@
 import { expect, test } from "@playwright/test";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification } from "@/lib/commercial/commercial-service";
+import { createCommercialCheckoutFlow, createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider } from "@/lib/commercial/providers";
 import { hashLookupToken } from "@/lib/commercial/security";
 
@@ -37,8 +37,10 @@ async function notification(input: {
 }
 
 async function createOrder(label: string, idempotencyKey = `order-${label}-${suffix}`) {
+  const flow = await createCommercialCheckoutFlow({ productCode });
   return createCommercialOrder({
     productCode,
+    checkoutFlowId: flow.id,
     email: email(label),
     adultBuyerConfirmed: true,
     legalBundleVersion: "concurrency-v1",
@@ -52,6 +54,7 @@ async function createSession(publicId: string, key: string) {
 
 test.beforeAll(async () => {
   process.env.LEGAL_BUNDLE_VERSION = "concurrency-v1";
+  process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY = "synthetic-e2e-commercial-order-token-key-32-bytes";
   const testRecord = await prisma.test.findFirst({
     where: { examMode: "RIKZ_RUSSIAN_2026", status: "PUBLISHED", deletedAt: null },
     select: { id: true }
@@ -87,6 +90,7 @@ test.afterAll(async () => {
   await prisma.access.deleteMany({ where: { id: { in: accessIds } } });
   await prisma.commercialPaymentAttempt.deleteMany({ where: { id: { in: paymentAttemptIds } } });
   await prisma.commercialOrder.deleteMany({ where: { id: { in: orderIds } } });
+  await prisma.commercialCheckoutFlow.deleteMany({ where: { commercialProductId: productId } });
   const userIds = [...new Set(accesses.map((access) => access.userId))];
   await prisma.eventLog.deleteMany({ where: { actorUserId: { in: userIds } } });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
@@ -97,9 +101,13 @@ test.afterAll(async () => {
 test("parallel normalized-email orders create one open order without token rotation", async () => {
   const mixedCase = `Order-Race-${suffix}@Example.Test`;
   const normalized = mixedCase.toLowerCase();
+  const [firstFlow, secondFlow] = await Promise.all([
+    createCommercialCheckoutFlow({ productCode }),
+    createCommercialCheckoutFlow({ productCode })
+  ]);
   const results = await Promise.allSettled([
-    createCommercialOrder({ productCode, email: mixedCase, adultBuyerConfirmed: true, legalBundleVersion: "concurrency-v1", idempotencyKey: `race-a-${suffix}` }),
-    createCommercialOrder({ productCode, email: normalized, adultBuyerConfirmed: true, legalBundleVersion: "concurrency-v1", idempotencyKey: `race-b-${suffix}` })
+    createCommercialOrder({ productCode, checkoutFlowId: firstFlow.id, email: mixedCase, adultBuyerConfirmed: true, legalBundleVersion: "concurrency-v1", idempotencyKey: `race-a-${suffix}` }),
+    createCommercialOrder({ productCode, checkoutFlowId: secondFlow.id, email: normalized, adultBuyerConfirmed: true, legalBundleVersion: "concurrency-v1", idempotencyKey: `race-b-${suffix}` })
   ]);
   const fulfilled = results.filter((result): result is PromiseFulfilledResult<Awaited<ReturnType<typeof createCommercialOrder>>> => result.status === "fulfilled");
   const rejected = results.filter((result): result is PromiseRejectedResult => result.status === "rejected");
