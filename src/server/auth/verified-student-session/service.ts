@@ -56,7 +56,12 @@ export type RevokeCurrentVerifiedStudentSessionResult = Readonly<{
   status: "REVOKED" | "ALREADY_REVOKED" | "NOT_FOUND";
 }>;
 
-export type VerifiedStudentSessionServiceErrorCode = "SCOPE_MISMATCH" | "SESSION_INACTIVE" | "CONCURRENT_STATE_CHANGE";
+export type VerifiedStudentSessionServiceErrorCode =
+  | "SUBJECT_INVALID"
+  | "ACCESS_REVOKED"
+  | "SCOPE_MISMATCH"
+  | "SESSION_INACTIVE"
+  | "CONCURRENT_STATE_CHANGE";
 
 export class VerifiedStudentSessionServiceError extends Error {
   constructor(readonly code: VerifiedStudentSessionServiceErrorCode) {
@@ -92,6 +97,62 @@ function scopeFromInput(input: VerifiedStudentSessionScope): VerifiedStudentSess
   };
 }
 
+async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStudentSessionScope) {
+  const users = await tx.$queryRaw<Array<{ role: string; deletedAt: Date | null }>>`
+    SELECT "role"::text AS "role", "deleted_at" AS "deletedAt"
+    FROM "users"
+    WHERE "id" = ${scope.userId}::uuid
+    FOR SHARE
+  `;
+  const user = users[0];
+  if (!user || user.role !== "student" || user.deletedAt) {
+    throw new VerifiedStudentSessionServiceError("SUBJECT_INVALID");
+  }
+
+  const tests = await tx.$queryRaw<Array<{ id: string }>>`
+    SELECT "id"
+    FROM "tests"
+    WHERE "id" = ${scope.testId}::uuid
+    FOR SHARE
+  `;
+  const products = await tx.$queryRaw<Array<{ testId: string }>>`
+    SELECT "test_id" AS "testId"
+    FROM "commercial_products"
+    WHERE "id" = ${scope.commercialProductId}::uuid
+    FOR SHARE
+  `;
+  const accesses = await tx.$queryRaw<Array<{
+    userId: string;
+    testId: string;
+    commercialProductId: string | null;
+    revokedAt: Date | null;
+  }>>`
+    SELECT
+      "user_id" AS "userId",
+      "test_id" AS "testId",
+      "commercial_product_id" AS "commercialProductId",
+      "revoked_at" AS "revokedAt"
+    FROM "accesses"
+    WHERE "id" = ${scope.accessId}::uuid
+    FOR SHARE
+  `;
+
+  const product = products[0];
+  const access = accesses[0];
+  const scopeIsConsistent =
+    tests.length === 1 &&
+    product?.testId === scope.testId &&
+    access?.userId === scope.userId &&
+    access?.testId === scope.testId &&
+    access?.commercialProductId === scope.commercialProductId;
+  if (!scopeIsConsistent) {
+    throw new VerifiedStudentSessionServiceError("SCOPE_MISMATCH");
+  }
+  if (access?.revokedAt) {
+    throw new VerifiedStudentSessionServiceError("ACCESS_REVOKED");
+  }
+}
+
 export function createVerifiedStudentSessionService(input: {
   client: PrismaClient;
   config: VerifiedStudentSessionConfig;
@@ -121,6 +182,11 @@ export function createVerifiedStudentSessionService(input: {
     });
     const requestedScope = scopeFromInput(issueInput);
     const now = clock();
+
+    if (existing && !scopeMatches(existing, requestedScope)) {
+      throw new VerifiedStudentSessionServiceError("SCOPE_MISMATCH");
+    }
+    await validateVerifiedStudentSessionScope(tx, requestedScope);
 
     if (!existing) {
       const rawToken = createVerifiedStudentSessionToken(input.config.activeKeyVersion);
@@ -152,9 +218,6 @@ export function createVerifiedStudentSessionService(input: {
       };
     }
 
-    if (!scopeMatches(existing, requestedScope)) {
-      throw new VerifiedStudentSessionServiceError("SCOPE_MISMATCH");
-    }
     if (!isVerifiedStudentSessionActive(existing, now)) {
       throw new VerifiedStudentSessionServiceError("SESSION_INACTIVE");
     }

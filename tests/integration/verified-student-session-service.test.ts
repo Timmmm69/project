@@ -57,6 +57,35 @@ describeWithDatabase("verified student session service integration", () => {
   let service: ReturnType<typeof createVerifiedStudentSessionService>;
   let issueInput: IssueVerifiedStudentSessionInput;
 
+  async function createStudent(role: "STUDENT" | "ADMIN" = "STUDENT") {
+    return prisma.user.create({
+      data: { email: `${randomUUID()}@example.test`, role }
+    });
+  }
+
+  async function createTest() {
+    return prisma.test.create({
+      data: {
+        title: "ACC-01A alternate test",
+        slug: `acc01a-alternate-${randomUUID()}`,
+        price: 1000,
+        durationMinutes: 120,
+        status: "PUBLISHED"
+      }
+    });
+  }
+
+  async function createProduct(testId: string) {
+    return prisma.commercialProduct.create({
+      data: {
+        code: `acc01a-alternate-${randomUUID()}`,
+        testId,
+        name: "ACC-01A alternate product",
+        priceMinor: 1000
+      }
+    });
+  }
+
   beforeAll(() => {
     assertDedicatedTestSchema();
   });
@@ -127,6 +156,138 @@ describeWithDatabase("verified student session service integration", () => {
     expect(issued.outcome).toBe("ISSUED");
     expect(issued.tokenGeneration).toBe(1);
     expect(await prisma.verifiedStudentSession.count()).toBe(1);
+  });
+
+  it("rejects initial issue when Access belongs to another user", async () => {
+    const otherUser = await createStudent();
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { userId: otherUser.id }
+    });
+
+    const error = await service.issue(issueInput).catch((caught: unknown) => caught);
+    expect(error).toMatchObject({ code: "SCOPE_MISMATCH" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect((error as Error).message).toBe("VERIFIED_STUDENT_SESSION_OPERATION_REJECTED:SCOPE_MISMATCH");
+    expect((error as Error).message).not.toContain(issueInput.userId);
+    expect((error as Error).message).not.toContain(issueInput.accessId);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("rejects initial issue when Access belongs to another test", async () => {
+    const otherTest = await createTest();
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { testId: otherTest.id }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "SCOPE_MISMATCH" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("rejects initial issue when Product belongs to another test", async () => {
+    const otherTest = await createTest();
+    await prisma.commercialProduct.update({
+      where: { id: issueInput.commercialProductId },
+      data: { testId: otherTest.id }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "SCOPE_MISMATCH" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("rejects initial issue when Access belongs to another Product", async () => {
+    const otherProduct = await createProduct(issueInput.testId);
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { commercialProductId: otherProduct.id }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "SCOPE_MISMATCH" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("rejects initial issue for a deleted User", async () => {
+    await prisma.user.update({
+      where: { id: issueInput.userId },
+      data: { deletedAt: now }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "SUBJECT_INVALID" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("rejects initial issue for a non-STUDENT User", async () => {
+    await prisma.user.update({
+      where: { id: issueInput.userId },
+      data: { role: "ADMIN" }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "SUBJECT_INVALID" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("rejects initial issue for a revoked Access", async () => {
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { revokedAt: now }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "ACCESS_REVOKED" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+  });
+
+  it("revalidates a same-operation retry after Access revocation without rotating", async () => {
+    const issued = await service.issue(issueInput);
+    const before = await prisma.verifiedStudentSession.findFirstOrThrow();
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { revokedAt: now }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "ACCESS_REVOKED" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    const after = await prisma.verifiedStudentSession.findFirstOrThrow();
+    expect(after.tokenDigest).toBe(before.tokenDigest);
+    expect(after.tokenGeneration).toBe(before.tokenGeneration);
+    expect(after.lastRotatedAt).toEqual(before.lastRotatedAt);
+    expect(after.expiresAt).toEqual(before.expiresAt);
+    expect(await service.resolve(issued.rawToken)).toEqual({ status: "ACCESS_REVOKED" });
+  });
+
+  it("revalidates a same-operation retry after persisted linkage mutation without rotating", async () => {
+    const issued = await service.issue(issueInput);
+    const before = await prisma.verifiedStudentSession.findFirstOrThrow();
+    const otherUser = await createStudent();
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { userId: otherUser.id }
+    });
+
+    await expect(service.issue(issueInput))
+      .rejects.toMatchObject({ code: "SCOPE_MISMATCH" } satisfies Partial<VerifiedStudentSessionServiceError>);
+    const after = await prisma.verifiedStudentSession.findFirstOrThrow();
+    expect(after.tokenDigest).toBe(before.tokenDigest);
+    expect(after.tokenGeneration).toBe(before.tokenGeneration);
+    expect(after.lastRotatedAt).toEqual(before.lastRotatedAt);
+    expect(after.expiresAt).toEqual(before.expiresAt);
+    expect(await service.resolve(issued.rawToken)).toEqual({ status: "SCOPE_MISMATCH" });
+  });
+
+  it("keeps valid create, resolve and retry semantics without extending absolute expiry", async () => {
+    const issued = await service.issue(issueInput);
+    expect(await service.resolve(issued.rawToken)).toMatchObject({ status: "RESOLVED", tokenGeneration: 1 });
+    now = new Date(now.getTime() + 60_000);
+    const retried = await service.issue(issueInput);
+    expect(retried).toMatchObject({ outcome: "ROTATED", tokenGeneration: 2 });
+    expect(retried.issuedAt).toEqual(issued.issuedAt);
+    expect(retried.expiresAt).toEqual(issued.expiresAt);
+    expect(await service.resolve(retried.rawToken)).toMatchObject({ status: "RESOLVED", tokenGeneration: 2 });
   });
 
   it("persists only the digest and never the raw token", async () => {
