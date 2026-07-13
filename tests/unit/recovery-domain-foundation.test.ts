@@ -26,14 +26,18 @@ import {
 } from "@/server/recovery/mailer";
 import {
   isBeforeRecoveryExpiry,
+  isRecoverySourceVerificationFailure,
+  NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS,
   RECOVERY_FAILED_VERIFY_LIMIT,
   RECOVERY_OTP_TTL_MS,
   RECOVERY_RESEND_COOLDOWN_MS,
   RECOVERY_SESSION_ABSOLUTE_TTL_MS,
   createRecoveryDomainService,
+  recoveryDomainServiceUsesTestHooks,
   recoveryOtpExpiresAt,
   recoveryResendAvailableAt,
-  recoverySessionExpiresAt
+  recoverySessionExpiresAt,
+  recoveryVerificationOperationLockKey
 } from "@/server/recovery/service";
 import {
   normalizeRecoveryTiming,
@@ -188,6 +192,59 @@ describe("ACC-01A recovery foundation", () => {
 
   it("fixes failed verification limit at five", () => {
     expect(RECOVERY_FAILED_VERIFY_LIMIT).toBe(5);
+  });
+
+  it("derives the verification-operation lock key from only the operation ID", () => {
+    const operationId = "11111111-1111-4111-8111-111111111111";
+    const lockKey = recoveryVerificationOperationLockKey(operationId);
+    expect(lockKey).toBe(`acc01a-verify-operation:${operationId}`);
+    for (const forbidden of [
+      "rc1.v1.raw-token",
+      "buyer@example.test",
+      "203.0.113.10"
+    ]) {
+      expect(lockKey).not.toContain(forbidden);
+    }
+  });
+
+  it("classifies malformed OTP as a source verification failure", () => {
+    expect(isRecoverySourceVerificationFailure("MALFORMED_OTP")).toBe(true);
+    expect(isRecoverySourceVerificationFailure("WRONG_OTP")).toBe(true);
+  });
+
+  it("classifies malformed and unknown tokens as source verification failures", () => {
+    for (const classification of ["MALFORMED_TOKEN", "UNKNOWN_TOKEN"] as const) {
+      expect(isRecoverySourceVerificationFailure(classification)).toBe(true);
+    }
+  });
+
+  it("does not classify terminal, replay, success or operation conflict outcomes as source failures", () => {
+    for (const classification of [
+      "REPLAY",
+      "EXPIRED",
+      "LOCKED",
+      "MATCH",
+      "OPERATION_CONFLICT"
+    ] as const) {
+      expect(isRecoverySourceVerificationFailure(classification)).toBe(false);
+    }
+  });
+
+  it("provides complete no-op defaults for recovery concurrency test hooks", async () => {
+    await expect(NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS.beforeRequestSubjectLock())
+      .resolves.toBeUndefined();
+    await expect(NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS.beforeVerifyOperationLock())
+      .resolves.toBeUndefined();
+    await expect(NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS.beforeVerifySubjectLock())
+      .resolves.toBeUndefined();
+  });
+
+  it("enables injected service hooks only for the test mailer mode", () => {
+    const testConfig = parseRecoveryConfig(enabledEnvironment());
+    expect(recoveryDomainServiceUsesTestHooks(testConfig)).toBe(true);
+    if (!testConfig.enabled) throw new Error("expected enabled config");
+    expect(recoveryDomainServiceUsesTestHooks({ ...testConfig, mailerMode: "fake" })).toBe(false);
+    expect(recoveryDomainServiceUsesTestHooks({ enabled: false })).toBe(false);
   });
 
   it("uses a thirty-minute absolute recovery-session TTL without sliding", () => {

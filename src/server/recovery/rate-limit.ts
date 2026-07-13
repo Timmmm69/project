@@ -131,6 +131,13 @@ export function createRecoveryRateLimitService(input: {
       return result.allowed ? { allowed: true, keyDigest } : result;
     },
 
+    consumeFailedVerifySource(rawSource: string, tx?: Tx) {
+      const keyDigest = createRecoverySourceDigest(rawSource, input.fingerprintKeyRing, "verify");
+      return withTransaction(tx, (activeTx) => (
+        evaluate(activeTx, "SOURCE_VERIFY_FAILURE", keyDigest, true)
+      ));
+    },
+
     recordFailedVerifySource(keyDigest: string, tx?: Tx) {
       return withTransaction(tx, async (activeTx) => {
         const now = clock();

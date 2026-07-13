@@ -51,6 +51,48 @@ export function isBeforeRecoveryExpiry(now: Date, expiresAt: Date) {
 type Tx = Prisma.TransactionClient;
 type Clock = () => Date;
 
+export type RecoveryDomainServiceTestHooks = Readonly<{
+  beforeRequestSubjectLock?: () => Promise<void>;
+  beforeVerifyOperationLock?: () => Promise<void>;
+  beforeVerifySubjectLock?: () => Promise<void>;
+}>;
+
+const noopRecoveryTestHook = async () => {};
+
+export const NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS = Object.freeze({
+  beforeRequestSubjectLock: noopRecoveryTestHook,
+  beforeVerifyOperationLock: noopRecoveryTestHook,
+  beforeVerifySubjectLock: noopRecoveryTestHook
+});
+
+export type RecoverySourceFailureClassification =
+  | "MALFORMED_OTP"
+  | "MALFORMED_TOKEN"
+  | "UNKNOWN_TOKEN"
+  | "WRONG_OTP"
+  | "REPLAY"
+  | "EXPIRED"
+  | "LOCKED"
+  | "MATCH"
+  | "OPERATION_CONFLICT";
+
+export function isRecoverySourceVerificationFailure(
+  classification: RecoverySourceFailureClassification
+) {
+  return classification === "MALFORMED_OTP"
+    || classification === "MALFORMED_TOKEN"
+    || classification === "UNKNOWN_TOKEN"
+    || classification === "WRONG_OTP";
+}
+
+export function recoveryVerificationOperationLockKey(operationId: string) {
+  return `acc01a-verify-operation:${operationId}`;
+}
+
+export function recoveryDomainServiceUsesTestHooks(config: RecoveryConfig) {
+  return config.enabled && config.mailerMode === "test";
+}
+
 const operationIdSchema = z.string().uuid();
 const sourceSchema = z.string().trim().min(1).max(1024);
 
@@ -226,9 +268,16 @@ export function createRecoveryDomainService(input: {
   mailer: RecoveryMailer;
   clock?: Clock;
   otpGenerator?: () => string;
+  testHooks?: RecoveryDomainServiceTestHooks;
 }) {
   const clock = input.clock ?? (() => new Date());
   const configuredOtpGenerator = input.otpGenerator;
+  const testHooks = recoveryDomainServiceUsesTestHooks(input.config)
+    ? {
+        ...NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS,
+        ...input.testHooks
+      }
+    : NOOP_RECOVERY_DOMAIN_SERVICE_TEST_HOOKS;
 
   function enabledConfig() {
     const config = requireEnabled(input.config);
@@ -293,6 +342,14 @@ export function createRecoveryDomainService(input: {
     `;
   }
 
+  async function acquireVerificationOperationLock(tx: Tx, operationId: string) {
+    const lockKey = recoveryVerificationOperationLockKey(operationId);
+    await tx.$queryRaw`
+      SELECT 1::integer AS "locked"
+      FROM (SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))) AS acquired
+    `;
+  }
+
   return {
     async requestChallenge(request: RequestRecoveryChallengeInput): Promise<RequestRecoveryChallengeResult> {
       const config = enabledConfig();
@@ -343,6 +400,8 @@ export function createRecoveryDomainService(input: {
         if (!product || product.test.id !== product.testId) {
           throw new RecoveryDomainServiceError("PRODUCT_SCOPE_INVALID");
         }
+
+        await testHooks.beforeRequestSubjectLock();
 
         const emailLimit = await limiter.consumeEmailRequest(emailFingerprint, tx);
         if (!emailLimit.allowed) {
@@ -529,25 +588,60 @@ export function createRecoveryDomainService(input: {
       const config = enabledConfig();
       validateOperationId(request.verificationOperationId);
       const transientSource = validateSource(request.source);
-      if (!RECOVERY_OTP_PATTERN.test(request.otp)) {
-        throw new RecoveryDomainServiceError("INVALID_OTP");
-      }
       const correlationId = randomUUID();
-      let token;
-      try {
-        token = digestRecoveryChallengeToken(
-          request.rawChallengeToken,
-          config.keyRings.challengeToken
-        );
-      } catch (error) {
-        if (error instanceof RecoveryCryptoError) {
-          return { outcome: "INVALID_TOKEN", correlationId };
-        }
-        throw error;
-      }
       const limiter = rateLimiter(config);
 
       return withTransaction(callerTx, async (tx) => {
+        await testHooks.beforeVerifyOperationLock();
+
+        // Deterministic lock order for verification:
+        // 1. verification-operation advisory lock;
+        // 2. token parse/digest and candidate lookup;
+        // 3. subject advisory lock;
+        // 4. challenge row FOR UPDATE;
+        // 5. existing-operation reconciliation;
+        // 6. source limiter and challenge/session effects.
+        // Never acquire the operation lock after a subject or challenge lock.
+        await acquireVerificationOperationLock(tx, request.verificationOperationId);
+
+        async function rejectSourceFailure(
+          classification: Extract<
+            RecoverySourceFailureClassification,
+            "MALFORMED_OTP" | "MALFORMED_TOKEN" | "UNKNOWN_TOKEN"
+          >,
+          outcome: "ERROR" | "INVALID_TOKEN"
+        ): Promise<VerifyRecoveryChallengeResult> {
+          if (!isRecoverySourceVerificationFailure(classification)) {
+            throw new Error("RECOVERY_SOURCE_FAILURE_CLASSIFICATION_INVALID");
+          }
+          const consumed = await limiter.consumeFailedVerifySource(transientSource, tx);
+          if (!consumed.allowed) {
+            return {
+              outcome: "RATE_LIMITED",
+              safeCode: consumed.safeCode,
+              retryAfterSeconds: consumed.retryAfterSeconds,
+              correlationId
+            };
+          }
+          return { outcome, correlationId };
+        }
+
+        let token;
+        try {
+          token = digestRecoveryChallengeToken(
+            request.rawChallengeToken,
+            config.keyRings.challengeToken
+          );
+        } catch (error) {
+          if (error instanceof RecoveryCryptoError) {
+            return rejectSourceFailure("MALFORMED_TOKEN", "INVALID_TOKEN");
+          }
+          throw error;
+        }
+        if (!RECOVERY_OTP_PATTERN.test(request.otp)) {
+          return rejectSourceFailure("MALFORMED_OTP", "ERROR");
+        }
+
         const candidate = await tx.recoveryChallenge.findUnique({
           where: { challengeTokenDigest: token.digest },
           select: {
@@ -558,8 +652,9 @@ export function createRecoveryDomainService(input: {
           }
         });
         if (!candidate) {
-          return { outcome: "INVALID_TOKEN", correlationId };
+          return rejectSourceFailure("UNKNOWN_TOKEN", "INVALID_TOKEN");
         }
+        await testHooks.beforeVerifySubjectLock();
         await acquireSubjectLock(
           tx,
           candidate.emailFingerprint,
@@ -574,7 +669,7 @@ export function createRecoveryDomainService(input: {
           FOR UPDATE
         `;
         if (locked.length !== 1) {
-          return { outcome: "INVALID_TOKEN", correlationId };
+          return rejectSourceFailure("UNKNOWN_TOKEN", "INVALID_TOKEN");
         }
         const challenge = await tx.recoveryChallenge.findUniqueOrThrow({
           where: { id: candidate.id }
@@ -583,7 +678,7 @@ export function createRecoveryDomainService(input: {
           challenge.challengeKeyVersion !== token.keyVersion ||
           !secretDigestsEqual(token.digest, challenge.challengeTokenDigest)
         ) {
-          return { outcome: "INVALID_TOKEN", correlationId };
+          return rejectSourceFailure("UNKNOWN_TOKEN", "INVALID_TOKEN");
         }
 
         const existingOperation = await tx.recoveryVerificationAttempt.findUnique({

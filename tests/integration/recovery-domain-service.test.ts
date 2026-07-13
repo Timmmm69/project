@@ -2,13 +2,14 @@ import { randomBytes, randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EnabledRecoveryConfig, RecoveryKeyRing } from "@/server/recovery/config";
-import { createEmailFingerprint } from "@/server/recovery/crypto";
+import { createEmailFingerprint, createRecoveryChallengeToken } from "@/server/recovery/crypto";
 import { createTestRecoveryMailbox, type RecoveryMailer } from "@/server/recovery/mailer";
 import { createRecoveryRateLimitService } from "@/server/recovery/rate-limit";
 import {
   createRecoveryDomainService,
   RECOVERY_OTP_TTL_MS,
   RECOVERY_SESSION_ABSOLUTE_TTL_MS,
+  type RecoveryDomainServiceTestHooks,
   type RequestRecoveryChallengeResult,
   type VerifyRecoveryChallengeResult
 } from "@/server/recovery/service";
@@ -19,6 +20,33 @@ const prisma = new PrismaClient();
 
 function ring(byte: number): RecoveryKeyRing {
   return { activeKeyVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, byte)]]) };
+}
+
+function createDeterministicBarrier(participants = 2) {
+  let arrivals = 0;
+  let releaseBarrier!: () => void;
+  let reportAllArrived!: () => void;
+  const released = new Promise<void>((resolve) => { releaseBarrier = resolve; });
+  const allArrived = new Promise<void>((resolve) => { reportAllArrived = resolve; });
+
+  return {
+    async wait() {
+      arrivals += 1;
+      if (arrivals > participants) {
+        throw new Error("RECOVERY_TEST_BARRIER_TOO_MANY_ARRIVALS");
+      }
+      if (arrivals === participants) {
+        reportAllArrived();
+      }
+      await released;
+    },
+    waitUntilAllArrived() {
+      return allArrived;
+    },
+    release() {
+      releaseBarrier();
+    }
+  };
 }
 
 const recoveryConfig: EnabledRecoveryConfig = {
@@ -72,13 +100,18 @@ describeWithDatabase("ACC-01A recovery domain service integration", () => {
   let mailbox: ReturnType<typeof createTestRecoveryMailbox>;
   let service: ReturnType<typeof createRecoveryDomainService>;
 
-  function buildService(options: { mailer?: RecoveryMailer; otp?: string } = {}) {
+  function buildService(options: {
+    mailer?: RecoveryMailer;
+    otp?: string;
+    testHooks?: RecoveryDomainServiceTestHooks;
+  } = {}) {
     return createRecoveryDomainService({
       client: prisma,
       config: recoveryConfig,
       mailer: options.mailer ?? mailbox.mailer,
       clock: () => new Date(now),
-      otpGenerator: () => options.otp ?? "908172"
+      otpGenerator: () => options.otp ?? "908172",
+      testHooks: options.testHooks
     });
   }
 
@@ -246,6 +279,7 @@ describeWithDatabase("ACC-01A recovery domain service integration", () => {
     expect(await verify(challenge, { otp: "000000" })).toMatchObject({ outcome: "NO_MATCH" });
     expect((await prisma.recoveryChallenge.findFirstOrThrow()).failedVerifyCount).toBe(1);
     expect(await prisma.recoveryVerificationAttempt.count({ where: { outcomeCode: "NO_MATCH" } })).toBe(1);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(1);
   });
 
   it("locks the challenge on the fifth wrong OTP", async () => {
@@ -293,12 +327,81 @@ describeWithDatabase("ACC-01A recovery domain service integration", () => {
     expect(await service.validateRecoverySession(first.rawRecoveryToken)).toMatchObject({ status: "RESOLVED" });
   });
 
-  it("serializes concurrent correct verifies to one MATCH and one session", async () => {
+  it("reconciles a sequential same-operation retry without repeating authority or limiter effects", async () => {
     const challenge = await requestChallenge();
-    const [left, right] = await Promise.all([verify(challenge), verify(challenge)]);
+    const operationId = randomUUID();
+    const first = expectMatch(await verify(challenge, { operationId }));
+    const failuresBefore = await prisma.recoveryRateLimitEvent.count({
+      where: { kind: "SOURCE_VERIFY_FAILURE" }
+    });
+    expect(await verify(challenge, { operationId })).toMatchObject({ outcome: "REPLAY" });
+    expect(await prisma.recoveryVerificationAttempt.count({ where: { operationId } })).toBe(1);
+    expect(await prisma.verifiedRecoverySession.count()).toBe(1);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(0);
+    expect(await prisma.recoveryRateLimitEvent.count({
+      where: { kind: "SOURCE_VERIFY_FAILURE" }
+    })).toBe(failuresBefore);
+    expect(await service.validateRecoverySession(first.rawRecoveryToken)).toMatchObject({ status: "RESOLVED" });
+  });
+
+  it("returns OPERATION_CONFLICT when a sequential operation ID is reused for another challenge", async () => {
+    const first = await requestChallenge({ email: "first-operation@example.test", source: "first-request" });
+    const second = expectCreated(await requestChallenge({
+      email: "second-operation@example.test",
+      source: "second-request"
+    }));
+    const operationId = randomUUID();
+    expectMatch(await verify(first, { operationId, source: "operation-conflict-source" }));
+    expect(await verify(second, { operationId, source: "operation-conflict-source" }))
+      .toMatchObject({ outcome: "OPERATION_CONFLICT" });
+    expect(await prisma.recoveryChallenge.findUniqueOrThrow({ where: { id: second.challengeId } }))
+      .toMatchObject({ status: "ACTIVE", failedVerifyCount: 0 });
+    expect(await prisma.recoveryVerificationAttempt.count({ where: { operationId } })).toBe(1);
+    expect(await prisma.verifiedRecoverySession.count()).toBe(1);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(0);
+  });
+
+  it("serializes concurrent correct verifies with a deterministic pre-subject-lock barrier", async () => {
+    const challenge = await requestChallenge();
+    const barrier = createDeterministicBarrier();
+    service = buildService({
+      testHooks: { beforeVerifySubjectLock: () => barrier.wait() }
+    });
+    const pending = Promise.all([verify(challenge), verify(challenge)]);
+    await barrier.waitUntilAllArrived();
+    barrier.release();
+    const [left, right] = await pending;
     expect([left.outcome, right.outcome].sort()).toEqual(["MATCH", "REPLAY"]);
     expect(await prisma.verifiedRecoverySession.count()).toBe(1);
     expect(await prisma.recoveryVerificationAttempt.count({ where: { outcomeCode: "MATCH" } })).toBe(1);
+  });
+
+  it("serializes one operation ID across two challenges with a deterministic operation barrier", async () => {
+    const first = await requestChallenge({ email: "barrier-left@example.test", source: "barrier-left-request" });
+    const second = expectCreated(await requestChallenge({
+      email: "barrier-right@example.test",
+      source: "barrier-right-request"
+    }));
+    const operationId = randomUUID();
+    const barrier = createDeterministicBarrier();
+    service = buildService({
+      testHooks: { beforeVerifyOperationLock: () => barrier.wait() }
+    });
+    const pending = Promise.all([
+      verify(first, { operationId, source: "shared-operation-source" }),
+      verify(second, { operationId, source: "shared-operation-source" })
+    ]);
+    await barrier.waitUntilAllArrived();
+    barrier.release();
+    const results = await pending;
+    expect(results.map((result) => result.outcome).sort()).toEqual(["MATCH", "OPERATION_CONFLICT"]);
+    expect(await prisma.recoveryVerificationAttempt.count({ where: { operationId } })).toBe(1);
+    expect(await prisma.verifiedRecoverySession.count()).toBe(1);
+    const attempt = await prisma.recoveryVerificationAttempt.findUniqueOrThrow({ where: { operationId } });
+    const session = await prisma.verifiedRecoverySession.findFirstOrThrow();
+    expect(session.challengeId).toBe(attempt.challengeId);
+    expect([expectCreated(first).challengeId, second.challengeId]).toContain(attempt.challengeId);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(0);
   });
 
   it("rotates the prior ACTIVE recovery session during a later successful verification", async () => {
@@ -415,6 +518,114 @@ describeWithDatabase("ACC-01A recovery domain service integration", () => {
       safeCode: "SOURCE_VERIFY_FAILURE_LIMIT_1H"
     });
     expect(JSON.stringify(await prisma.recoveryRateLimitEvent.findMany())).not.toContain(rawSource);
+  });
+
+  it("keeps the failed-verify source limit atomic under concurrency", async () => {
+    const limiter = createRecoveryRateLimitService({
+      client: prisma,
+      fingerprintKeyRing: recoveryConfig.keyRings.emailFingerprint,
+      clock: () => new Date(now)
+    });
+    const results = await Promise.all(Array.from({ length: 25 }, () => (
+      limiter.consumeFailedVerifySource("concurrent-failed-verify-source")
+    )));
+    expect(results.filter((result) => result.allowed)).toHaveLength(20);
+    expect(results.filter((result) => !result.allowed)).toHaveLength(5);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(20);
+  });
+
+  it("counts malformed OTP submissions without mutating challenge state", async () => {
+    const challenge = await requestChallenge();
+    const source = "malformed-otp-source";
+    for (let index = 0; index < 20; index += 1) {
+      expect(await verify(challenge, {
+        otp: "12x",
+        operationId: randomUUID(),
+        source
+      })).toMatchObject({ outcome: "ERROR" });
+    }
+    expect(await verify(challenge, {
+      otp: "12x",
+      operationId: randomUUID(),
+      source
+    })).toMatchObject({ outcome: "RATE_LIMITED", safeCode: "SOURCE_VERIFY_FAILURE_LIMIT_1H" });
+    expect(await prisma.recoveryChallenge.findFirstOrThrow()).toMatchObject({
+      status: "ACTIVE",
+      failedVerifyCount: 0
+    });
+    expect(await prisma.recoveryVerificationAttempt.count()).toBe(0);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(20);
+  });
+
+  it("counts malformed challenge tokens without creating recovery business rows", async () => {
+    const source = "malformed-token-source";
+    const submit = () => service.verifyChallenge({
+      rawChallengeToken: "malformed-token",
+      otp: "908172",
+      verificationOperationId: randomUUID(),
+      source
+    });
+    for (let index = 0; index < 20; index += 1) {
+      expect(await submit()).toMatchObject({ outcome: "INVALID_TOKEN" });
+    }
+    expect(await submit()).toMatchObject({
+      outcome: "RATE_LIMITED",
+      safeCode: "SOURCE_VERIFY_FAILURE_LIMIT_1H"
+    });
+    expect(await prisma.recoveryChallenge.count()).toBe(0);
+    expect(await prisma.recoveryVerificationAttempt.count()).toBe(0);
+    expect(await prisma.verifiedRecoverySession.count()).toBe(0);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(20);
+    expect(await prisma.recoverySecurityEvent.count()).toBe(0);
+    expect(JSON.stringify(await prisma.recoveryRateLimitEvent.findMany())).not.toContain(source);
+  });
+
+  it("counts unknown valid-format tokens without challenge-specific attempts", async () => {
+    const source = "unknown-token-source";
+    const submit = () => service.verifyChallenge({
+      rawChallengeToken: createRecoveryChallengeToken("v1"),
+      otp: "908172",
+      verificationOperationId: randomUUID(),
+      source
+    });
+    for (let index = 0; index < 20; index += 1) {
+      expect(await submit()).toMatchObject({ outcome: "INVALID_TOKEN" });
+    }
+    expect(await submit()).toMatchObject({
+      outcome: "RATE_LIMITED",
+      safeCode: "SOURCE_VERIFY_FAILURE_LIMIT_1H"
+    });
+    expect(await prisma.recoveryChallenge.count()).toBe(0);
+    expect(await prisma.recoveryVerificationAttempt.count()).toBe(0);
+    expect(await prisma.verifiedRecoverySession.count()).toBe(0);
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } })).toBe(20);
+    expect(await prisma.recoverySecurityEvent.count()).toBe(0);
+    expect(JSON.stringify(await prisma.recoveryRateLimitEvent.findMany())).not.toContain(source);
+  });
+
+  it("does not classify REPLAY, EXPIRED or LOCKED as source verification failures", async () => {
+    const replay = await requestChallenge({ email: "replay-classification@example.test" });
+    expectMatch(await verify(replay, { source: "terminal-replay-source" }));
+    const beforeReplay = await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } });
+    expect(await verify(replay, { source: "terminal-replay-source" })).toMatchObject({ outcome: "REPLAY" });
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } }))
+      .toBe(beforeReplay);
+
+    const expired = await requestChallenge({ email: "expired-classification@example.test" });
+    now = new Date(now.getTime() + RECOVERY_OTP_TTL_MS);
+    const beforeExpired = await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } });
+    expect(await verify(expired, { source: "terminal-expired-source" })).toMatchObject({ outcome: "EXPIRED" });
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } }))
+      .toBe(beforeExpired);
+
+    const locked = await requestChallenge({ email: "locked-classification@example.test" });
+    for (let index = 0; index < 5; index += 1) {
+      await verify(locked, { otp: "000000", source: "terminal-locked-source" });
+    }
+    const beforeLocked = await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } });
+    expect(await verify(locked, { source: "terminal-locked-source" })).toMatchObject({ outcome: "LOCKED" });
+    expect(await prisma.recoveryRateLimitEvent.count({ where: { kind: "SOURCE_VERIFY_FAILURE" } }))
+      .toBe(beforeLocked);
   });
 
   it("fails closed when the caller substitutes another product code", async () => {
@@ -605,10 +816,17 @@ describeWithDatabase("ACC-01A recovery domain service integration", () => {
     expect(results.filter((result) => result.status === "rejected")).toHaveLength(1);
   });
 
-  it("serializes concurrent resend to one replacement ACTIVE challenge", async () => {
+  it("serializes concurrent resend with a deterministic pre-subject-lock barrier", async () => {
     await requestChallenge();
     now = new Date(now.getTime() + 60_000);
-    const results = await Promise.all([requestChallenge(), requestChallenge()]);
+    const barrier = createDeterministicBarrier();
+    service = buildService({
+      testHooks: { beforeRequestSubjectLock: () => barrier.wait() }
+    });
+    const pending = Promise.all([requestChallenge(), requestChallenge()]);
+    await barrier.waitUntilAllArrived();
+    barrier.release();
+    const results = await pending;
     expect(results.map((result) => result.outcome).sort()).toEqual(["COOLDOWN", "CREATED"]);
     expect(await prisma.recoveryChallenge.count({ where: { status: "ACTIVE" } })).toBe(1);
   });
