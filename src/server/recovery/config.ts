@@ -93,7 +93,7 @@ function buffersEqual(left: Buffer, right: Buffer) {
   return left.length === right.length && timingSafeEqual(left, right);
 }
 
-function isProductionLike(env: Record<string, string | undefined>) {
+export function isRecoveryProductionLikeEnvironment(env: Record<string, string | undefined>) {
   return [env.NODE_ENV, env.VERCEL_ENV, env.DEPLOYMENT_ENV, env.APP_ENV]
     .some((value) => value !== undefined && productionLikeValues.has(value.trim().toLowerCase()));
 }
@@ -197,7 +197,7 @@ export function parseRecoveryConfig(
   if (!parseEnabled(env.ACC_01A_RECOVERY_ENABLED)) {
     return { enabled: false };
   }
-  if (isProductionLike(env)) {
+  if (isRecoveryProductionLikeEnvironment(env)) {
     throw new RecoveryConfigError("PRODUCTION_LIKE_FORBIDDEN");
   }
 
