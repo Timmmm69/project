@@ -1,6 +1,7 @@
 const allowedProtocols = new Set(["http:", "https:"]);
 
-function parseOrigin(value: string) {
+export function canonicalRecoveryOrigin(value: string | undefined) {
+  if (!value) return null;
   try {
     const parsed = new URL(value);
     if (
@@ -13,38 +14,23 @@ function parseOrigin(value: string) {
     ) {
       return null;
     }
-    return parsed;
+    return parsed.origin;
   } catch {
     return null;
   }
 }
 
-function trustedOriginForRequest(request: Request, configuredOrigin?: string) {
-  try {
-    const candidate = configuredOrigin ? new URL(configuredOrigin) : new URL(request.url);
-    if (!allowedProtocols.has(candidate.protocol) || candidate.username || candidate.password) {
-      return null;
-    }
-    return candidate;
-  } catch {
-    return null;
-  }
-}
-
-function hasValidOriginAndHost(request: Request, configuredOrigin?: string) {
+function hasValidOriginAndHost(request: Request, configuredOrigin: string) {
   const originValue = request.headers.get("origin");
-  const host = request.headers.get("host")?.trim().toLowerCase();
+  const host = request.headers.get("host");
   if (!originValue || originValue === "null" || !host) return false;
 
-  const origin = parseOrigin(originValue);
-  const trusted = trustedOriginForRequest(request, configuredOrigin);
-  if (!origin || !trusted) return false;
+  const trusted = canonicalRecoveryOrigin(configuredOrigin);
+  if (!trusted || trusted !== configuredOrigin || originValue !== trusted) return false;
 
   try {
     const requestUrl = new URL(request.url);
-    return origin.origin === trusted.origin &&
-      requestUrl.origin === trusted.origin &&
-      host === trusted.host.toLowerCase();
+    return requestUrl.origin === trusted && host === new URL(trusted).host;
   } catch {
     return false;
   }
@@ -63,11 +49,11 @@ function hasJsonContentType(request: Request) {
   });
 }
 
-export function isProtectedRecoveryPost(request: Request, configuredOrigin?: string) {
+export function isProtectedRecoveryPost(request: Request, configuredOrigin: string) {
   return hasValidOriginAndHost(request, configuredOrigin) && hasJsonContentType(request);
 }
 
-export async function isProtectedRecoveryDelete(request: Request, configuredOrigin?: string) {
+export async function isProtectedRecoveryDelete(request: Request, configuredOrigin: string) {
   if (!hasValidOriginAndHost(request, configuredOrigin)) return false;
   const declaredLength = request.headers.get("content-length");
   if (declaredLength && declaredLength !== "0") return false;

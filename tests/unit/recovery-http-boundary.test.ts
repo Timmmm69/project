@@ -9,6 +9,12 @@ import type {
   RecoveryHttpRuntime,
   RecoveryHttpService
 } from "@/server/recovery/http-runtime";
+import {
+  createRecoveryHttpRuntime,
+  RECOVERY_HTTP_GLOBAL_SOURCE
+} from "@/server/recovery/http-runtime";
+import { RecoveryDomainServiceError } from "@/server/recovery/service";
+import { normalizeRecoveryTiming } from "@/server/recovery/timing";
 
 const origin = "http://recovery.test";
 const now = new Date("2026-07-14T12:00:00.000Z");
@@ -16,7 +22,40 @@ const challengeExpiry = new Date(now.getTime() + 10 * 60_000);
 const sessionExpiry = new Date(now.getTime() + 30 * 60_000);
 
 function enabledConfig() {
-  return { enabled: true } as RecoveryConfig;
+  return { enabled: true } as Extract<RecoveryConfig, { enabled: true }>;
+}
+
+function enabledRuntime(service: RecoveryHttpService): RecoveryHttpRuntime {
+  return {
+    config: enabledConfig(),
+    service,
+    trustedOrigin: origin,
+    sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE
+  };
+}
+
+function encoded(byte: number) {
+  return Buffer.alloc(32, byte).toString("base64url");
+}
+
+function enabledEnvironment(overrides: Record<string, string | undefined> = {}) {
+  return {
+    NODE_ENV: "test",
+    APP_URL: origin,
+    ACC_01A_RECOVERY_ENABLED: "true",
+    RECOVERY_MAILER_MODE: "test",
+    VERIFIED_COMMERCIAL_SESSION_MODE: "enforce",
+    RECOVERY_COMMERCIAL_PRODUCT_CODE: "russian-training-variant-01",
+    RECOVERY_EMAIL_FINGERPRINT_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_EMAIL_FINGERPRINT_HMAC_KEY_RING: `v1:${encoded(61)}`,
+    RECOVERY_CHALLENGE_TOKEN_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_CHALLENGE_TOKEN_HMAC_KEY_RING: `v1:${encoded(62)}`,
+    RECOVERY_OTP_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_OTP_HMAC_KEY_RING: `v1:${encoded(63)}`,
+    RECOVERY_SESSION_TOKEN_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_SESSION_TOKEN_HMAC_KEY_RING: `v1:${encoded(64)}`,
+    ...overrides
+  };
 }
 
 function postRequest(
@@ -28,6 +67,8 @@ function postRequest(
     host?: string;
     contentType?: string;
     cookie?: string;
+    requestOrigin?: string;
+    extraHeaders?: Record<string, string>;
   } = {}
 ) {
   const headers = new Headers({
@@ -36,7 +77,10 @@ function postRequest(
   });
   if (options.origin !== null) headers.set("origin", options.origin ?? origin);
   if (options.cookie) headers.set("cookie", options.cookie);
-  return new Request(`${origin}${path}`, {
+  for (const [name, value] of Object.entries(options.extraHeaders ?? {})) {
+    headers.set(name, value);
+  }
+  return new Request(`${options.requestOrigin ?? origin}${path}`, {
     method: "POST",
     headers,
     body: options.rawBody ?? JSON.stringify(body)
@@ -106,16 +150,11 @@ describe("ACC-01A recovery HTTP boundary", () => {
       }),
       invalidateRecoverySession: vi.fn().mockResolvedValue({ status: "REVOKED" })
     };
-    const runtime: RecoveryHttpRuntime = {
-      config: enabledConfig(),
-      service: service as unknown as RecoveryHttpService
-    };
+    const runtime = enabledRuntime(service as unknown as RecoveryHttpService);
     handlers = createRecoveryHttpHandlers({
       getRuntime: () => runtime,
       clock: () => new Date(now),
       normalizeRequestTiming: async () => {},
-      sourceForRequest: () => "server-derived-source",
-      trustedOrigin: origin,
       cookieSecure: false
     });
   });
@@ -135,7 +174,7 @@ describe("ACC-01A recovery HTTP boundary", () => {
     });
     expect(service.requestChallenge).toHaveBeenCalledWith(expect.objectContaining({
       email: "buyer@example.test",
-      source: "server-derived-source"
+      source: RECOVERY_HTTP_GLOBAL_SOURCE
     }));
     const serialized = JSON.stringify(body);
     expect(serialized).not.toContain("rc1.");
@@ -160,13 +199,9 @@ describe("ACC-01A recovery HTTP boundary", () => {
 
   it("uses Secure cookies when the production-like cookie policy is requested", async () => {
     handlers = createRecoveryHttpHandlers({
-      getRuntime: () => ({
-        config: enabledConfig(),
-        service: service as unknown as RecoveryHttpService
-      }),
+      getRuntime: () => enabledRuntime(service as unknown as RecoveryHttpService),
       clock: () => new Date(now),
       normalizeRequestTiming: async () => {},
-      trustedOrigin: origin,
       cookieSecure: true
     });
     const response = await handlers.requestChallenge(postRequest(
@@ -277,11 +312,63 @@ describe("ACC-01A recovery HTTP boundary", () => {
     });
   });
 
+  it("normalizes CREATED, replay, cooldown, target limit, and domain scope rejection deterministically", async () => {
+    const jitters = [0, 50, 100, 150, 200];
+    const targets: number[] = [];
+    const sleeps: number[] = [];
+    service.requestChallenge
+      .mockResolvedValueOnce(createdChallenge())
+      .mockResolvedValueOnce({
+        outcome: "IDEMPOTENT_REPLAY",
+        challengeId: randomUUID(),
+        expiresAt: challengeExpiry,
+        resendAvailableAt: new Date(now.getTime() + 60_000),
+        correlationId: randomUUID()
+      })
+      .mockResolvedValueOnce({
+        outcome: "COOLDOWN",
+        retryAfterSeconds: 30,
+        correlationId: randomUUID()
+      })
+      .mockResolvedValueOnce({
+        outcome: "RATE_LIMITED",
+        safeCode: "EMAIL_REQUEST_LIMIT_15M",
+        retryAfterSeconds: 300,
+        correlationId: randomUUID()
+      })
+      .mockRejectedValueOnce(new RecoveryDomainServiceError("PRODUCT_SCOPE_MISMATCH"));
+    handlers = createRecoveryHttpHandlers({
+      getRuntime: () => enabledRuntime(service as unknown as RecoveryHttpService),
+      clock: () => new Date(now),
+      normalizeRequestTiming: async (startedAt) => {
+        const jitter = jitters.shift();
+        if (jitter === undefined) throw new Error("missing deterministic jitter");
+        const result = await normalizeRecoveryTiming(startedAt, {
+          clock: () => new Date(startedAt.getTime() + 25),
+          randomJitterMs: () => jitter,
+          sleep: async (milliseconds) => { sleeps.push(milliseconds); }
+        });
+        targets.push(result.targetElapsedMs);
+      },
+      cookieSecure: false
+    });
+
+    const responses = [];
+    for (let index = 0; index < 5; index += 1) {
+      responses.push(await handlers.requestChallenge(postRequest(
+        "/api/recovery/challenges",
+        challengeBody()
+      )));
+    }
+    expect(responses.map((response) => response.status)).toEqual([202, 202, 202, 202, 404]);
+    expect(targets).toEqual([300, 350, 400, 450, 500]);
+    expect(sleeps).toEqual([275, 325, 375, 425, 475]);
+  });
+
   it("keeps a disabled feature unavailable without calling the service or setting cookies", async () => {
     handlers = createRecoveryHttpHandlers({
       getRuntime: () => ({ config: { enabled: false } }),
-      normalizeRequestTiming: async () => {},
-      trustedOrigin: origin
+      normalizeRequestTiming: async () => {}
     });
     const response = await handlers.requestChallenge(postRequest(
       "/api/recovery/challenges",
@@ -292,10 +379,117 @@ describe("ACC-01A recovery HTTP boundary", () => {
     expect(service.requestChallenge).not.toHaveBeenCalled();
   });
 
+  it("uses one feature-off 404 before Origin, Host, JSON, content type, or DELETE-body checks", async () => {
+    handlers = createRecoveryHttpHandlers({
+      getRuntime: () => ({ config: { enabled: false } })
+    });
+    const requests = [
+      handlers.requestChallenge(postRequest("/api/recovery/challenges", challengeBody())),
+      handlers.requestChallenge(postRequest(
+        "/api/recovery/challenges",
+        challengeBody(),
+        { origin: "https://evil.test" }
+      )),
+      handlers.requestChallenge(postRequest(
+        "/api/recovery/challenges",
+        challengeBody(),
+        { origin: null }
+      )),
+      handlers.requestChallenge(postRequest(
+        "/api/recovery/challenges",
+        {},
+        { rawBody: "{" }
+      )),
+      handlers.invalidateSession(deleteRequest({ body: "{}" }))
+    ];
+    const responses = await Promise.all(requests);
+    for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect(await response.json()).toEqual({
+        error: { code: "FEATURE_UNAVAILABLE", message: "Recovery is unavailable." }
+      });
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+    expect(service.requestChallenge).not.toHaveBeenCalled();
+    expect(service.verifyChallenge).not.toHaveBeenCalled();
+    expect(service.invalidateRecoverySession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["malformed", "not-a-url"],
+    ["unsupported protocol", "ftp://recovery.test"],
+    ["credentials", "http://user:pass@recovery.test"],
+    ["path", "http://recovery.test/recovery"],
+    ["query", "http://recovery.test?mode=1"],
+    ["fragment", "http://recovery.test#fragment"]
+  ])("fails enabled recovery closed for %s APP_URL", async (_label, appUrl) => {
+    handlers = createRecoveryHttpHandlers({
+      getRuntime: () => createRecoveryHttpRuntime(enabledEnvironment({ APP_URL: appUrl }))
+    });
+    const response = await handlers.requestChallenge(postRequest(
+      "/api/recovery/challenges",
+      challengeBody(),
+      { origin: "https://evil.test", contentType: "text/plain", rawBody: "not-json" }
+    ));
+    expect(response.status).toBe(404);
+    expect(await response.json()).toEqual({
+      error: { code: "FEATURE_UNAVAILABLE", message: "Recovery is unavailable." }
+    });
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(service.requestChallenge).not.toHaveBeenCalled();
+  });
+
+  it("fails production-like recovery preflight closed before request validation", async () => {
+    handlers = createRecoveryHttpHandlers({
+      getRuntime: () => createRecoveryHttpRuntime(enabledEnvironment({ NODE_ENV: "production" }))
+    });
+    const response = await handlers.requestChallenge(postRequest(
+      "/api/recovery/challenges",
+      {},
+      { origin: null, rawBody: "{" }
+    ));
+    expect(response.status).toBe(404);
+    expect(response.headers.get("set-cookie")).toBeNull();
+  });
+
+  it("cannot substitute the configured origin with a self-consistent request URL", async () => {
+    const response = await handlers.requestChallenge(postRequest(
+      "/api/recovery/challenges",
+      challengeBody(),
+      {
+        requestOrigin: "http://attacker.test",
+        origin,
+        host: "recovery.test"
+      }
+    ));
+    expect(response.status).toBe(403);
+    expect(service.requestChallenge).not.toHaveBeenCalled();
+  });
+
+  it("uses one fixed source bucket regardless of forwarded host or origin headers", async () => {
+    for (const attackerValue of ["one.attacker.test", "two.attacker.test"]) {
+      const response = await handlers.requestChallenge(postRequest(
+        "/api/recovery/challenges",
+        challengeBody(),
+        {
+          extraHeaders: {
+            "x-forwarded-host": attackerValue,
+            "x-forwarded-origin": `https://${attackerValue}`
+          }
+        }
+      ));
+      expect(response.status).toBe(202);
+    }
+    expect(service.requestChallenge.mock.calls.map(([input]) => input.source))
+      .toEqual([RECOVERY_HTTP_GLOBAL_SOURCE, RECOVERY_HTTP_GLOBAL_SOURCE]);
+  });
+
   it("keeps verify unavailable while the feature is off even without a challenge cookie", async () => {
     handlers = createRecoveryHttpHandlers({
-      getRuntime: () => ({ config: { enabled: false } }),
-      trustedOrigin: origin
+      getRuntime: () => ({ config: { enabled: false } })
     });
     const response = await handlers.verifyChallenge(postRequest(
       "/api/recovery/challenges/verify",
@@ -382,6 +576,62 @@ describe("ACC-01A recovery HTTP boundary", () => {
     const second = await handlers.invalidateSession(deleteRequest());
     expect(second.status).toBe(204);
     expect(service.invalidateRecoverySession).toHaveBeenCalledTimes(1);
+  });
+
+  it.each(["NOT_FOUND", "ALREADY_TERMINAL"])(
+    "returns 204 and clears an invalid or terminal cookie for %s",
+    async (status) => {
+      service.invalidateRecoverySession.mockResolvedValueOnce({ status });
+      const response = await handlers.invalidateSession(deleteRequest({
+        cookie: `acc01a_recovery=rs1.v1.${"c".repeat(43)}`
+      }));
+      expect(response.status).toBe(204);
+      expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    }
+  );
+
+  it("keeps the same cookie retryable after an unknown invalidation outcome", async () => {
+    const token = `rs1.v1.${"d".repeat(43)}`;
+    service.invalidateRecoverySession
+      .mockRejectedValueOnce(new Error("synthetic unknown outcome"))
+      .mockResolvedValueOnce({ status: "ALREADY_TERMINAL" });
+
+    const first = await handlers.invalidateSession(deleteRequest({
+      cookie: `acc01a_recovery=${token}`
+    }));
+    expect(first.status).toBe(503);
+    expect(await first.json()).toEqual({
+      error: {
+        code: "OPERATION_OUTCOME_UNKNOWN",
+        message: "Session invalidation outcome is unknown."
+      }
+    });
+    expect(first.headers.get("set-cookie")).toBeNull();
+
+    const second = await handlers.invalidateSession(deleteRequest({
+      cookie: `acc01a_recovery=${token}`
+    }));
+    expect(second.status).toBe(204);
+    expect(second.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(service.invalidateRecoverySession).toHaveBeenNthCalledWith(
+      1,
+      token,
+      "USER_INVALIDATED"
+    );
+    expect(service.invalidateRecoverySession).toHaveBeenNthCalledWith(
+      2,
+      token,
+      "USER_INVALIDATED"
+    );
+  });
+
+  it("returns 503 without clearing the cookie for an unrecognized invalidation result", async () => {
+    service.invalidateRecoverySession.mockResolvedValueOnce({ status: "UNKNOWN" });
+    const response = await handlers.invalidateSession(deleteRequest({
+      cookie: `acc01a_recovery=rs1.v1.${"e".repeat(43)}`
+    }));
+    expect(response.status).toBe(503);
+    expect(response.headers.get("set-cookie")).toBeNull();
   });
 
   it("rejects DELETE bodies and cross-site DELETE before invalidation", async () => {

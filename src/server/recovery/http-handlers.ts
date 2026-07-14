@@ -1,6 +1,5 @@
 import { z } from "zod";
 import { normalizedEmailSchema } from "@/lib/validation/email";
-import { RecoveryConfigError } from "@/server/recovery/config";
 import {
   clearRecoveryChallengeCookie,
   clearRecoverySessionCookie,
@@ -19,9 +18,12 @@ import {
 } from "@/server/recovery/http-response";
 import {
   createRecoveryHttpRuntime,
+  RECOVERY_HTTP_GLOBAL_SOURCE,
+  type EnabledRecoveryHttpRuntime,
   type RecoveryHttpRuntime
 } from "@/server/recovery/http-runtime";
 import {
+  canonicalRecoveryOrigin,
   isProtectedRecoveryDelete,
   isProtectedRecoveryPost
 } from "@/server/recovery/request-protection";
@@ -49,14 +51,8 @@ export type RecoveryHttpHandlerDependencies = Readonly<{
   getRuntime?: () => RecoveryHttpRuntime;
   clock?: () => Date;
   normalizeRequestTiming?: (startedAt: Date) => Promise<void>;
-  sourceForRequest?: (request: Request) => string;
-  trustedOrigin?: string;
   cookieSecure?: boolean;
 }>;
-
-function defaultSourceForRequest(request: Request) {
-  return `recovery-http-boundary:${new URL(request.url).host}`;
-}
 
 function featureUnavailable() {
   return recoveryError("FEATURE_UNAVAILABLE", "Recovery is unavailable.", 404);
@@ -89,7 +85,6 @@ export function maskRecoveryEmail(normalizedEmail: string) {
 }
 
 function domainErrorResponse(error: unknown) {
-  if (error instanceof RecoveryConfigError) return featureUnavailable();
   if (error instanceof RecoveryDomainServiceError) {
     if (error.code === "FEATURE_DISABLED" ||
       error.code === "PRODUCT_SCOPE_MISMATCH" ||
@@ -113,14 +108,30 @@ export function createRecoveryHttpHandlers(
   const normalizeRequestTiming = dependencies.normalizeRequestTiming ?? (async (startedAt: Date) => {
     await normalizeRecoveryTiming(startedAt);
   });
-  const sourceForRequest = dependencies.sourceForRequest ?? defaultSourceForRequest;
 
   function secureCookies() {
     return dependencies.cookieSecure ?? recoveryCookiesAreSecure();
   }
 
+  function enabledRuntime() {
+    try {
+      const runtime = getRuntime();
+      if (!runtime.config.enabled) return null;
+      const enabled = runtime as EnabledRecoveryHttpRuntime;
+      if (canonicalRecoveryOrigin(enabled.trustedOrigin) !== enabled.trustedOrigin ||
+        enabled.sourceLimiterInput !== RECOVERY_HTTP_GLOBAL_SOURCE) {
+        return null;
+      }
+      return enabled;
+    } catch {
+      return null;
+    }
+  }
+
   async function requestChallenge(request: Request) {
-    if (!isProtectedRecoveryPost(request, dependencies.trustedOrigin ?? process.env.APP_URL)) {
+    const runtime = enabledRuntime();
+    if (!runtime) return featureUnavailable();
+    if (!isProtectedRecoveryPost(request, runtime.trustedOrigin)) {
       return recoveryCsrfRejected();
     }
     const json = await strictJson(request);
@@ -130,13 +141,11 @@ export function createRecoveryHttpHandlers(
 
     const startedAt = clock();
     try {
-      const runtime = getRuntime();
-      if (!runtime.config.enabled || !runtime.service) return featureUnavailable();
       const result = await runtime.service.requestChallenge({
         email: parsed.data.email,
         productCode: parsed.data.productCode,
         requestOperationId: parsed.data.idempotencyKey,
-        source: sourceForRequest(request)
+        source: runtime.sourceLimiterInput
       });
       await normalizeRequestTiming(startedAt);
 
@@ -175,7 +184,9 @@ export function createRecoveryHttpHandlers(
   }
 
   async function verifyChallenge(request: Request) {
-    if (!isProtectedRecoveryPost(request, dependencies.trustedOrigin ?? process.env.APP_URL)) {
+    const runtime = enabledRuntime();
+    if (!runtime) return featureUnavailable();
+    if (!isProtectedRecoveryPost(request, runtime.trustedOrigin)) {
       return recoveryCsrfRejected();
     }
     const json = await strictJson(request);
@@ -184,8 +195,6 @@ export function createRecoveryHttpHandlers(
     if (!parsed.success) return invalidRequest();
 
     try {
-      const runtime = getRuntime();
-      if (!runtime.config.enabled || !runtime.service) return featureUnavailable();
       const rawChallengeToken = readRecoveryCookie(request, RECOVERY_CHALLENGE_COOKIE);
       if (!rawChallengeToken) {
         return recoveryError("CHALLENGE_NOT_ACTIVE", "Recovery challenge is not active.", 409);
@@ -194,7 +203,7 @@ export function createRecoveryHttpHandlers(
         rawChallengeToken,
         otp: parsed.data.code,
         verificationOperationId: parsed.data.operationId,
-        source: sourceForRequest(request)
+        source: runtime.sourceLimiterInput
       });
 
       if (result.outcome === "MATCH") {
@@ -251,37 +260,38 @@ export function createRecoveryHttpHandlers(
   }
 
   async function invalidateSession(request: Request) {
-    if (!await isProtectedRecoveryDelete(
-      request,
-      dependencies.trustedOrigin ?? process.env.APP_URL
-    )) {
+    const runtime = enabledRuntime();
+    if (!runtime) return featureUnavailable();
+    if (!await isProtectedRecoveryDelete(request, runtime.trustedOrigin)) {
       return recoveryCsrfRejected();
     }
-
-    let runtime: RecoveryHttpRuntime;
-    try {
-      runtime = getRuntime();
-    } catch (error) {
-      return domainErrorResponse(error);
-    }
-    if (!runtime.config.enabled || !runtime.service) return featureUnavailable();
 
     const rawRecoveryToken = readRecoveryCookie(request, RECOVERY_SESSION_COOKIE);
     try {
       if (rawRecoveryToken) {
-        await runtime.service.invalidateRecoverySession(rawRecoveryToken, "USER_INVALIDATED");
+        const result = await runtime.service.invalidateRecoverySession(
+          rawRecoveryToken,
+          "USER_INVALIDATED"
+        );
+        if (result.status !== "REVOKED" &&
+          result.status !== "ALREADY_TERMINAL" &&
+          result.status !== "NOT_FOUND") {
+          return recoveryError(
+            "OPERATION_OUTCOME_UNKNOWN",
+            "Session invalidation outcome is unknown.",
+            503
+          );
+        }
       }
       const response = recoveryNoContent();
       clearRecoverySessionCookie(response, { secure: secureCookies() });
       return response;
     } catch {
-      const response = recoveryError(
+      return recoveryError(
         "OPERATION_OUTCOME_UNKNOWN",
         "Session invalidation outcome is unknown.",
         503
       );
-      clearRecoverySessionCookie(response, { secure: secureCookies() });
-      return response;
     }
   }
 

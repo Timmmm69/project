@@ -3,8 +3,10 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EnabledRecoveryConfig, RecoveryKeyRing } from "@/server/recovery/config";
 import { createRecoveryHttpHandlers } from "@/server/recovery/http-handlers";
+import { RECOVERY_HTTP_GLOBAL_SOURCE } from "@/server/recovery/http-runtime";
 import type { RecoveryMail, RecoveryMailer } from "@/server/recovery/mailer";
 import { createRecoveryDomainService } from "@/server/recovery/service";
+import { normalizeRecoveryTiming } from "@/server/recovery/timing";
 
 const shouldRun = process.env.RUN_ACC01A_HTTP_INTEGRATION === "true";
 const describeWithDatabase = shouldRun ? describe.sequential : describe.skip;
@@ -112,8 +114,11 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
   let deliveries: RecoveryMail[];
   let handlers: ReturnType<typeof createRecoveryHttpHandlers>;
 
-  function buildHandlers(mailerOverride?: RecoveryMailer) {
-    const mailer: RecoveryMailer = mailerOverride ?? {
+  function buildHandlers(options: {
+    mailer?: RecoveryMailer;
+    normalizeRequestTiming?: (startedAt: Date) => Promise<void>;
+  } = {}) {
+    const mailer: RecoveryMailer = options.mailer ?? {
       async sendVerificationCode(message) {
         deliveries.push({ ...message, expiresAt: new Date(message.expiresAt) });
         return { status: "accepted" };
@@ -127,10 +132,14 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
       otpGenerator: () => "908172"
     });
     return createRecoveryHttpHandlers({
-      getRuntime: () => ({ config: recoveryConfig, service }),
+      getRuntime: () => ({
+        config: recoveryConfig,
+        service,
+        trustedOrigin: origin,
+        sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE
+      }),
       clock: () => new Date(now),
-      normalizeRequestTiming: async () => {},
-      trustedOrigin: origin,
+      normalizeRequestTiming: options.normalizeRequestTiming ?? (async () => {}),
       cookieSecure: false
     });
   }
@@ -214,8 +223,17 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
     const firstDelete = await handlers.invalidateSession(deleteRequest(
       `acc01a_recovery=${recoveryToken}`
     ));
-    const secondDelete = await handlers.invalidateSession(deleteRequest());
+    const revocationEventsAfterFirstDelete = await prisma.recoverySecurityEvent.count({
+      where: { eventCode: "SESSION_REVOKED" }
+    });
+    const secondDelete = await handlers.invalidateSession(deleteRequest(
+      `acc01a_recovery=${recoveryToken}`
+    ));
     expect([firstDelete.status, secondDelete.status]).toEqual([204, 204]);
+    expect(secondDelete.headers.get("set-cookie")).toContain("acc01a_recovery=;");
+    expect(await prisma.recoverySecurityEvent.count({
+      where: { eventCode: "SESSION_REVOKED" }
+    })).toBe(revocationEventsAfterFirstDelete);
     expect(await prisma.verifiedRecoverySession.findFirstOrThrow()).toMatchObject({
       status: "REVOKED",
       revocationCode: "USER_INVALIDATED"
@@ -244,6 +262,83 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
     for (const response of [second, third, fourth]) {
       expect(cookieValue(response, "acc01a_recovery_challenge")).toBeNull();
     }
+  });
+
+  it("normalizes existing and nonexistent email requests to the same deterministic HTTP timing contract", async () => {
+    await prisma.user.create({
+      data: { email: "existing-timing@example.test", role: "STUDENT" }
+    });
+    const timings: Array<{ targetElapsedMs: number; sleptMs: number }> = [];
+    const jitters = [80, 80];
+    handlers = buildHandlers({
+      normalizeRequestTiming: async (startedAt) => {
+        const jitter = jitters.shift();
+        if (jitter === undefined) throw new Error("missing deterministic jitter");
+        const timing = await normalizeRecoveryTiming(startedAt, {
+          clock: () => new Date(startedAt.getTime() + 40),
+          randomJitterMs: () => jitter,
+          sleep: async () => {}
+        });
+        timings.push(timing);
+      }
+    });
+
+    const existing = await requestChallenge("existing-timing@example.test");
+    const nonexistent = await requestChallenge("nonexistent-timing@example.test");
+    const existingJson = await existing.json() as Record<string, unknown>;
+    const nonexistentJson = await nonexistent.json() as Record<string, unknown>;
+    const { emailMasked: existingMask, ...existingPublicContract } = existingJson;
+    const { emailMasked: nonexistentMask, ...nonexistentPublicContract } = nonexistentJson;
+
+    expect([existing.status, nonexistent.status]).toEqual([202, 202]);
+    expect(existingPublicContract).toEqual(nonexistentPublicContract);
+    expect(existingMask).not.toBe(nonexistentMask);
+    expect(timings).toEqual([
+      { targetElapsedMs: 380, sleptMs: 340 },
+      { targetElapsedMs: 380, sleptMs: 340 }
+    ]);
+    expect(await prisma.user.count()).toBe(1);
+    expect(await prisma.user.findUnique({
+      where: { email: "nonexistent-timing@example.test" }
+    })).toBeNull();
+  });
+
+  it("normalizes created, replay, cooldown, target limit and product rejection through the real domain service", async () => {
+    const jitters = [0, 40, 80, 120, 160, 200];
+    const timings: Array<{ targetElapsedMs: number; sleptMs: number }> = [];
+    handlers = buildHandlers({
+      normalizeRequestTiming: async (startedAt) => {
+        const jitter = jitters.shift();
+        if (jitter === undefined) throw new Error("missing deterministic jitter");
+        timings.push(await normalizeRecoveryTiming(startedAt, {
+          clock: () => new Date(startedAt.getTime() + 10),
+          randomJitterMs: () => jitter,
+          sleep: async () => {}
+        }));
+      }
+    });
+
+    const idempotencyKey = randomUUID();
+    const responses = [
+      await requestChallenge("timing-outcomes@example.test", { idempotencyKey }),
+      await requestChallenge("timing-outcomes@example.test", { idempotencyKey }),
+      await requestChallenge("timing-outcomes@example.test"),
+      await requestChallenge("timing-outcomes@example.test"),
+      await requestChallenge("timing-outcomes@example.test"),
+      await requestChallenge("scope-rejected@example.test", { productCode: "other-product" })
+    ];
+
+    expect(responses.map((response) => response.status)).toEqual([202, 202, 202, 202, 202, 404]);
+    expect(timings).toEqual([
+      { targetElapsedMs: 300, sleptMs: 290 },
+      { targetElapsedMs: 340, sleptMs: 330 },
+      { targetElapsedMs: 380, sleptMs: 370 },
+      { targetElapsedMs: 420, sleptMs: 410 },
+      { targetElapsedMs: 460, sleptMs: 450 },
+      { targetElapsedMs: 500, sleptMs: 490 }
+    ]);
+    expect(await prisma.recoveryChallenge.count()).toBe(1);
+    expect(deliveries).toHaveLength(1);
   });
 
   it("rejects foreign, missing and malformed origins plus host mismatch without database mutation", async () => {
@@ -361,6 +456,16 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
     expect(await prisma.verifiedRecoverySession.count()).toBe(1);
   });
 
+  it("clears a malformed recovery cookie without creating a session or audit event", async () => {
+    const response = await handlers.invalidateSession(deleteRequest(
+      "acc01a_recovery=malformed"
+    ));
+    expect(response.status).toBe(204);
+    expect(response.headers.get("set-cookie")).toContain("acc01a_recovery=;");
+    expect(await prisma.verifiedRecoverySession.count()).toBe(0);
+    expect(await prisma.recoverySecurityEvent.count()).toBe(0);
+  });
+
   it("returns a safe source/global 429 after twenty distinct requests", async () => {
     for (let index = 0; index < 20; index += 1) {
       expect((await requestChallenge(`buyer-${index}@example.test`)).status).toBe(202);
@@ -403,15 +508,43 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
     }).toEqual(before);
   });
 
-  it("keeps the disabled boundary unavailable with no writes", async () => {
+  it("preflights every disabled endpoint to one 404 before request parsing and without writes", async () => {
     handlers = createRecoveryHttpHandlers({
-      getRuntime: () => ({ config: { enabled: false } }),
-      normalizeRequestTiming: async () => {},
-      trustedOrigin: origin
+      getRuntime: () => ({ config: { enabled: false } })
     });
-    const response = await requestChallenge();
-    expect(response.status).toBe(404);
-    expect(response.headers.get("set-cookie")).toBeNull();
+    const responses = await Promise.all([
+      requestChallenge(),
+      handlers.requestChallenge(postRequest(
+        "/api/recovery/challenges",
+        {},
+        { origin: "https://evil.test", rawBody: "{" }
+      )),
+      handlers.verifyChallenge(postRequest(
+        "/api/recovery/challenges/verify",
+        {},
+        { origin: null, contentType: "text/plain", rawBody: "not-json" }
+      )),
+      handlers.invalidateSession(new Request(`${origin}/api/recovery/session`, {
+        method: "DELETE",
+        headers: { origin: "https://evil.test", host: "wrong.test" },
+        body: "unexpected"
+      }))
+    ]);
+    const bodies = await Promise.all(responses.map((response) => response.clone().json()));
+    expect(responses.map((response) => response.status)).toEqual([404, 404, 404, 404]);
+    expect(bodies).toEqual(Array.from({ length: 4 }, () => ({
+      error: { code: "FEATURE_UNAVAILABLE", message: "Recovery is unavailable." }
+    })));
+    for (const response of responses) {
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(response.headers.get("cache-control")).toBe("no-store");
+      expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    }
     expect(await prisma.recoveryChallenge.count()).toBe(0);
+    expect(await prisma.recoveryVerificationAttempt.count()).toBe(0);
+    expect(await prisma.verifiedRecoverySession.count()).toBe(0);
+    expect(await prisma.recoveryRateLimitEvent.count()).toBe(0);
+    expect(await prisma.recoverySecurityEvent.count()).toBe(0);
+    expect(deliveries).toHaveLength(0);
   });
 });
