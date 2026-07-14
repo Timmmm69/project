@@ -14,7 +14,40 @@ import { createRecoveryStateResolver } from "@/server/recovery/state-resolver";
 const shouldRun = process.env.RUN_ACC01A_STATE_RESOLVER_INTEGRATION === "true";
 const describeWithDatabase = shouldRun ? describe.sequential : describe.skip;
 const prisma = new PrismaClient();
+const writerPrisma = new PrismaClient();
 const origin = "http://recovery-state.test";
+
+function deferred() {
+  let resolve!: () => void;
+  const promise = new Promise<void>((next) => {
+    resolve = next;
+  });
+  return { promise, resolve };
+}
+
+function authenticQuestions() {
+  return Array.from({ length: 40 }, (_, index) => ({
+    snapshotQuestionId: `q_${index + 1}`,
+    orderIndex: index,
+    questionType: index < 18 ? "multi_select_five" : "short_answer_token",
+    points: 2,
+    correctAnswer: "SECRET_CORRECT",
+    acceptedAnswers: ["SECRET_ACCEPTED"],
+    explanation: "SECRET_EXPLANATION"
+  }));
+}
+
+function authenticSnapshot(testId: string) {
+  return {
+    testId,
+    subject: "russian",
+    mode: "ce_ct",
+    examMode: "rikz_russian_2026",
+    durationMinutes: 120,
+    maxRawScore: 80,
+    questions: authenticQuestions()
+  };
+}
 
 function ring(byte: number): RecoveryKeyRing {
   return { activeKeyVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, byte)]]) };
@@ -112,6 +145,35 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
     });
   }
 
+  function buildInterleavingResolver(stage: "PRODUCT_READ" | "ACCESSES_READ") {
+    const entered = deferred();
+    const release = deferred();
+    const transactionFacts: Array<{ isolation: string; readOnly: string }> = [];
+    let blocked = false;
+    const resolveState = createRecoveryStateResolver({
+      client: prisma,
+      productCode: config.productCode,
+      clock: () => new Date(now),
+      snapshotReadHook: async ({ stage: currentStage, transaction }) => {
+        if (blocked || currentStage !== stage) return;
+        blocked = true;
+        const isolation = await transaction.$queryRaw<Array<{ transaction_isolation: string }>>(
+          Prisma.sql`SHOW transaction_isolation`
+        );
+        const readOnly = await transaction.$queryRaw<Array<{ transaction_read_only: string }>>(
+          Prisma.sql`SHOW transaction_read_only`
+        );
+        transactionFacts.push({
+          isolation: isolation[0]?.transaction_isolation ?? "",
+          readOnly: readOnly[0]?.transaction_read_only ?? ""
+        });
+        entered.resolve();
+        await release.promise;
+      }
+    });
+    return { resolveState, entered, release, transactionFacts };
+  }
+
   async function issueRecoveryCookie(email: string) {
     const challenge = await handlers.requestChallenge(post("/api/recovery/challenges", {
       email,
@@ -138,13 +200,13 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
     deadline?: Date;
     revoked?: boolean;
     attemptsAvailable?: number;
-  } = {}) {
-    const user = await prisma.user.upsert({
+  } = {}, client: Prisma.TransactionClient | PrismaClient = prisma) {
+    const user = await client.user.upsert({
       where: { email },
       update: {},
       create: { email, role: "STUDENT" }
     });
-    const order = await prisma.commercialOrder.create({
+    const order = await client.commercialOrder.create({
       data: {
         commercialProductId: productId,
         testIdSnapshot: testId,
@@ -164,7 +226,7 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
         paidAt: now
       }
     });
-    const payment = await prisma.commercialPaymentAttempt.create({
+    const payment = await client.commercialPaymentAttempt.create({
       data: {
         commercialOrderId: order.id,
         provider: "LOCAL_FAKE",
@@ -178,7 +240,7 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
       }
     });
     const deadline = options.deadline ?? new Date(now.getTime() + 90 * 86_400_000);
-    const access = await prisma.access.create({
+    const access = await client.access.create({
       data: {
         userId: user.id,
         testId,
@@ -199,35 +261,32 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
 
   async function createAttempt(
     fixture: Awaited<ReturnType<typeof createPaidAccess>>,
-    status: "STARTED" | "COMPLETED" | "EXPIRED" | "CANCELLED"
+    status: "STARTED" | "COMPLETED" | "EXPIRED" | "CANCELLED",
+    client: Prisma.TransactionClient | PrismaClient = prisma
   ) {
     const terminal = status === "COMPLETED" || status === "EXPIRED";
-    const attempt = await prisma.attempt.create({
+    const startedAt = new Date(now.getTime() - 7_200_000);
+    const finishedAt = terminal
+      ? status === "EXPIRED" ? now : new Date(now.getTime() - 60_000)
+      : null;
+    const attempt = await client.attempt.create({
       data: {
         userId: fixture.user.id,
         testId,
         accessId: fixture.access.id,
         status,
-        startedAt: new Date(now.getTime() - 7_200_000),
-        finishedAt: terminal ? now : null,
-        durationSeconds: terminal ? 7_200 : null,
+        startedAt,
+        finishedAt,
+        durationSeconds: finishedAt
+          ? Math.floor((finishedAt.getTime() - startedAt.getTime()) / 1_000)
+          : null,
         rawScore: terminal ? 60 : null,
         maxRawScore: terminal ? 80 : null,
         percent: terminal ? new Prisma.Decimal(75) : null,
-        testSnapshot: {
-          testId,
-          examMode: "rikz_russian_2026",
-          durationMinutes: 120,
-          questions: [{
-            snapshotQuestionId: "q_1",
-            correctAnswer: "SECRET_CORRECT",
-            acceptedAnswers: ["SECRET_ACCEPTED"],
-            explanation: "SECRET_EXPLANATION"
-          }]
-        }
+        testSnapshot: authenticSnapshot(testId)
       }
     });
-    await prisma.access.update({
+    await client.access.update({
       where: { id: fixture.access.id },
       data: { attemptsAvailable: 0 }
     });
@@ -296,6 +355,7 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
 
   afterAll(async () => {
     if (shouldRun) await cleanDatabase();
+    await writerPrisma.$disconnect();
     await prisma.$disconnect();
   });
 
@@ -386,6 +446,62 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
       }).toEqual(before);
     }
   );
+
+  it("keeps existing Access, active Attempt and readable Result recoverable while Product is inactive", async () => {
+    const email = "inactive-existing-entitlement@example.test";
+    const fixture = await createPaidAccess(email);
+    const cookie = await issueRecoveryCookie(email);
+    await prisma.commercialProduct.update({ where: { id: productId }, data: { isActive: false } });
+
+    expect((await (await handlers.resolveState(get(cookie))).json()).state)
+      .toBe("access_unstarted");
+    const attempt = await createAttempt(fixture, "STARTED");
+    expect((await (await handlers.resolveState(get(cookie))).json()).state)
+      .toBe("attempt_active");
+    await prisma.attempt.update({
+      where: { id: attempt.id },
+      data: {
+        status: "EXPIRED",
+        finishedAt: now,
+        durationSeconds: 7_200,
+        rawScore: 60,
+        maxRawScore: 80,
+        percent: new Prisma.Decimal(75)
+      }
+    });
+    expect((await (await handlers.resolveState(get(cookie))).json()).state)
+      .toBe("result_available");
+  });
+
+  it("requires active published canonical Product/Test configuration before no_access", async () => {
+    const cookie = await issueRecoveryCookie("fresh-checkout-policy@example.test");
+    const cases = [
+      async () => prisma.commercialProduct.update({
+        where: { id: productId }, data: { isActive: false }
+      }),
+      async () => prisma.test.update({ where: { id: testId }, data: { status: "HIDDEN" } }),
+      async () => prisma.test.update({ where: { id: testId }, data: { deletedAt: now } }),
+      async () => prisma.commercialProduct.update({
+        where: { id: productId }, data: { priceMinor: 999 }
+      }),
+      async () => prisma.commercialProduct.update({
+        where: { id: productId }, data: { currency: "USD" }
+      })
+    ];
+    for (const mutate of cases) {
+      await mutate();
+      expect((await (await handlers.resolveState(get(cookie))).json()).state)
+        .toBe("support_required");
+      await prisma.commercialProduct.update({
+        where: { id: productId },
+        data: { isActive: true, priceMinor: 1000, currency: "BYN" }
+      });
+      await prisma.test.update({
+        where: { id: testId }, data: { status: "PUBLISHED", deletedAt: null }
+      });
+    }
+    expect((await (await handlers.resolveState(get(cookie))).json()).state).toBe("no_access");
+  });
 
   it("maps PAID-without-Access, revoked, zero availability and broken linkage to support_required", async () => {
     const cases = [
@@ -483,6 +599,80 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
         state: "access_unstarted", screen: "REC-01", nextAction: "CONTINUE"
       })));
     expect(await businessSnapshot()).toEqual(before);
+  });
+
+  it("keeps no Access → paid Access interleaving on one read-only snapshot", async () => {
+    const email = "interleave-paid-access@example.test";
+    const cookie = await issueRecoveryCookie(email);
+    const interleaving = buildInterleavingResolver("PRODUCT_READ");
+    const firstResponse = buildHandlers(interleaving.resolveState).resolveState(get(cookie));
+    await interleaving.entered.promise;
+    try {
+      await writerPrisma.$transaction(async (transaction) => {
+        await createPaidAccess(email, {}, transaction);
+      });
+    } finally {
+      interleaving.release.resolve();
+    }
+
+    expect((await (await firstResponse).json()).state).toBe("no_access");
+    expect(interleaving.transactionFacts).toEqual([{
+      isolation: "repeatable read",
+      readOnly: "on"
+    }]);
+    expect((await (await handlers.resolveState(get(cookie))).json()).state)
+      .toBe("access_unstarted");
+  });
+
+  it("keeps Access → active Attempt interleaving on one snapshot", async () => {
+    const email = "interleave-active-attempt@example.test";
+    const fixture = await createPaidAccess(email);
+    const cookie = await issueRecoveryCookie(email);
+    const interleaving = buildInterleavingResolver("ACCESSES_READ");
+    const firstResponse = buildHandlers(interleaving.resolveState).resolveState(get(cookie));
+    await interleaving.entered.promise;
+    try {
+      await writerPrisma.$transaction(async (transaction) => {
+        await createAttempt(fixture, "STARTED", transaction);
+      });
+    } finally {
+      interleaving.release.resolve();
+    }
+
+    expect((await (await firstResponse).json()).state).toBe("access_unstarted");
+    expect((await (await handlers.resolveState(get(cookie))).json()).state)
+      .toBe("attempt_active");
+  });
+
+  it("keeps active Attempt → terminal Result interleaving on one snapshot", async () => {
+    const email = "interleave-terminal-result@example.test";
+    const fixture = await createPaidAccess(email);
+    const attempt = await createAttempt(fixture, "STARTED");
+    const cookie = await issueRecoveryCookie(email);
+    const interleaving = buildInterleavingResolver("PRODUCT_READ");
+    const firstResponse = buildHandlers(interleaving.resolveState).resolveState(get(cookie));
+    await interleaving.entered.promise;
+    try {
+      await writerPrisma.$transaction(async (transaction) => {
+        await transaction.attempt.update({
+          where: { id: attempt.id },
+          data: {
+            status: "EXPIRED",
+            finishedAt: now,
+            durationSeconds: 7_200,
+            rawScore: 60,
+            maxRawScore: 80,
+            percent: new Prisma.Decimal(75)
+          }
+        });
+      });
+    } finally {
+      interleaving.release.resolve();
+    }
+
+    expect((await (await firstResponse).json()).state).toBe("attempt_active");
+    expect((await (await handlers.resolveState(get(cookie))).json()).state)
+      .toBe("result_available");
   });
 
   it("allows only adjacent committed truth across resolver reads", async () => {

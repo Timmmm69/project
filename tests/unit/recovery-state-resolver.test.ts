@@ -1,5 +1,5 @@
 import { readFileSync } from "node:fs";
-import { Prisma } from "@prisma/client";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { beforeEach, describe, expect, it, vi } from "vitest";
 import type { RecoveryConfig } from "@/server/recovery/config";
 import { createRecoveryHttpHandlers } from "@/server/recovery/http-handlers";
@@ -11,6 +11,7 @@ import {
 } from "@/server/recovery/http-runtime";
 import {
   RECOVERY_RESOLVED_STATES,
+  createRecoveryStateResolver,
   recoveryStateResponseSchema,
   resolveRecoveryStateSnapshot,
   type RecoveryStateSnapshot
@@ -30,6 +31,7 @@ const ids = {
 function baseSnapshot(overrides: Partial<RecoveryStateSnapshot> = {}): RecoveryStateSnapshot {
   return {
     emailNormalized: "buyer@example.test",
+    configuredProductCode: "russian-training-variant-01",
     commercialProductId: ids.product,
     testId: ids.test,
     product: {
@@ -38,7 +40,15 @@ function baseSnapshot(overrides: Partial<RecoveryStateSnapshot> = {}): RecoveryS
       testId: ids.test,
       attemptLimit: 1,
       resultRetentionDays: 365,
-      test: { id: ids.test, examMode: "RIKZ_RUSSIAN_2026", deletedAt: null }
+      priceMinor: 1000,
+      currency: "BYN",
+      isActive: true,
+      test: {
+        id: ids.test,
+        examMode: "RIKZ_RUSSIAN_2026",
+        status: "PUBLISHED",
+        deletedAt: null
+      }
     },
     users: [{ id: ids.user, role: "STUDENT", deletedAt: null }],
     orders: [{
@@ -47,7 +57,17 @@ function baseSnapshot(overrides: Partial<RecoveryStateSnapshot> = {}): RecoveryS
       testIdSnapshot: ids.test,
       emailNormalized: "buyer@example.test",
       status: "PAID",
-      paymentAttempts: [{ id: ids.payment, status: "PAID" }]
+      priceMinor: 1000,
+      currency: "BYN",
+      paidAt: now,
+      paymentAttempts: [{
+        id: ids.payment,
+        status: "PAID",
+        amountMinor: 1000,
+        currency: "BYN",
+        paidAt: now,
+        createdAt: now
+      }]
     }],
     accesses: [{
       id: ids.access,
@@ -69,27 +89,55 @@ function baseSnapshot(overrides: Partial<RecoveryStateSnapshot> = {}): RecoveryS
   };
 }
 
+function authenticQuestions() {
+  return Array.from({ length: 40 }, (_, index) => ({
+    snapshotQuestionId: `q_${index + 1}`,
+    orderIndex: index,
+    questionType: index < 18 ? "multi_select_five" : "short_answer_token",
+    points: 2,
+    correctAnswer: "server-only"
+  }));
+}
+
+function authenticTerminalSnapshot(overrides: Record<string, unknown> = {}): Prisma.JsonValue {
+  return {
+    testId: ids.test,
+    subject: "russian",
+    mode: "ce_ct",
+    examMode: "rikz_russian_2026",
+    durationMinutes: 120,
+    maxRawScore: 80,
+    questions: authenticQuestions(),
+    ...overrides
+  } as Prisma.JsonValue;
+}
+
 function terminalAttempt(
   overrides: Partial<RecoveryStateSnapshot["attempts"][number]> = {}
 ): RecoveryStateSnapshot["attempts"][number] {
+  const status = overrides.status ?? "COMPLETED";
+  const startedAt = overrides.startedAt ?? new Date(now.getTime() - 7_200_000);
+  const defaultFinishedAt = status === "EXPIRED"
+    ? new Date(startedAt.getTime() + 7_200_000)
+    : new Date(now.getTime() - 60_000);
+  const finishedAt = overrides.finishedAt === undefined ? defaultFinishedAt : overrides.finishedAt;
+  const durationSeconds = overrides.durationSeconds === undefined && finishedAt
+    ? Math.floor((finishedAt.getTime() - startedAt.getTime()) / 1_000)
+    : overrides.durationSeconds ?? null;
   return {
     id: ids.attempt,
     userId: ids.user,
     testId: ids.test,
     accessId: ids.access,
-    status: "COMPLETED" as const,
-    finishedAt: new Date(now.getTime() - 60_000),
-    durationSeconds: 7_200,
     rawScore: 60,
     maxRawScore: 80,
     percent: new Prisma.Decimal(75),
-    testSnapshot: {
-      testId: ids.test,
-      examMode: "rikz_russian_2026",
-      durationMinutes: 120,
-      questions: [{ correctAnswer: "server-only" }]
-    },
-    ...overrides
+    testSnapshot: authenticTerminalSnapshot(),
+    ...overrides,
+    status,
+    startedAt,
+    finishedAt,
+    durationSeconds
   };
 }
 
@@ -154,6 +202,74 @@ describe("ACC-01A recovery state decision table", () => {
     }), now).state).toBe("support_required");
   });
 
+  it.each([
+    ["missing snapshot metadata", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({ subject: undefined })
+    })],
+    ["wrong Test ID", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({ testId: "aaaaaaaa-aaaa-4aaa-8aaa-aaaaaaaaaaaa" })
+    })],
+    ["wrong exam mode", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({ examMode: "generic" })
+    })],
+    ["wrong duration", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({ durationMinutes: 119 })
+    })],
+    ["wrong snapshot max raw score", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({ maxRawScore: 79 })
+    })],
+    ["wrong question count", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({ questions: authenticQuestions().slice(0, 39) })
+    })],
+    ["snapshot points sum mismatch", () => terminalAttempt({
+      testSnapshot: authenticTerminalSnapshot({
+        questions: authenticQuestions().map((question, index) =>
+          index === 0 ? { ...question, points: 1 } : question
+        )
+      })
+    })],
+    ["Attempt max score mismatch", () => terminalAttempt({ maxRawScore: 79 })],
+    ["raw score outside range", () => terminalAttempt({ rawScore: 81 })],
+    ["percent mismatch", () => terminalAttempt({ rawScore: 59, percent: new Prisma.Decimal(75) })],
+    ["finishedAt before startedAt", () => terminalAttempt({
+      startedAt: now,
+      finishedAt: new Date(now.getTime() - 1_000)
+    })],
+    ["duration mismatch", () => terminalAttempt({ durationSeconds: 1 })],
+    ["COMPLETED at timer deadline", () => terminalAttempt({
+      status: "COMPLETED",
+      startedAt: new Date(now.getTime() - 7_200_000),
+      finishedAt: now
+    })],
+    ["EXPIRED before timer deadline", () => terminalAttempt({
+      status: "EXPIRED",
+      startedAt: new Date(now.getTime() - 7_200_000),
+      finishedAt: new Date(now.getTime() - 1_000)
+    })],
+    ["expired Result retention", () => {
+      const finishedAt = new Date(now.getTime() - 366 * 86_400_000);
+      return terminalAttempt({
+        startedAt: new Date(finishedAt.getTime() - 3_600_000),
+        finishedAt
+      });
+    }]
+  ] as const)("maps %s to support_required", (_label, buildAttempt) => {
+    const access = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      accesses: [access],
+      attempts: [buildAttempt()]
+    }), now).state).toBe("support_required");
+  });
+
+  it.each([0, 366])("rejects terminal Result retention configuration %i", (resultRetentionDays) => {
+    const access = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product: { ...baseSnapshot().product!, resultRetentionDays },
+      accesses: [access],
+      attempts: [terminalAttempt()]
+    }), now).state).toBe("support_required");
+  });
+
   it("maps CANCELLED to support_required", () => {
     const access = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
     expect(resolveRecoveryStateSnapshot(baseSnapshot({
@@ -182,7 +298,12 @@ describe("ACC-01A recovery state decision table", () => {
       const order = {
         ...baseSnapshot().orders[0]!,
         status,
-        paymentAttempts: [{ id: ids.payment, status }]
+        paidAt: null,
+        paymentAttempts: [{
+          ...baseSnapshot().orders[0]!.paymentAttempts[0]!,
+          status,
+          paidAt: null
+        }]
       };
       expect(resolveRecoveryStateSnapshot(baseSnapshot({
         orders: [order], accesses: [], attempts: []
@@ -194,6 +315,73 @@ describe("ACC-01A recovery state decision table", () => {
     expect(resolveRecoveryStateSnapshot(baseSnapshot({
       users: [], orders: [], accesses: [], attempts: []
     }), now)).toEqual({ state: "no_access", screen: "REC-01", nextAction: null });
+  });
+
+  it.each([
+    ["inactive Product", { isActive: false }],
+    ["wrong Product price", { priceMinor: 999 }],
+    ["wrong Product currency", { currency: "USD" }]
+  ] as const)("maps %s without Access to support_required", (_label, productChange) => {
+    const product = { ...baseSnapshot().product!, ...productChange };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product,
+      users: [],
+      orders: [],
+      accesses: [],
+      attempts: []
+    }), now).state).toBe("support_required");
+  });
+
+  it.each([
+    ["unpublished Test", { status: "HIDDEN" as const, deletedAt: null }],
+    ["deleted Test", { status: "PUBLISHED" as const, deletedAt: now }]
+  ])("maps %s without Access to support_required", (_label, testChange) => {
+    const original = baseSnapshot().product!;
+    const product = { ...original, test: { ...original.test, ...testChange } };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product,
+      users: [],
+      orders: [],
+      accesses: [],
+      attempts: []
+    }), now).state).toBe("support_required");
+  });
+
+  it("rejects contradictory terminal Order/PaymentAttempt truth", () => {
+    const order = {
+      ...baseSnapshot().orders[0]!,
+      status: "FAILED" as const,
+      paidAt: null,
+      paymentAttempts: [{
+        ...baseSnapshot().orders[0]!.paymentAttempts[0]!,
+        status: "CANCELLED" as const,
+        paidAt: null
+      }]
+    };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      orders: [order],
+      users: [],
+      accesses: [],
+      attempts: []
+    }), now).state).toBe("support_required");
+  });
+
+  it("keeps valid existing entitlement states recoverable when Product is inactive", () => {
+    const inactiveProduct = { ...baseSnapshot().product!, isActive: false };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({ product: inactiveProduct }), now).state)
+      .toBe("access_unstarted");
+
+    const consumedAccess = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product: inactiveProduct,
+      accesses: [consumedAccess],
+      attempts: [{ ...terminalAttempt(), status: "STARTED", finishedAt: null }]
+    }), now).state).toBe("attempt_active");
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product: inactiveProduct,
+      accesses: [consumedAccess],
+      attempts: [terminalAttempt()]
+    }), now).state).toBe("result_available");
   });
 
   it("maps revoked or zero-availability unstarted Access to support_required", () => {
@@ -251,6 +439,56 @@ describe("ACC-01A recovery state decision table", () => {
     const source = readFileSync("src/server/recovery/state-resolver.ts", "utf8");
     expect(source).not.toMatch(/completeAttempt|startOrRestoreAttempt|scoreAttempt|serializeResult|logEvent|analytics/i);
     expect(source).not.toMatch(/\.create\(|\.update\(|\.upsert\(|\.delete\(/);
+    expect(source).not.toMatch(/transaction\.answer|\.answers\b/);
+  });
+
+  it("loads every business model through one read-only REPEATABLE READ transaction", async () => {
+    const snapshot = baseSnapshot();
+    const transaction = {
+      $executeRaw: vi.fn().mockResolvedValue(0),
+      commercialProduct: { findUnique: vi.fn().mockResolvedValue(snapshot.product) },
+      user: { findMany: vi.fn().mockResolvedValue(snapshot.users) },
+      commercialOrder: { findMany: vi.fn().mockResolvedValue(snapshot.orders) },
+      access: { findMany: vi.fn().mockResolvedValue(snapshot.accesses) },
+      attempt: { findMany: vi.fn().mockResolvedValue(snapshot.attempts) }
+    } as unknown as Prisma.TransactionClient;
+    const client = {
+      $transaction: vi.fn((callback: (tx: Prisma.TransactionClient) => Promise<unknown>) =>
+        callback(transaction)
+      )
+    } as unknown as PrismaClient;
+    const clock = vi.fn(() => new Date(now));
+    const readTransactions: Prisma.TransactionClient[] = [];
+    const resolver = createRecoveryStateResolver({
+      client,
+      productCode: snapshot.configuredProductCode,
+      clock,
+      snapshotReadHook: async ({ transaction: activeTransaction }) => {
+        readTransactions.push(activeTransaction);
+      }
+    });
+
+    await expect(resolver({
+      emailNormalized: snapshot.emailNormalized,
+      commercialProductId: snapshot.commercialProductId,
+      testId: snapshot.testId
+    })).resolves.toEqual({
+      state: "access_unstarted",
+      screen: "REC-01",
+      nextAction: "CONTINUE"
+    });
+
+    expect(client.$transaction).toHaveBeenCalledWith(expect.any(Function), {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead
+    });
+    expect(transaction.$executeRaw).toHaveBeenCalledOnce();
+    expect(readTransactions).toEqual([transaction, transaction]);
+    expect(clock).toHaveBeenCalledOnce();
+    expect(transaction.commercialProduct.findUnique).toHaveBeenCalledOnce();
+    expect(transaction.user.findMany).toHaveBeenCalledOnce();
+    expect(transaction.commercialOrder.findMany).toHaveBeenCalledOnce();
+    expect(transaction.access.findMany).toHaveBeenCalledOnce();
+    expect(transaction.attempt.findMany).toHaveBeenCalledOnce();
   });
 });
 

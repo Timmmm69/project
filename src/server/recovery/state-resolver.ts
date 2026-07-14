@@ -1,13 +1,28 @@
-import type {
-  AccessSource,
-  AttemptStatus,
-  CommercialOrderStatus,
-  CommercialPaymentAttemptStatus,
+import {
   Prisma,
-  PrismaClient,
-  UserRole
+  type AccessSource,
+  type AttemptStatus,
+  type CommercialOrderStatus,
+  type CommercialPaymentAttemptStatus,
+  type PrismaClient,
+  type TestStatus,
+  type UserRole
 } from "@prisma/client";
+import {
+  COMMERCIAL_CURRENCY,
+  COMMERCIAL_PRICE_MINOR
+} from "@/lib/commercial/config";
+import {
+  canOpenNewPaymentAttempt,
+  isActivePaymentAttempt,
+  isTerminalPaymentAttempt
+} from "@/lib/commercial/state-machine";
 import { z } from "zod";
+
+const AUTHENTIC_DURATION_MINUTES = 120;
+const AUTHENTIC_MAX_RAW_SCORE = 80;
+const AUTHENTIC_QUESTION_COUNT = 40;
+const RESULT_RETENTION_DAYS = 365;
 
 export const RECOVERY_RESOLVED_STATES = [
   "access_unstarted",
@@ -42,9 +57,13 @@ type ProductCandidate = Readonly<{
   testId: string;
   attemptLimit: number;
   resultRetentionDays: number;
+  priceMinor: number;
+  currency: string;
+  isActive: boolean;
   test: Readonly<{
     id: string;
     examMode: string;
+    status: TestStatus;
     deletedAt: Date | null;
   }>;
 }>;
@@ -58,6 +77,10 @@ type UserCandidate = Readonly<{
 type PaymentAttemptCandidate = Readonly<{
   id: string;
   status: CommercialPaymentAttemptStatus;
+  amountMinor: number;
+  currency: string;
+  paidAt: Date | null;
+  createdAt: Date;
 }>;
 
 type OrderCandidate = Readonly<{
@@ -66,6 +89,9 @@ type OrderCandidate = Readonly<{
   testIdSnapshot: string;
   emailNormalized: string;
   status: CommercialOrderStatus;
+  priceMinor: number;
+  currency: string;
+  paidAt: Date | null;
   paymentAttempts: readonly PaymentAttemptCandidate[];
 }>;
 
@@ -91,6 +117,7 @@ type AttemptCandidate = Readonly<{
   testId: string;
   accessId: string;
   status: AttemptStatus;
+  startedAt: Date;
   finishedAt: Date | null;
   durationSeconds: number | null;
   rawScore: number | null;
@@ -101,6 +128,7 @@ type AttemptCandidate = Readonly<{
 
 export type RecoveryStateSnapshot = Readonly<{
   emailNormalized: string;
+  configuredProductCode: string;
   commercialProductId: string;
   testId: string;
   product: ProductCandidate | null;
@@ -110,12 +138,29 @@ export type RecoveryStateSnapshot = Readonly<{
   attempts: readonly AttemptCandidate[];
 }>;
 
+const terminalSnapshotQuestionSchema = z.object({
+  snapshotQuestionId: z.string().trim().min(1),
+  orderIndex: z.number().int().nonnegative(),
+  questionType: z.enum(["multi_select_five", "short_answer_token"]),
+  points: z.number().int().positive()
+}).passthrough();
+
 const terminalSnapshotSchema = z.object({
   testId: z.string().min(1),
+  subject: z.literal("russian"),
+  mode: z.enum(["training", "ce_ct"]),
   examMode: z.literal("rikz_russian_2026"),
-  durationMinutes: z.number().int().positive(),
-  questions: z.array(z.unknown()).min(1)
+  durationMinutes: z.literal(AUTHENTIC_DURATION_MINUTES),
+  maxRawScore: z.literal(AUTHENTIC_MAX_RAW_SCORE),
+  questions: z.array(terminalSnapshotQuestionSchema).length(AUTHENTIC_QUESTION_COUNT)
 }).passthrough();
+
+export type RecoveryStateSnapshotReadStage = "PRODUCT_READ" | "ACCESSES_READ";
+
+type RecoveryStateSnapshotReadHook = (input: Readonly<{
+  stage: RecoveryStateSnapshotReadStage;
+  transaction: Prisma.TransactionClient;
+}>) => Promise<void>;
 
 function state(state: RecoveryResolvedState): RecoveryStateResponse {
   return recoveryStateResponseSchema.parse({
@@ -133,18 +178,43 @@ function uniqueById<T extends { id: string }>(values: readonly T[]) {
   return [...new Map(values.map((value) => [value.id, value])).values()];
 }
 
-function paymentStateIsStructurallySafeWithoutAccess(orders: readonly OrderCandidate[]) {
-  for (const order of orders) {
-    if (order.status === "PAID" || order.status === "CREATED" || order.status === "PENDING") {
+function isTerminalNonPaidPayment(status: CommercialPaymentAttemptStatus) {
+  return isTerminalPaymentAttempt(status) && status !== "PAID";
+}
+
+function terminalOrderAllowsFreshCheckout(order: OrderCandidate, snapshot: RecoveryStateSnapshot) {
+  if (order.commercialProductId !== snapshot.commercialProductId ||
+    order.testIdSnapshot !== snapshot.testId ||
+    order.emailNormalized !== snapshot.emailNormalized ||
+    order.priceMinor !== COMMERCIAL_PRICE_MINOR || order.currency !== COMMERCIAL_CURRENCY ||
+    order.paidAt !== null || order.status === "PAID" ||
+    order.status === "CREATED" || order.status === "PENDING" ||
+    !canOpenNewPaymentAttempt(order.status) || order.paymentAttempts.length === 0) {
+    return false;
+  }
+
+  const paymentIds = new Set<string>();
+  for (const payment of order.paymentAttempts) {
+    if (paymentIds.has(payment.id) || isActivePaymentAttempt(payment.status) ||
+      !isTerminalNonPaidPayment(payment.status) || payment.paidAt !== null ||
+      payment.amountMinor !== order.priceMinor || payment.currency !== order.currency) {
       return false;
     }
-    for (const payment of order.paymentAttempts) {
-      if (payment.status === "PAID" || payment.status === "CREATED" || payment.status === "PENDING") {
-        return false;
-      }
-    }
+    paymentIds.add(payment.id);
   }
-  return true;
+
+  const latestPayment = [...order.paymentAttempts].sort((left, right) =>
+    left.createdAt.getTime() - right.createdAt.getTime() || left.id.localeCompare(right.id)
+  ).at(-1);
+  return latestPayment?.status === order.status;
+}
+
+function freshCheckoutIsEligible(snapshot: RecoveryStateSnapshot, product: ProductCandidate) {
+  if (!product.isActive || product.priceMinor !== COMMERCIAL_PRICE_MINOR ||
+    product.currency !== COMMERCIAL_CURRENCY || product.test.status !== "PUBLISHED") {
+    return false;
+  }
+  return snapshot.orders.every((order) => terminalOrderAllowsFreshCheckout(order, snapshot));
 }
 
 function terminalProjectionIsReadable(
@@ -153,18 +223,62 @@ function terminalProjectionIsReadable(
   resultRetentionDays: number,
   now: Date
 ) {
-  if (!attempt.finishedAt || attempt.durationSeconds === null || attempt.durationSeconds < 0 ||
-    attempt.rawScore === null || attempt.maxRawScore === null || attempt.maxRawScore < 0 ||
+  if (resultRetentionDays !== RESULT_RETENTION_DAYS || !attempt.finishedAt ||
+    attempt.finishedAt.getTime() > now.getTime() || attempt.durationSeconds === null ||
+    attempt.rawScore === null || attempt.maxRawScore !== AUTHENTIC_MAX_RAW_SCORE ||
     attempt.rawScore < 0 || attempt.rawScore > attempt.maxRawScore || attempt.percent === null) {
     return false;
   }
-  const percent = Number(attempt.percent);
-  if (!Number.isFinite(percent) || percent < 0 || percent > 100) return false;
+
   const snapshot = terminalSnapshotSchema.safeParse(attempt.testSnapshot);
   if (!snapshot.success || snapshot.data.testId !== testId) return false;
+
+  const snapshotQuestionIds = new Set<string>();
+  const snapshotOrderIndexes = new Set<number>();
+  let snapshotPoints = 0;
+  for (const question of snapshot.data.questions) {
+    if (snapshotQuestionIds.has(question.snapshotQuestionId) ||
+      snapshotOrderIndexes.has(question.orderIndex)) {
+      return false;
+    }
+    snapshotQuestionIds.add(question.snapshotQuestionId);
+    snapshotOrderIndexes.add(question.orderIndex);
+    snapshotPoints += question.points;
+  }
+  if (snapshotPoints !== snapshot.data.maxRawScore ||
+    attempt.maxRawScore !== snapshot.data.maxRawScore) {
+    return false;
+  }
+
+  try {
+    const persistedPercent = new Prisma.Decimal(String(attempt.percent));
+    const expectedPercent = new Prisma.Decimal(
+      Math.round((attempt.rawScore / attempt.maxRawScore) * 10_000)
+    ).dividedBy(100);
+    if (!persistedPercent.equals(expectedPercent)) return false;
+  } catch {
+    return false;
+  }
+
+  const elapsedMs = attempt.finishedAt.getTime() - attempt.startedAt.getTime();
+  const timerDurationMs = snapshot.data.durationMinutes * 60 * 1_000;
+  const timerDeadline = attempt.startedAt.getTime() + timerDurationMs;
+  if (elapsedMs < 0 || elapsedMs > timerDurationMs ||
+    attempt.durationSeconds !== Math.floor(elapsedMs / 1_000)) {
+    return false;
+  }
+  if (attempt.status === "COMPLETED" && attempt.finishedAt.getTime() >= timerDeadline) {
+    return false;
+  }
+  if (attempt.status === "EXPIRED" &&
+    (attempt.finishedAt.getTime() !== timerDeadline ||
+      attempt.durationSeconds !== snapshot.data.durationMinutes * 60)) {
+    return false;
+  }
+
   const retentionEndsAt = new Date(attempt.finishedAt);
-  retentionEndsAt.setUTCDate(retentionEndsAt.getUTCDate() + resultRetentionDays);
-  return resultRetentionDays > 0 && now.getTime() < retentionEndsAt.getTime();
+  retentionEndsAt.setUTCDate(retentionEndsAt.getUTCDate() + RESULT_RETENTION_DAYS);
+  return now.getTime() < retentionEndsAt.getTime();
 }
 
 export function resolveRecoveryStateSnapshot(
@@ -173,6 +287,7 @@ export function resolveRecoveryStateSnapshot(
 ): RecoveryStateResponse {
   const product = snapshot.product;
   if (!product || product.id !== snapshot.commercialProductId ||
+    product.code !== snapshot.configuredProductCode ||
     product.testId !== snapshot.testId || product.test.id !== snapshot.testId ||
     product.test.deletedAt || product.test.examMode !== "RIKZ_RUSSIAN_2026" ||
     product.attemptLimit !== 1) {
@@ -194,7 +309,7 @@ export function resolveRecoveryStateSnapshot(
   const access = accesses[0] ?? null;
   const attempt = attempts[0] ?? null;
   if (!access) {
-    if (attempt || !paymentStateIsStructurallySafeWithoutAccess(snapshot.orders)) {
+    if (attempt || !freshCheckoutIsEligible(snapshot, product)) {
       return state("support_required");
     }
     return state("no_access");
@@ -218,15 +333,19 @@ export function resolveRecoveryStateSnapshot(
   const linkedOrder = linkedOrders[0];
   if (linkedOrder.commercialProductId !== product.id ||
     linkedOrder.testIdSnapshot !== snapshot.testId ||
-    linkedOrder.emailNormalized !== snapshot.emailNormalized) {
+    linkedOrder.emailNormalized !== snapshot.emailNormalized ||
+    linkedOrder.priceMinor !== COMMERCIAL_PRICE_MINOR ||
+    linkedOrder.currency !== COMMERCIAL_CURRENCY || !linkedOrder.paidAt) {
     return state("support_required");
   }
   const linkedPayments = linkedOrder.paymentAttempts.filter(
     (payment) => payment.id === access.commercialPaymentAttemptId
   );
   if (linkedPayments.length !== 1 || linkedPayments[0]?.status !== "PAID" ||
+    linkedPayments[0].amountMinor !== linkedOrder.priceMinor ||
+    linkedPayments[0].currency !== linkedOrder.currency || !linkedPayments[0].paidAt ||
     linkedOrder.paymentAttempts.some((payment) =>
-      (payment.status === "CREATED" || payment.status === "PENDING") &&
+      (payment.status === "CREATED" || payment.status === "PENDING" || payment.status === "PAID") &&
       payment.id !== access.commercialPaymentAttemptId
     )) {
     return state("support_required");
@@ -256,10 +375,146 @@ export function resolveRecoveryStateSnapshot(
   return state("support_required");
 }
 
+async function loadRecoveryStateSnapshot(input: {
+  transaction: Prisma.TransactionClient;
+  productCode: string;
+  scope: {
+    emailNormalized: string;
+    commercialProductId: string;
+    testId: string;
+  };
+  snapshotReadHook?: RecoveryStateSnapshotReadHook;
+}): Promise<RecoveryStateSnapshot> {
+  const { transaction, scope } = input;
+  const product = await transaction.commercialProduct.findUnique({
+    where: { id: scope.commercialProductId },
+    select: {
+      id: true,
+      code: true,
+      testId: true,
+      attemptLimit: true,
+      resultRetentionDays: true,
+      priceMinor: true,
+      currency: true,
+      isActive: true,
+      test: { select: { id: true, examMode: true, status: true, deletedAt: true } }
+    }
+  });
+  await input.snapshotReadHook?.({ stage: "PRODUCT_READ", transaction });
+  if (product && product.code !== input.productCode) {
+    throw new RecoveryStateResolverError("SCOPE_NOT_ALLOWED");
+  }
+  if (product && (product.id !== scope.commercialProductId || product.testId !== scope.testId ||
+    product.test.id !== scope.testId)) {
+    throw new RecoveryStateResolverError("SCOPE_NOT_ALLOWED");
+  }
+
+  const [users, orders] = await Promise.all([
+    transaction.user.findMany({
+      where: { email: scope.emailNormalized },
+      select: { id: true, role: true, deletedAt: true },
+      take: 2
+    }),
+    transaction.commercialOrder.findMany({
+      where: {
+        commercialProductId: scope.commercialProductId,
+        emailNormalized: scope.emailNormalized
+      },
+      select: {
+        id: true,
+        commercialProductId: true,
+        testIdSnapshot: true,
+        emailNormalized: true,
+        status: true,
+        priceMinor: true,
+        currency: true,
+        paidAt: true,
+        paymentAttempts: {
+          select: {
+            id: true,
+            status: true,
+            amountMinor: true,
+            currency: true,
+            paidAt: true,
+            createdAt: true
+          },
+          orderBy: [{ createdAt: "asc" }, { id: "asc" }]
+        }
+      }
+    })
+  ]);
+
+  const userId = users[0]?.id;
+  const orderIds = orders.map((order) => order.id);
+  const accessOr: Prisma.AccessWhereInput[] = [];
+  if (userId) {
+    accessOr.push(
+      { userId, testId: scope.testId },
+      { userId, commercialProductId: scope.commercialProductId }
+    );
+  }
+  if (orderIds.length > 0) accessOr.push({ commercialOrderId: { in: orderIds } });
+  const accesses = accessOr.length === 0 ? [] : await transaction.access.findMany({
+    where: { OR: accessOr },
+    select: {
+      id: true,
+      userId: true,
+      testId: true,
+      source: true,
+      attemptsTotal: true,
+      attemptsAvailable: true,
+      expiresAt: true,
+      revokedAt: true,
+      commercialProductId: true,
+      commercialOrderId: true,
+      commercialPaymentAttemptId: true,
+      grantedAt: true,
+      startDeadlineAt: true
+    },
+    take: 2
+  });
+  await input.snapshotReadHook?.({ stage: "ACCESSES_READ", transaction });
+
+  const accessIds = accesses.map((access) => access.id);
+  const attemptOr: Prisma.AttemptWhereInput[] = [];
+  if (accessIds.length > 0) attemptOr.push({ accessId: { in: accessIds } });
+  if (userId) attemptOr.push({ userId, testId: scope.testId });
+  const attempts = attemptOr.length === 0 ? [] : await transaction.attempt.findMany({
+    where: { OR: attemptOr },
+    select: {
+      id: true,
+      userId: true,
+      testId: true,
+      accessId: true,
+      status: true,
+      startedAt: true,
+      finishedAt: true,
+      durationSeconds: true,
+      rawScore: true,
+      maxRawScore: true,
+      percent: true,
+      testSnapshot: true
+    },
+    take: 2
+  });
+
+  return {
+    ...scope,
+    configuredProductCode: input.productCode,
+    product,
+    users,
+    orders,
+    accesses,
+    attempts
+  };
+}
+
 export function createRecoveryStateResolver(input: {
   client: PrismaClient;
   productCode: string;
   clock?: () => Date;
+  /** @internal Deterministic PostgreSQL snapshot synchronization for tests only. */
+  snapshotReadHook?: RecoveryStateSnapshotReadHook;
 }) {
   const clock = input.clock ?? (() => new Date());
 
@@ -268,106 +523,18 @@ export function createRecoveryStateResolver(input: {
     commercialProductId: string;
     testId: string;
   }): Promise<RecoveryStateResponse> {
-    const product = await input.client.commercialProduct.findUnique({
-      where: { id: scope.commercialProductId },
-      select: {
-        id: true,
-        code: true,
-        testId: true,
-        attemptLimit: true,
-        resultRetentionDays: true,
-        test: { select: { id: true, examMode: true, deletedAt: true } }
-      }
+    const now = clock();
+    return input.client.$transaction(async (transaction) => {
+      await transaction.$executeRaw(Prisma.sql`SET TRANSACTION READ ONLY`);
+      const snapshot = await loadRecoveryStateSnapshot({
+        transaction,
+        productCode: input.productCode,
+        scope,
+        snapshotReadHook: input.snapshotReadHook
+      });
+      return resolveRecoveryStateSnapshot(snapshot, now);
+    }, {
+      isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead
     });
-    if (product && product.code !== input.productCode) {
-      throw new RecoveryStateResolverError("SCOPE_NOT_ALLOWED");
-    }
-    if (product && (product.id !== scope.commercialProductId || product.testId !== scope.testId ||
-      product.test.id !== scope.testId)) {
-      throw new RecoveryStateResolverError("SCOPE_NOT_ALLOWED");
-    }
-
-    const [users, orders] = await Promise.all([
-      input.client.user.findMany({
-        where: { email: scope.emailNormalized },
-        select: { id: true, role: true, deletedAt: true },
-        take: 2
-      }),
-      input.client.commercialOrder.findMany({
-        where: {
-          commercialProductId: scope.commercialProductId,
-          emailNormalized: scope.emailNormalized
-        },
-        select: {
-          id: true,
-          commercialProductId: true,
-          testIdSnapshot: true,
-          emailNormalized: true,
-          status: true,
-          paymentAttempts: { select: { id: true, status: true } }
-        }
-      })
-    ]);
-
-    const userId = users[0]?.id;
-    const orderIds = orders.map((order) => order.id);
-    const accessOr: Prisma.AccessWhereInput[] = [];
-    if (userId) {
-      accessOr.push(
-        { userId, testId: scope.testId },
-        { userId, commercialProductId: scope.commercialProductId }
-      );
-    }
-    if (orderIds.length > 0) accessOr.push({ commercialOrderId: { in: orderIds } });
-    const accesses = accessOr.length === 0 ? [] : await input.client.access.findMany({
-      where: { OR: accessOr },
-      select: {
-        id: true,
-        userId: true,
-        testId: true,
-        source: true,
-        attemptsTotal: true,
-        attemptsAvailable: true,
-        expiresAt: true,
-        revokedAt: true,
-        commercialProductId: true,
-        commercialOrderId: true,
-        commercialPaymentAttemptId: true,
-        grantedAt: true,
-        startDeadlineAt: true
-      },
-      take: 2
-    });
-
-    const accessIds = accesses.map((access) => access.id);
-    const attemptOr: Prisma.AttemptWhereInput[] = [];
-    if (accessIds.length > 0) attemptOr.push({ accessId: { in: accessIds } });
-    if (userId) attemptOr.push({ userId, testId: scope.testId });
-    const attempts = attemptOr.length === 0 ? [] : await input.client.attempt.findMany({
-      where: { OR: attemptOr },
-      select: {
-        id: true,
-        userId: true,
-        testId: true,
-        accessId: true,
-        status: true,
-        finishedAt: true,
-        durationSeconds: true,
-        rawScore: true,
-        maxRawScore: true,
-        percent: true,
-        testSnapshot: true
-      },
-      take: 2
-    });
-
-    return resolveRecoveryStateSnapshot({
-      ...scope,
-      product,
-      users,
-      orders,
-      accesses,
-      attempts
-    }, clock());
   };
 }
