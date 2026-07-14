@@ -5,6 +5,8 @@ import { commercialLegalConfig, isCommercialCheckoutEnabled } from "@/lib/commer
 import { CommercialCheckoutForm } from "./commercial-checkout-form";
 import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
+import { parseVerifiedCommercialSessionMode } from "@/server/auth/verified-student-session/config";
+import { authorizeVerifiedStudentDestination } from "@/server/auth/verified-student-session/destination-guard";
 
 export const dynamic = "force-dynamic";
 
@@ -25,6 +27,9 @@ export default async function PublicTestPage({ params }: PageProps) {
       slug,
       status: "PUBLISHED",
       deletedAt: null
+    },
+    include: {
+      commercialProducts: { select: { id: true }, take: 1 }
     }
   });
 
@@ -42,6 +47,23 @@ export default async function PublicTestPage({ params }: PageProps) {
     : null;
   const showCommercialCheckout = Boolean(commercialProduct);
   isFullCeCt &&= !showCommercialCheckout;
+  let verifiedPreAuthorized = false;
+  let hideLegacyPrivateControls = false;
+  try {
+    const authorization = await authorizeVerifiedStudentDestination({ destination: "PRE", testSlug: slug });
+    verifiedPreAuthorized = authorization.status === "AUTHORIZED";
+    hideLegacyPrivateControls = authorization.mode === "enforce" &&
+      authorization.classification === "AUTHENTIC";
+  } catch {
+    const authenticTest = test.examMode === "RIKZ_RUSSIAN_2026" ||
+      test.commercialProducts.length > 0;
+    try {
+      hideLegacyPrivateControls = authenticTest &&
+        parseVerifiedCommercialSessionMode(process.env.VERIFIED_COMMERCIAL_SESSION_MODE) === "enforce";
+    } catch {
+      hideLegacyPrivateControls = authenticTest;
+    }
+  }
 
   return (
     <main className="page-shell stack">
@@ -121,8 +143,8 @@ export default async function PublicTestPage({ params }: PageProps) {
             <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
-          {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} /> : null}
-          <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} />
+          {verifiedPreAuthorized || showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} priceMinor={commercialProduct?.priceMinor ?? publicTest.price} currency={commercialProduct?.currency ?? publicTest.currency} verifiedPreAuthorized={verifiedPreAuthorized} /> : null}
+          {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
         </aside>
       </section>
     </main>

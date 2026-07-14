@@ -46,8 +46,11 @@ export type ResolveVerifiedStudentSessionResult =
   | Readonly<{ status: "INVALID_TOKEN" | "UNKNOWN_KEY" | "NOT_FOUND" | "REVOKED" | "EXPIRED" | "SUBJECT_INVALID" | "ACCESS_REVOKED" | "SCOPE_MISMATCH" }>
   | Readonly<{
       status: "RESOLVED";
+      sessionId: string;
       scope: VerifiedStudentSessionScope;
       source: VerifiedStudentSessionSource;
+      sourceReferenceId: string;
+      issuanceOperationId: string;
       tokenGeneration: number;
       issuedAt: Date;
       expiresAt: Date;
@@ -264,7 +267,7 @@ export function createVerifiedStudentSessionService(input: {
       return withTransaction(tx, (activeTx) => issueWithinTransaction(activeTx, issueInput));
     },
 
-    async resolve(rawToken: string): Promise<ResolveVerifiedStudentSessionResult> {
+    async resolve(rawToken: string, tx?: Tx): Promise<ResolveVerifiedStudentSessionResult> {
       let parsed;
       try {
         parsed = parseVerifiedStudentSessionToken(rawToken, input.config.keys);
@@ -276,7 +279,8 @@ export function createVerifiedStudentSessionService(input: {
       }
 
       const tokenDigest = digestVerifiedStudentSessionToken(rawToken, input.config);
-      const session = await input.client.verifiedStudentSession.findUnique({
+      const activeClient = tx ?? input.client;
+      const session = await activeClient.verifiedStudentSession.findUnique({
         where: { tokenDigest },
         include: {
           user: { select: { id: true, role: true, deletedAt: true } },
@@ -328,8 +332,11 @@ export function createVerifiedStudentSessionService(input: {
 
       return {
         status: "RESOLVED",
+        sessionId: session.id,
         scope,
         source: session.source,
+        sourceReferenceId: session.sourceReferenceId,
+        issuanceOperationId: session.issuanceOperationId,
         tokenGeneration: session.tokenGeneration,
         issuedAt: session.issuedAt,
         expiresAt: session.expiresAt

@@ -28,11 +28,12 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-export function CommercialCheckoutForm({ legal, testId, priceMinor, currency }: {
+export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, verifiedPreAuthorized }: {
   legal: LegalLinks;
   testId: string;
   priceMinor: number;
   currency: string;
+  verifiedPreAuthorized: boolean;
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -193,8 +194,35 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency }: 
     window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
   }
 
+  async function startVerifiedAttempt() {
+    setBusy(true);
+    setMessage(null);
+    const response = await fetch("/api/attempts/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ testId })
+    });
+    const body = await response.json() as ApiResponse<{ attempt: { attemptId: string } }>;
+    setBusy(false);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+    window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
+  }
+
   const price = `${(priceMinor / 100).toFixed(2)} ${currency}`;
   const paid = order?.accessStatus === "granted";
+  if (verifiedPreAuthorized) {
+    return (
+      <section className="subpanel stack compact">
+        {message ? <p className="form-message info">{message}</p> : null}
+        <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
+          Начать или продолжить тест
+        </button>
+      </section>
+    );
+  }
   return (
     <section className="subpanel stack compact">
       <div>

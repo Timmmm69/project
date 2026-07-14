@@ -7,6 +7,11 @@ export const startAttemptSchema = z.object({
   testId: uuidSchema
 });
 
+export const startAttemptRequestSchema = z.object({
+  email: normalizedEmailSchema.optional(),
+  testId: uuidSchema
+});
+
 export const saveAttemptAnswerSchema = z.object({
   snapshotQuestionId: z.string().trim().min(1).max(40),
   selectedAnswer: z.string().max(2000).nullable()
