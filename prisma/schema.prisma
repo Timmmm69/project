@@ -231,16 +231,26 @@ enum RecoveryRateLimitKind {
 }
 
 enum RecoverySecurityEventCode {
-  CHALLENGE_REQUESTED  @map("challenge_requested")
-  CHALLENGE_REUSED     @map("challenge_reused")
-  CHALLENGE_SUPERSEDED @map("challenge_superseded")
-  VERIFY_REJECTED      @map("verify_rejected")
-  VERIFY_MATCHED       @map("verify_matched")
-  RATE_LIMITED         @map("rate_limited")
-  SESSION_ISSUED       @map("session_issued")
-  SESSION_REVOKED      @map("session_revoked")
+  CHALLENGE_REQUESTED      @map("challenge_requested")
+  CHALLENGE_REUSED         @map("challenge_reused")
+  CHALLENGE_SUPERSEDED     @map("challenge_superseded")
+  VERIFY_REJECTED          @map("verify_rejected")
+  VERIFY_MATCHED           @map("verify_matched")
+  RATE_LIMITED             @map("rate_limited")
+  SESSION_ISSUED           @map("session_issued")
+  SESSION_REVOKED          @map("session_revoked")
+  VERIFIED_SESSION_ISSUED  @map("verified_session_issued")
+  VERIFIED_SESSION_ROTATED @map("verified_session_rotated")
 
   @@map("recovery_security_event_code")
+}
+
+enum RecoveryContinuationAction {
+  OPEN_PRE     @map("open_pre")
+  OPEN_ATTEMPT @map("open_attempt")
+  OPEN_RESULT  @map("open_result")
+
+  @@map("recovery_continuation_action")
 }
 
 enum RecoverySecurityReasonCode {
@@ -665,10 +675,11 @@ model VerifiedStudentSession {
   createdAt             DateTime                                @default(now()) @map("created_at")
   updatedAt             DateTime                                @updatedAt @map("updated_at")
 
-  user    User              @relation(fields: [userId], references: [id])
-  product CommercialProduct @relation(fields: [commercialProductId], references: [id])
-  test    Test              @relation(fields: [testId], references: [id])
-  access  Access            @relation(fields: [accessId], references: [id])
+  user                  User                      @relation(fields: [userId], references: [id])
+  product               CommercialProduct         @relation(fields: [commercialProductId], references: [id])
+  test                  Test                      @relation(fields: [testId], references: [id])
+  access                Access                    @relation(fields: [accessId], references: [id])
+  recoveryContinuations VerifiedRecoverySession[] @relation("RecoveryContinuationVerifiedSession")
 
   @@unique([source, sourceReferenceId, issuanceOperationId])
   @@index([userId, commercialProductId, testId, expiresAt])
@@ -728,35 +739,42 @@ model RecoveryVerificationAttempt {
 }
 
 model VerifiedRecoverySession {
-  id                  String                                 @id @default(uuid()) @db.Uuid
-  challengeId         String                                 @unique @map("challenge_id") @db.Uuid
-  tokenDigest         String                                 @unique @map("token_digest") @db.Char(64)
-  tokenKeyVersion     String                                 @map("token_key_version") @db.VarChar(32)
-  emailNormalized     String                                 @map("email_normalized")
-  emailFingerprint    String                                 @map("email_fingerprint") @db.Char(64)
-  commercialProductId String                                 @map("commercial_product_id") @db.Uuid
-  testId              String                                 @map("test_id") @db.Uuid
-  status              VerifiedRecoverySessionStatus          @default(ACTIVE)
-  issuedAt            DateTime                               @default(now()) @map("issued_at")
-  expiresAt           DateTime                               @map("expires_at")
-  lastUsedAt          DateTime?                              @map("last_used_at")
-  revokedAt           DateTime?                              @map("revoked_at")
-  revocationCode      VerifiedRecoverySessionRevocationCode? @map("revocation_code")
-  rotatedFromId       String?                                @map("rotated_from_id") @db.Uuid
-  createdAt           DateTime                               @default(now()) @map("created_at")
-  updatedAt           DateTime                               @updatedAt @map("updated_at")
+  id                                   String                                 @id @default(uuid()) @db.Uuid
+  challengeId                          String                                 @unique @map("challenge_id") @db.Uuid
+  tokenDigest                          String                                 @unique @map("token_digest") @db.Char(64)
+  tokenKeyVersion                      String                                 @map("token_key_version") @db.VarChar(32)
+  emailNormalized                      String                                 @map("email_normalized")
+  emailFingerprint                     String                                 @map("email_fingerprint") @db.Char(64)
+  commercialProductId                  String                                 @map("commercial_product_id") @db.Uuid
+  testId                               String                                 @map("test_id") @db.Uuid
+  status                               VerifiedRecoverySessionStatus          @default(ACTIVE)
+  issuedAt                             DateTime                               @default(now()) @map("issued_at")
+  expiresAt                            DateTime                               @map("expires_at")
+  lastUsedAt                           DateTime?                              @map("last_used_at")
+  revokedAt                            DateTime?                              @map("revoked_at")
+  revocationCode                       VerifiedRecoverySessionRevocationCode? @map("revocation_code")
+  rotatedFromId                        String?                                @map("rotated_from_id") @db.Uuid
+  continuationOperationId              String?                                @unique @map("continuation_operation_id") @db.Uuid
+  continuationNextAction               RecoveryContinuationAction?            @map("continuation_next_action")
+  continuationNextUrl                  String?                                @map("continuation_next_url")
+  continuationVerifiedStudentSessionId String?                                @map("continuation_verified_student_session_id") @db.Uuid
+  continuedAt                          DateTime?                              @map("continued_at")
+  createdAt                            DateTime                               @default(now()) @map("created_at")
+  updatedAt                            DateTime                               @updatedAt @map("updated_at")
 
-  challenge      RecoveryChallenge         @relation(fields: [challengeId], references: [id])
-  product        CommercialProduct         @relation(fields: [commercialProductId], references: [id])
-  test           Test                      @relation(fields: [testId], references: [id])
-  rotatedFrom    VerifiedRecoverySession?  @relation("VerifiedRecoverySessionRotation", fields: [rotatedFromId], references: [id])
-  rotations      VerifiedRecoverySession[] @relation("VerifiedRecoverySessionRotation")
-  securityEvents RecoverySecurityEvent[]
+  challenge                          RecoveryChallenge         @relation(fields: [challengeId], references: [id])
+  product                            CommercialProduct         @relation(fields: [commercialProductId], references: [id])
+  test                               Test                      @relation(fields: [testId], references: [id])
+  rotatedFrom                        VerifiedRecoverySession?  @relation("VerifiedRecoverySessionRotation", fields: [rotatedFromId], references: [id])
+  rotations                          VerifiedRecoverySession[] @relation("VerifiedRecoverySessionRotation")
+  continuationVerifiedStudentSession VerifiedStudentSession?   @relation("RecoveryContinuationVerifiedSession", fields: [continuationVerifiedStudentSessionId], references: [id], onDelete: Restrict, map: "verified_recovery_sessions_continuation_verified_session_fkey")
+  securityEvents                     RecoverySecurityEvent[]
 
   @@index([emailFingerprint, commercialProductId, testId, status], map: "verified_recovery_sessions_subject_scope_status_idx")
   @@index([status, expiresAt])
   @@index([status, revokedAt])
   @@index([tokenKeyVersion, expiresAt])
+  @@index([continuationVerifiedStudentSessionId], map: "verified_recovery_sessions_continuation_verified_session_idx")
   @@map("verified_recovery_sessions")
 }
 

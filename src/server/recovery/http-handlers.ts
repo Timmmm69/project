@@ -25,6 +25,8 @@ import {
 } from "@/server/recovery/http-runtime";
 import {
   canonicalRecoveryOrigin,
+  hasRecoveryJsonContentType,
+  hasValidRecoveryOriginAndHost,
   isProtectedRecoveryDelete,
   isProtectedRecoveryPost
 } from "@/server/recovery/request-protection";
@@ -34,6 +36,8 @@ import {
 } from "@/server/recovery/service";
 import { normalizeRecoveryTiming } from "@/server/recovery/timing";
 import { RecoveryStateResolverError } from "@/server/recovery/state-resolver";
+import { setVerifiedStudentSessionCookie } from "@/server/auth/verified-student-session/cookies";
+import { RecoveryContinuationError } from "@/server/recovery/continuation";
 
 const challengeRequestSchema = z.object({
   email: normalizedEmailSchema,
@@ -44,6 +48,10 @@ const challengeRequestSchema = z.object({
 
 const verifyRequestSchema = z.object({
   code: z.string().regex(/^\d{6}$/),
+  operationId: z.string().uuid()
+}).strict();
+
+const continuationRequestSchema = z.object({
   operationId: z.string().uuid()
 }).strict();
 
@@ -135,6 +143,7 @@ export function createRecoveryHttpHandlers(
     try {
       const runtime = getRuntime();
       if (!runtime.config.enabled) return null;
+      if ("available" in runtime && runtime.available === false) return null;
       const enabled = runtime as EnabledRecoveryHttpRuntime;
       if (canonicalRecoveryOrigin(enabled.trustedOrigin) !== enabled.trustedOrigin ||
         enabled.sourceLimiterInput !== RECOVERY_HTTP_GLOBAL_SOURCE ||
@@ -324,6 +333,9 @@ export function createRecoveryHttpHandlers(
 
     try {
       const session = await runtime.service.validateRecoverySession(rawRecoveryToken);
+      if (session.status === "CONTINUED_REPLAY") {
+        return recoverySessionRequired();
+      }
       if (session.status === "SCOPE_MISMATCH") {
         const response = scopeNotAllowed();
         clearRecoverySessionCookie(response, { secure: secureCookies() });
@@ -360,5 +372,91 @@ export function createRecoveryHttpHandlers(
     }
   }
 
-  return { requestChallenge, verifyChallenge, resolveState, invalidateSession } as const;
+  async function continueRecovery(request: Request) {
+    const runtime = enabledRuntime();
+    if (!runtime?.continuation) return featureUnavailable();
+    if (!hasValidRecoveryOriginAndHost(request, runtime.trustedOrigin)) {
+      return recoveryCsrfRejected();
+    }
+    if (!hasRecoveryJsonContentType(request)) return invalidRequest();
+    const json = await strictJson(request);
+    if (!json.ok) return invalidRequest();
+    const parsed = continuationRequestSchema.safeParse(json.value);
+    if (!parsed.success) return invalidRequest();
+    const rawRecoveryToken = readRecoveryCookie(request, RECOVERY_SESSION_COOKIE);
+    if (!rawRecoveryToken) return recoverySessionRequired();
+
+    try {
+      const limit = await runtime.service.consumeResolverRead(runtime.resolverLimiterInput);
+      if (!limit.allowed) {
+        return recoveryError(
+          "RATE_LIMITED",
+          "Too many recovery continuation requests.",
+          429,
+          { "Retry-After": String(limit.retryAfterSeconds) }
+        );
+      }
+      const result = await runtime.continuation.exchange(
+        rawRecoveryToken,
+        parsed.data.operationId
+      );
+      if (result.status === "RECOVERY_SESSION_REQUIRED") return recoverySessionRequired();
+      if (result.status === "SCOPE_NOT_ALLOWED") return scopeNotAllowed();
+      if (result.status === "STATE_CHANGED_RETRY_RESOLVE") {
+        return recoveryError(
+          "STATE_CHANGED_RETRY_RESOLVE",
+          "Recovery state changed. Resolve it again.",
+          409
+        );
+      }
+      if (result.status === "CONTINUATION_OPERATION_CONFLICT") {
+        return recoveryError(
+          "CONTINUATION_OPERATION_CONFLICT",
+          "Recovery continuation request conflict.",
+          409
+        );
+      }
+      if (result.status !== "SUCCESS") {
+        return recoveryError(
+          "CONTINUATION_OUTCOME_UNKNOWN",
+          "Recovery continuation outcome is unknown.",
+          503
+        );
+      }
+
+      const response = recoveryJson({
+        nextAction: result.nextAction,
+        nextUrl: result.nextUrl
+      }, 200);
+      setVerifiedStudentSessionCookie(
+        response,
+        result.rawVerifiedToken,
+        result.verifiedSessionExpiresAt,
+        { now: clock(), secure: secureCookies() }
+      );
+      return response;
+    } catch (error) {
+      if (error instanceof RecoveryContinuationError &&
+        error.code === "CONTINUATION_OUTCOME_UNKNOWN") {
+        return recoveryError(
+          "CONTINUATION_OUTCOME_UNKNOWN",
+          "Recovery continuation outcome is unknown.",
+          503
+        );
+      }
+      return recoveryError(
+        "CONTINUATION_OUTCOME_UNKNOWN",
+        "Recovery continuation outcome is unknown.",
+        503
+      );
+    }
+  }
+
+  return {
+    requestChallenge,
+    verifyChallenge,
+    resolveState,
+    invalidateSession,
+    continueRecovery
+  } as const;
 }

@@ -61,6 +61,8 @@ function enabledEnvironment(overrides: Record<string, string | undefined> = {}) 
     RECOVERY_OTP_HMAC_KEY_RING: `v1:${encoded(63)}`,
     RECOVERY_SESSION_TOKEN_ACTIVE_KEY_VERSION: "v1",
     RECOVERY_SESSION_TOKEN_HMAC_KEY_RING: `v1:${encoded(64)}`,
+    VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION: "v1",
+    VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: `v1:${encoded(65)}`,
     ...overrides
   };
 }
@@ -426,6 +428,46 @@ describe("ACC-01A recovery HTTP boundary", () => {
     expect(service.requestChallenge).not.toHaveBeenCalled();
     expect(service.verifyChallenge).not.toHaveBeenCalled();
     expect(service.invalidateRecoverySession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["off", "off"],
+    ["shadow", "shadow"],
+    ["missing/off", undefined]
+  ])("keeps every recovery endpoint unavailable in verified mode %s", async (_label, mode) => {
+    const runtime = createRecoveryHttpRuntime(enabledEnvironment({
+      VERIFIED_COMMERCIAL_SESSION_MODE: mode
+    }));
+    expect(runtime).toMatchObject({ config: { enabled: true }, available: false });
+    expect("service" in runtime).toBe(false);
+    const gated = createRecoveryHttpHandlers({ getRuntime: () => runtime });
+    const responses = await Promise.all([
+      gated.requestChallenge(postRequest("/api/recovery/challenges", challengeBody())),
+      gated.verifyChallenge(postRequest("/api/recovery/challenges/verify", verifyBody())),
+      gated.resolveState(new Request(`${origin}/api/recovery/state`, {
+        headers: { cookie: "acc01a_recovery=opaque" }
+      })),
+      gated.continueRecovery(postRequest(
+        "/api/recovery/continue",
+        { operationId: randomUUID() },
+        { cookie: "acc01a_recovery=opaque" }
+      )),
+      gated.invalidateSession(deleteRequest({ cookie: "acc01a_recovery=opaque" }))
+    ]);
+    for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect((await response.json()).error.code).toBe("FEATURE_UNAVAILABLE");
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+  });
+
+  it("creates the recovery HTTP runtime only in verified enforce mode", () => {
+    const runtime = createRecoveryHttpRuntime(enabledEnvironment({
+      VERIFIED_COMMERCIAL_SESSION_MODE: "enforce"
+    }));
+    expect(runtime).toMatchObject({ config: { enabled: true }, available: true });
+    expect("service" in runtime).toBe(true);
+    expect("continuation" in runtime).toBe(true);
   });
 
   it.each([

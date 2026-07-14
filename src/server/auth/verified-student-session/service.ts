@@ -33,6 +33,7 @@ export type IssueVerifiedStudentSessionInput = VerifiedStudentSessionScope & Rea
 }>;
 
 export type IssueVerifiedStudentSessionResult = VerifiedStudentSessionScope & Readonly<{
+  sessionId: string;
   outcome: "ISSUED" | "ROTATED";
   source: VerifiedStudentSessionSource;
   rawToken: string;
@@ -209,6 +210,7 @@ export function createVerifiedStudentSessionService(input: {
       });
       return {
         outcome: "ISSUED" as const,
+        sessionId: created.id,
         ...requestedScope,
         source: created.source,
         rawToken,
@@ -244,6 +246,7 @@ export function createVerifiedStudentSessionService(input: {
 
     return {
       outcome: "ROTATED" as const,
+      sessionId: existing.id,
       ...requestedScope,
       source: existing.source,
       rawToken,

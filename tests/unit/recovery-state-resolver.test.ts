@@ -575,6 +575,16 @@ describe("ACC-01A recovery state HTTP boundary", () => {
     expect(businessResolver).not.toHaveBeenCalled();
   });
 
+  it("keeps a valid terminal continued cookie for narrow POST replay without resolving state", async () => {
+    service.validateRecoverySession.mockResolvedValueOnce({ status: "CONTINUED_REPLAY" });
+    const response = await handlers().resolveState(getRequest());
+    expect(response.status).toBe(401);
+    expect((await response.json()).error.code).toBe("RECOVERY_SESSION_REQUIRED");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(service.consumeResolverRead).not.toHaveBeenCalled();
+    expect(businessResolver).not.toHaveBeenCalled();
+  });
+
   it("maps session scope mismatch to safe 403 and clears terminal authority", async () => {
     service.validateRecoverySession.mockResolvedValueOnce({ status: "SCOPE_MISMATCH" });
     const response = await handlers().resolveState(getRequest());
