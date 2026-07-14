@@ -43,7 +43,7 @@ export type IssueVerifiedStudentSessionResult = VerifiedStudentSessionScope & Re
 }>;
 
 export type ResolveVerifiedStudentSessionResult =
-  | Readonly<{ status: "INVALID_TOKEN" | "UNKNOWN_KEY" | "NOT_FOUND" | "REVOKED" | "EXPIRED" | "SUBJECT_INVALID" | "ACCESS_REVOKED" | "SCOPE_MISMATCH" }>
+  | Readonly<{ status: "INVALID_TOKEN" | "UNKNOWN_KEY" | "NOT_FOUND" | "REVOKED" | "EXPIRED" | "SUBJECT_INVALID" | "ACCESS_REVOKED" | "ACCESS_EXPIRED" | "SCOPE_MISMATCH" }>
   | Readonly<{
       status: "RESOLVED";
       sessionId: string;
@@ -63,6 +63,7 @@ export type RevokeCurrentVerifiedStudentSessionResult = Readonly<{
 export type VerifiedStudentSessionServiceErrorCode =
   | "SUBJECT_INVALID"
   | "ACCESS_REVOKED"
+  | "ACCESS_EXPIRED"
   | "SCOPE_MISMATCH"
   | "SESSION_INACTIVE"
   | "CONCURRENT_STATE_CHANGE";
@@ -101,7 +102,11 @@ function scopeFromInput(input: VerifiedStudentSessionScope): VerifiedStudentSess
   };
 }
 
-async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStudentSessionScope) {
+async function validateVerifiedStudentSessionScope(
+  tx: Tx,
+  scope: VerifiedStudentSessionScope,
+  now: Date
+) {
   const users = await tx.$queryRaw<Array<{ role: string; deletedAt: Date | null }>>`
     SELECT "role"::text AS "role", "deleted_at" AS "deletedAt"
     FROM "users"
@@ -130,12 +135,14 @@ async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStuden
     testId: string;
     commercialProductId: string | null;
     revokedAt: Date | null;
+    expiresAt: Date;
   }>>`
     SELECT
       "user_id" AS "userId",
       "test_id" AS "testId",
       "commercial_product_id" AS "commercialProductId",
-      "revoked_at" AS "revokedAt"
+      "revoked_at" AS "revokedAt",
+      "expires_at" AS "expiresAt"
     FROM "accesses"
     WHERE "id" = ${scope.accessId}::uuid
     FOR SHARE
@@ -154,6 +161,9 @@ async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStuden
   }
   if (access?.revokedAt) {
     throw new VerifiedStudentSessionServiceError("ACCESS_REVOKED");
+  }
+  if (access && now.getTime() >= access.expiresAt.getTime()) {
+    throw new VerifiedStudentSessionServiceError("ACCESS_EXPIRED");
   }
 }
 
@@ -190,7 +200,7 @@ export function createVerifiedStudentSessionService(input: {
     if (existing && !scopeMatches(existing, requestedScope)) {
       throw new VerifiedStudentSessionServiceError("SCOPE_MISMATCH");
     }
-    await validateVerifiedStudentSessionScope(tx, requestedScope);
+    await validateVerifiedStudentSessionScope(tx, requestedScope, now);
 
     if (!existing) {
       const rawToken = createVerifiedStudentSessionToken(input.config.activeKeyVersion);
@@ -292,7 +302,8 @@ export function createVerifiedStudentSessionService(input: {
               userId: true,
               testId: true,
               commercialProductId: true,
-              revokedAt: true
+              revokedAt: true,
+              expiresAt: true
             }
           }
         }
@@ -314,6 +325,9 @@ export function createVerifiedStudentSessionService(input: {
       }
       if (session.access.revokedAt) {
         return { status: "ACCESS_REVOKED" };
+      }
+      if (clock().getTime() >= session.access.expiresAt.getTime()) {
+        return { status: "ACCESS_EXPIRED" };
       }
 
       const scope = scopeFromInput(session);

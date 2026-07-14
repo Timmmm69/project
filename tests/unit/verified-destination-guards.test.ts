@@ -57,6 +57,7 @@ function access(overrides: Record<string, unknown> = {}) {
     source: "COMMERCIAL",
     commercialProductId: ids.product,
     revokedAt: null,
+    expiresAt: new Date("2026-08-14T10:00:00.000Z"),
     user: {
       id: ids.user,
       email: "student@example.test",
@@ -209,7 +210,8 @@ describe("ACC-01A verified destination guard", () => {
     ["4. unknown session", "NOT_FOUND"],
     ["5. expired session", "EXPIRED"],
     ["6. revoked session", "REVOKED"],
-    ["7. revoked Access", "ACCESS_REVOKED"]
+    ["7. revoked Access", "ACCESS_REVOKED"],
+    ["expired Access", "ACCESS_EXPIRED"]
   ] as const)("%s is rejected as requiring a verified session", async (_label, status) => {
     expect(await authorizePre({ resolution: { status } })).toMatchObject({
       status: "REJECTED",

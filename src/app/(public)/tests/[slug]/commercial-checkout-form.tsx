@@ -45,6 +45,7 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
   const orderKey = useRef<string | null>(null);
   const checkoutFlowId = useRef<string | null>(null);
   const paymentKey = useRef<string | null>(null);
+  const claimKey = useRef<string | null>(null);
 
   async function loadStatus(publicId: string) {
     const response = await fetch(`/api/commercial/orders/${publicId}/status`, { cache: "no-store" });
@@ -155,24 +156,15 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
   async function claimAndContinue() {
     if (!order) return;
     setBusy(true);
-    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, { method: "POST" });
-    const body = await response.json() as ApiResponse<{ nextAction: OrderState["nextAction"]; nextUrl: string; testId: string }>;
+    claimKey.current ??= newKey();
+    const response = await fetch(`/api/commercial/orders/${order.publicId}/start-attempt`, {
+      method: "POST",
+      headers: { "Idempotency-Key": claimKey.current }
+    });
+    const body = await response.json() as ApiResponse<{ nextAction: OrderState["nextAction"]; nextUrl: string }>;
     if (!body.success) {
       setBusy(false);
       setMessage(body.error.message);
-      return;
-    }
-    if (body.data.nextAction === "START_TEST") {
-      const start = await fetch(`/api/commercial/orders/${order.publicId}/start-attempt`, {
-        method: "POST",
-      });
-      const startBody = await start.json() as ApiResponse<{ nextUrl: string }>;
-      if (!startBody.success) {
-        setBusy(false);
-        setMessage(startBody.error.message);
-        return;
-      }
-      window.location.assign(startBody.data.nextUrl);
       return;
     }
     window.location.assign(body.data.nextUrl);
