@@ -103,6 +103,7 @@ type AttemptTarget = Readonly<{
       commercialOrderId: string | null;
       commercialPaymentAttemptId: string | null;
       revokedAt: Date | null;
+      expiresAt: Date;
       user: {
         id: string;
         email: string;
@@ -130,6 +131,7 @@ export type VerifiedDestinationGuardDependencies = Readonly<{
     client: DestinationReadClient,
     target: VerifiedDestinationTarget
   ) => Promise<LoadedTarget>;
+  clock?: () => Date;
 }>;
 
 const allowedSources = new Set<VerifiedStudentSessionSource>([
@@ -226,6 +228,7 @@ async function loadDestinationTarget(
           commercialOrderId: true,
           commercialPaymentAttemptId: true,
           revokedAt: true,
+          expiresAt: true,
           user: { select: { id: true, email: true, role: true, deletedAt: true } },
           commercialProduct: { select: { id: true, testId: true } }
         }
@@ -241,7 +244,11 @@ async function loadDestinationTarget(
   };
 }
 
-function exactAttemptScopeMatches(target: AttemptTarget, session: ResolvedSession) {
+function exactAttemptScopeMatches(
+  target: AttemptTarget,
+  session: ResolvedSession,
+  now: Date
+) {
   const { attempt } = target;
   const { access, test } = attempt;
   return attempt.id.length > 0 &&
@@ -260,6 +267,7 @@ function exactAttemptScopeMatches(target: AttemptTarget, session: ResolvedSessio
     access.source === "COMMERCIAL" &&
     access.commercialProductId === session.scope.commercialProductId &&
     access.revokedAt === null &&
+    now.getTime() < access.expiresAt.getTime() &&
     access.user.id === session.scope.userId &&
     access.user.role === "STUDENT" &&
     access.user.deletedAt === null &&
@@ -295,7 +303,8 @@ async function recoveryCleanupIsProven(
 async function exactPreContext(
   client: DestinationReadClient,
   target: PreTarget,
-  session: ResolvedSession
+  session: ResolvedSession,
+  now: Date
 ): Promise<VerifiedDestinationAuthorizationContext | null> {
   const access = await client.access.findUnique({
     where: { id: session.scope.accessId },
@@ -306,6 +315,7 @@ async function exactPreContext(
       source: true,
       commercialProductId: true,
       revokedAt: true,
+      expiresAt: true,
       user: { select: { id: true, email: true, role: true, deletedAt: true } },
       commercialProduct: { select: { id: true, testId: true } }
     }
@@ -321,6 +331,7 @@ async function exactPreContext(
     access.source === "COMMERCIAL" &&
     access.commercialProductId === session.scope.commercialProductId &&
     access.revokedAt === null &&
+    now.getTime() < access.expiresAt.getTime() &&
     access.user.id === session.scope.userId &&
     access.user.role === "STUDENT" &&
     access.user.deletedAt === null &&
@@ -343,9 +354,10 @@ async function exactAttemptContext(
   client: DestinationReadClient,
   target: AttemptTarget,
   destination: "ATT" | "RES",
-  session: ResolvedSession
+  session: ResolvedSession,
+  now: Date
 ): Promise<VerifiedDestinationAuthorizationContext | null> {
-  if (!exactAttemptScopeMatches(target, session)) return null;
+  if (!exactAttemptScopeMatches(target, session, now)) return null;
   if (destination === "RES" &&
     target.attempt.status !== "COMPLETED" && target.attempt.status !== "EXPIRED") {
     return null;
@@ -373,6 +385,7 @@ async function evaluateAuthenticTarget(input: {
     transaction?: Prisma.TransactionClient
   ) => Promise<ResolveVerifiedStudentSessionResult>;
   transaction?: Prisma.TransactionClient;
+  now: Date;
 }): Promise<GuardEvaluation> {
   if (!input.rawToken) return { status: "VERIFIED_SESSION_REQUIRED" };
   const resolved = await input.resolveSession(input.rawToken, input.transaction);
@@ -386,12 +399,13 @@ async function evaluateAuthenticTarget(input: {
     return { status: "VERIFIED_SCOPE_NOT_ALLOWED" };
   }
   const context = input.loadedTarget.kind === "PRE"
-    ? await exactPreContext(input.client, input.loadedTarget, resolved)
+    ? await exactPreContext(input.client, input.loadedTarget, resolved, input.now)
     : await exactAttemptContext(
         input.client,
         input.loadedTarget,
         input.target.destination === "RES" ? "RES" : "ATT",
-        resolved
+        resolved,
+        input.now
       );
   return context
     ? { status: "AUTHORIZED", context }
@@ -441,7 +455,8 @@ export async function authorizeVerifiedStudentDestination(
       target,
       rawToken,
       resolveSession,
-      transaction: dependencies.transaction
+      transaction: dependencies.transaction,
+      now: (dependencies.clock ?? (() => new Date()))()
     });
   } catch (error) {
     if (mode === "shadow") {
