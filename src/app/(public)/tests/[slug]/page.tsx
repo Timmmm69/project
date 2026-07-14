@@ -7,6 +7,7 @@ import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
 import { parseVerifiedCommercialSessionMode } from "@/server/auth/verified-student-session/config";
 import { authorizeVerifiedStudentDestination } from "@/server/auth/verified-student-session/destination-guard";
+import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 
 export const dynamic = "force-dynamic";
 
@@ -27,9 +28,6 @@ export default async function PublicTestPage({ params }: PageProps) {
       slug,
       status: "PUBLISHED",
       deletedAt: null
-    },
-    include: {
-      commercialProducts: { select: { id: true }, take: 1 }
     }
   });
 
@@ -55,8 +53,7 @@ export default async function PublicTestPage({ params }: PageProps) {
     hideLegacyPrivateControls = authorization.mode === "enforce" &&
       authorization.classification === "AUTHENTIC";
   } catch {
-    const authenticTest = test.examMode === "RIKZ_RUSSIAN_2026" ||
-      test.commercialProducts.length > 0;
+    const authenticTest = isAuthenticRikzRussianExamMode(test.examMode, "CURRENT_TEST");
     try {
       hideLegacyPrivateControls = authenticTest &&
         parseVerifiedCommercialSessionMode(process.env.VERIFIED_COMMERCIAL_SESSION_MODE) === "enforce";

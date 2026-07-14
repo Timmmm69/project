@@ -7,6 +7,7 @@ import {
   authorizeVerifiedStudentDestination,
   type VerifiedDestinationGuardDependencies
 } from "@/server/auth/verified-student-session/destination-guard";
+import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import {
   finalizeVerifiedDestinationResponse,
   verifiedDestinationRejection
@@ -105,6 +106,40 @@ function authenticAttempt(overrides: Record<string, unknown> = {}) {
     },
     ...overrides
   };
+}
+
+function classifiedPre(examMode: string, withProduct: boolean) {
+  return authenticPre({
+    classification: isAuthenticRikzRussianExamMode(examMode, "CURRENT_TEST")
+      ? "AUTHENTIC"
+      : "GENERIC",
+    test: {
+      id: ids.test,
+      slug: "classified-test",
+      examMode,
+      commercialProducts: withProduct ? [{ id: ids.product, testId: ids.test }] : []
+    }
+  });
+}
+
+function classifiedAttempt(input: {
+  currentExamMode: string;
+  snapshotExamMode: string | null;
+  accessOverrides?: Record<string, unknown>;
+  status?: "STARTED" | "COMPLETED";
+}) {
+  const target = authenticAttempt();
+  target.classification = isAuthenticRikzRussianExamMode(input.currentExamMode, "CURRENT_TEST") ||
+    isAuthenticRikzRussianExamMode(input.snapshotExamMode, "ATTEMPT_SNAPSHOT")
+    ? "AUTHENTIC"
+    : "GENERIC";
+  target.attempt.test.examMode = input.currentExamMode;
+  (target.attempt as { testSnapshot: unknown }).testSnapshot = input.snapshotExamMode === null
+    ? {}
+    : { examMode: input.snapshotExamMode };
+  target.attempt.status = input.status ?? "STARTED";
+  Object.assign(target.attempt.access, input.accessOverrides);
+  return target;
 }
 
 function fakeClient(input: {
@@ -416,5 +451,152 @@ describe("ACC-01A verified destination guard", () => {
     expect(page).toContain("serializePublicTest(test)");
     expect(page.indexOf("serializePublicTest(test)")).toBeLessThan(page.indexOf("verifiedPreAuthorized"));
     expect(page).toContain("<h1 className=\"page-title\">{publicTest.title}</h1>");
+  });
+
+  it("35. classifies PRE generic mode without a product as legacy", async () => {
+    expect(await authorizePre({ target: classifiedPre("GENERIC", false) })).toEqual({
+      status: "LEGACY",
+      mode: "enforce",
+      classification: "GENERIC"
+    });
+  });
+
+  it("36. classifies PRE generic mode with a product as legacy", async () => {
+    expect(await authorizePre({ target: classifiedPre("GENERIC", true) })).toEqual({
+      status: "LEGACY",
+      mode: "enforce",
+      classification: "GENERIC"
+    });
+  });
+
+  it("37. enforces PRE authentic mode even without a loaded matching session", async () => {
+    expect(await authorizePre({
+      target: classifiedPre("RIKZ_RUSSIAN_2026", false),
+      cookie: null
+    })).toMatchObject({
+      status: "REJECTED",
+      classification: "AUTHENTIC",
+      code: "VERIFIED_SESSION_REQUIRED"
+    });
+  });
+
+  it("38. does not use a commercial product alone as authentic evidence", async () => {
+    const readCookie = vi.fn();
+    const resolveSession = vi.fn();
+    expect(isAuthenticRikzRussianExamMode("GENERIC", "CURRENT_TEST")).toBe(false);
+    expect(await authorizePre({
+      target: classifiedPre("GENERIC", true),
+      readCookie,
+      resolveSession
+    })).toMatchObject({ status: "LEGACY", classification: "GENERIC" });
+    expect(readCookie).not.toHaveBeenCalled();
+    expect(resolveSession).not.toHaveBeenCalled();
+  });
+
+  it("39. keeps a generic current and snapshot mode with MANUAL Access on ATT legacy authority", async () => {
+    const readCookie = vi.fn();
+    const resolveSession = vi.fn();
+    const target = classifiedAttempt({
+      currentExamMode: "GENERIC",
+      snapshotExamMode: "generic",
+      accessOverrides: {
+        source: "MANUAL",
+        commercialProductId: null,
+        commercialOrderId: null,
+        commercialPaymentAttemptId: null,
+        commercialProduct: null
+      }
+    });
+    const decision = await authorizeVerifiedStudentDestination(
+      { destination: "ATT", attemptId: ids.attempt }, undefined,
+      dependencies({ target, readCookie, resolveSession })
+    );
+    expect(decision).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
+    expect(readCookie).not.toHaveBeenCalled();
+    expect(resolveSession).not.toHaveBeenCalled();
+  });
+
+  it("40. keeps generic current and snapshot modes with COMMERCIAL Access on RES legacy authority", async () => {
+    const readCookie = vi.fn();
+    const resolveSession = vi.fn();
+    const target = classifiedAttempt({
+      currentExamMode: "GENERIC",
+      snapshotExamMode: "generic",
+      status: "COMPLETED"
+    });
+    const decision = await authorizeVerifiedStudentDestination(
+      { destination: "RES", attemptId: ids.attempt }, undefined,
+      dependencies({ target, readCookie, resolveSession })
+    );
+    expect(decision).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
+    expect(readCookie).not.toHaveBeenCalled();
+    expect(resolveSession).not.toHaveBeenCalled();
+  });
+
+  it("41. ignores all filled commercial linkage IDs when both attempt modes are generic", async () => {
+    const readCookie = vi.fn();
+    const resolveSession = vi.fn();
+    const target = classifiedAttempt({
+      currentExamMode: "GENERIC",
+      snapshotExamMode: "generic",
+      accessOverrides: {
+        source: "COMMERCIAL",
+        commercialProductId: ids.product,
+        commercialOrderId: ids.operation,
+        commercialPaymentAttemptId: ids.session
+      }
+    });
+    const decision = await authorizeVerifiedStudentDestination(
+      { destination: "ATT", attemptId: ids.attempt }, undefined,
+      dependencies({ target, readCookie, resolveSession })
+    );
+    expect(decision).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
+    expect(readCookie).not.toHaveBeenCalled();
+    expect(resolveSession).not.toHaveBeenCalled();
+  });
+
+  it("42. enforces an attempt when current and snapshot modes are authentic", async () => {
+    const target = classifiedAttempt({
+      currentExamMode: "RIKZ_RUSSIAN_2026",
+      snapshotExamMode: "rikz_russian_2026"
+    });
+    const decision = await authorizeVerifiedStudentDestination(
+      { destination: "ATT", attemptId: ids.attempt }, undefined,
+      dependencies({ target })
+    );
+    expect(decision).toMatchObject({ status: "AUTHORIZED", classification: "AUTHENTIC" });
+  });
+
+  it("43. classifies authentic current plus generic snapshot as authentic and fails exact proof closed", async () => {
+    const target = classifiedAttempt({
+      currentExamMode: "RIKZ_RUSSIAN_2026",
+      snapshotExamMode: "generic"
+    });
+    const decision = await authorizeVerifiedStudentDestination(
+      { destination: "ATT", attemptId: ids.attempt }, undefined,
+      dependencies({ target })
+    );
+    expect(decision).toMatchObject({
+      status: "REJECTED",
+      classification: "AUTHENTIC",
+      code: "VERIFIED_SCOPE_NOT_ALLOWED"
+    });
+  });
+
+  it("44. classifies generic current plus authentic snapshot as authentic and fails exact proof closed", async () => {
+    const target = classifiedAttempt({
+      currentExamMode: "GENERIC",
+      snapshotExamMode: "rikz_russian_2026",
+      status: "COMPLETED"
+    });
+    const decision = await authorizeVerifiedStudentDestination(
+      { destination: "RES", attemptId: ids.attempt }, undefined,
+      dependencies({ target })
+    );
+    expect(decision).toMatchObject({
+      status: "REJECTED",
+      classification: "AUTHENTIC",
+      code: "VERIFIED_SCOPE_NOT_ALLOWED"
+    });
   });
 });

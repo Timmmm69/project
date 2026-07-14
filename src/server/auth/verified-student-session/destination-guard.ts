@@ -15,6 +15,7 @@ import {
   type ResolveVerifiedStudentSessionResult
 } from "@/server/auth/verified-student-session/service";
 import { VERIFIED_STUDENT_SESSION_COOKIE } from "@/server/auth/verified-student-session/cookies";
+import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import { prisma } from "@/server/db/client";
 
 export type VerifiedDestination = "PRE" | "ATT" | "RES";
@@ -166,13 +167,11 @@ function snapshotExamMode(value: Prisma.JsonValue) {
 }
 
 function attemptIsAuthentic(attempt: AttemptTarget["attempt"]) {
-  return attempt.test.examMode === "RIKZ_RUSSIAN_2026" ||
-    attempt.test.commercialProducts.length > 0 ||
-    attempt.access.source === "COMMERCIAL" ||
-    attempt.access.commercialProductId !== null ||
-    attempt.access.commercialOrderId !== null ||
-    attempt.access.commercialPaymentAttemptId !== null ||
-    snapshotExamMode(attempt.testSnapshot) === "rikz_russian_2026";
+  return isAuthenticRikzRussianExamMode(attempt.test.examMode, "CURRENT_TEST") ||
+    isAuthenticRikzRussianExamMode(
+      snapshotExamMode(attempt.testSnapshot),
+      "ATTEMPT_SNAPSHOT"
+    );
 }
 
 async function loadDestinationTarget(
@@ -194,8 +193,9 @@ async function loadDestinationTarget(
     const test = tests[0];
     return {
       kind: "PRE",
-      classification: test.examMode === "RIKZ_RUSSIAN_2026" ||
-        test.commercialProducts.length > 0 ? "AUTHENTIC" : "GENERIC",
+      classification: isAuthenticRikzRussianExamMode(test.examMode, "CURRENT_TEST")
+        ? "AUTHENTIC"
+        : "GENERIC",
       test
     };
   }

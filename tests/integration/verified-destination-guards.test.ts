@@ -1,14 +1,13 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient, type VerifiedStudentSessionSource } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as checkAccessRoute } from "@/app/api/access/check/route";
 import { POST as startAttemptRoute } from "@/app/api/attempts/start/route";
 import { GET as readAttemptRoute } from "@/app/api/attempts/[attemptId]/route";
 import { POST as saveAnswerRoute } from "@/app/api/attempts/[attemptId]/answers/route";
 import { POST as completeAttemptRoute } from "@/app/api/attempts/[attemptId]/complete/route";
 import { GET as readResultRoute } from "@/app/api/results/[attemptId]/route";
 import PublicTestPage from "@/app/(public)/tests/[slug]/page";
-import { startOrRestoreAttempt, completeAttempt } from "@/lib/attempts/attempt-service";
-import { serializeResult } from "@/lib/scoring/result-serialize";
 import { createStudentSessionToken } from "@/server/auth/student-session";
 import {
   authorizeVerifiedStudentDestination
@@ -25,6 +24,18 @@ import {
 import type { RecoveryMail } from "@/server/recovery/mailer";
 import { createRecoveryDomainService } from "@/server/recovery/service";
 import { createRecoveryStateResolver } from "@/server/recovery/state-resolver";
+
+const nextCookieState = vi.hoisted(() => ({ values: new Map<string, string>() }));
+
+vi.mock("next/headers", () => ({
+  cookies: async () => ({
+    get: (name: string) => {
+      const value = nextCookieState.values.get(name);
+      return value === undefined ? undefined : { value };
+    },
+    set: vi.fn()
+  })
+}));
 
 const shouldRun = process.env.RUN_ACC01A_DESTINATION_GUARDS_INTEGRATION === "true";
 const describeWithDatabase = shouldRun ? describe.sequential : describe.skip;
@@ -147,6 +158,16 @@ function renderedText(node: unknown): string {
     return renderedText((node as { props?: { children?: unknown } }).props?.children);
   }
   return "";
+}
+
+function renderedComponentNames(node: unknown): string[] {
+  if (Array.isArray(node)) return node.flatMap(renderedComponentNames);
+  if (!node || typeof node !== "object" || !("props" in node)) return [];
+  const element = node as { type?: unknown; props?: { children?: unknown } };
+  const current = typeof element.type === "function" && element.type.name
+    ? [element.type.name]
+    : [];
+  return [...current, ...renderedComponentNames(element.props?.children)];
 }
 
 describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration", () => {
@@ -339,6 +360,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
 
   beforeEach(async () => {
     await cleanDatabase();
+    nextCookieState.values.clear();
     now = new Date("2026-07-14T12:00:00.000Z");
     deliveries = [];
     testSlug = `acc01a-destination-${randomUUID()}`;
@@ -624,7 +646,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     }
   });
 
-  it("keeps generic Test, Attempt and Result on legacy behavior and public Test content visible", async () => {
+  it("keeps a generic commercial Test on legacy authority across real enforce-mode surfaces", async () => {
     const genericTest = await prisma.test.create({
       data: {
         title: "Generic public test",
@@ -648,46 +670,111 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
         orderIndex: 1
       }
     });
-    const user = await prisma.user.create({ data: { email: "generic@example.test", role: "STUDENT" } });
-    await prisma.access.create({
+    const genericProduct = await prisma.commercialProduct.create({
       data: {
-        userId: user.id,
+        code: `generic-${randomUUID()}`,
         testId: genericTest.id,
-        source: "MANUAL",
-        attemptsTotal: 1,
-        attemptsAvailable: 1,
-        expiresAt: new Date(now.getTime() + 86_400_000)
+        name: "Generic commercial product",
+        priceMinor: 1000,
+        attemptLimit: 1,
+        resultRetentionDays: 365
       }
     });
-    expect(await authorizeVerifiedStudentDestination({
-      destination: "PRE",
-      testId: genericTest.id
-    })).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
-    const started = await startOrRestoreAttempt({
-      studentId: user.id,
-      email: user.email,
-      testId: genericTest.id
+    const fixture = await createPaidAccess("generic-commercial@example.test", {
+      targetTestId: genericTest.id,
+      targetProductId: genericProduct.id
     });
-    expect(await authorizeVerifiedStudentDestination({
-      destination: "ATT",
-      attemptId: started.attempt.id
-    })).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
-    await completeAttempt({ attemptId: started.attempt.id, studentId: user.id, expire: false });
-    expect(await authorizeVerifiedStudentDestination({
-      destination: "RES",
-      attemptId: started.attempt.id
-    })).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
-    const completed = await prisma.attempt.findUniqueOrThrow({
-      where: { id: started.attempt.id },
-      include: { answers: true, test: true }
+    const legacyToken = createStudentSessionToken({
+      userId: fixture.user.id,
+      email: fixture.user.email,
+      role: "STUDENT"
     });
-    expect(serializeResult(completed).attempt_id).toBe(started.attempt.id);
+    nextCookieState.values.set("student_session", legacyToken);
+    const legacyCookie = `student_session=${legacyToken}`;
+    const mixedCookies = `${legacyCookie}; verified_student_session=malformed`;
+    expect(fixture.access).toMatchObject({
+      source: "COMMERCIAL",
+      commercialProductId: genericProduct.id,
+      commercialOrderId: fixture.order.id,
+      commercialPaymentAttemptId: fixture.payment.id
+    });
 
-    const previousMode = process.env.VERIFIED_COMMERCIAL_SESSION_MODE;
-    process.env.VERIFIED_COMMERCIAL_SESSION_MODE = "off";
-    const page = await PublicTestPage({ params: Promise.resolve({ slug: testSlug }) });
-    process.env.VERIFIED_COMMERCIAL_SESSION_MODE = previousMode;
-    expect(renderedText(page)).toContain("ACC-01A destination integration");
+    const pre = await authorizeVerifiedStudentDestination(
+      { destination: "PRE", testId: genericTest.id },
+      request("GET", `/tests/${genericTest.slug}`, { cookie: mixedCookies })
+    );
+    expect(pre).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
+
+    const accessCheck = await checkAccessRoute(request("POST", "/api/access/check", {
+      body: { email: fixture.user.email, testId: genericTest.id }
+    }));
+    expect(accessCheck.status).toBe(200);
+    expect(await accessCheck.json()).toMatchObject({
+      data: { hasAccess: true, status: "can_start", userId: fixture.user.id }
+    });
+
+    const start = await startAttemptRoute(request("POST", "/api/attempts/start", {
+      cookie: legacyCookie,
+      body: { email: fixture.user.email, testId: genericTest.id }
+    }));
+    expect(start.status).toBe(200);
+    const startBody = await start.json();
+    expect(JSON.stringify(startBody)).not.toContain("VERIFIED_");
+    const attemptId = startBody.data.attempt.attemptId as string;
+    const storedAttempt = await prisma.attempt.findUniqueOrThrow({
+      where: { id: attemptId },
+      select: { testSnapshot: true }
+    });
+    expect((storedAttempt.testSnapshot as Record<string, unknown>).examMode).toBe("generic");
+
+    const att = await authorizeVerifiedStudentDestination(
+      { destination: "ATT", attemptId },
+      request("GET", `/api/attempts/${attemptId}`, { cookie: mixedCookies })
+    );
+    expect(att).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
+
+    const read = await readAttemptRoute(
+      request("GET", `/api/attempts/${attemptId}`, { cookie: legacyCookie }),
+      context(attemptId)
+    );
+    expect(read.status).toBe(200);
+    const readBody = await read.json();
+    expect(JSON.stringify(readBody)).not.toContain("VERIFIED_");
+    const snapshotQuestionId = readBody.data.attempt.questions[0].snapshotQuestionId as string;
+
+    const saved = await saveAnswerRoute(
+      request("POST", `/api/attempts/${attemptId}/answers`, {
+        cookie: legacyCookie,
+        body: { snapshotQuestionId, selectedAnswer: "A" }
+      }),
+      context(attemptId)
+    );
+    expect(saved.status).toBe(200);
+    expect(JSON.stringify(await saved.json())).not.toContain("VERIFIED_");
+
+    const completed = await completeAttemptRoute(
+      request("POST", `/api/attempts/${attemptId}/complete`, { cookie: legacyCookie }),
+      context(attemptId)
+    );
+    expect(completed.status).toBe(200);
+    expect(JSON.stringify(await completed.json())).not.toContain("VERIFIED_");
+
+    const res = await authorizeVerifiedStudentDestination(
+      { destination: "RES", attemptId },
+      request("GET", `/api/results/${attemptId}`, { cookie: mixedCookies })
+    );
+    expect(res).toEqual({ status: "LEGACY", mode: "enforce", classification: "GENERIC" });
+
+    const result = await readResultRoute(
+      request("GET", `/api/results/${attemptId}`, { cookie: legacyCookie }),
+      context(attemptId)
+    );
+    expect(result.status).toBe(200);
+    expect(JSON.stringify(await result.json())).not.toContain("VERIFIED_");
+
+    const page = await PublicTestPage({ params: Promise.resolve({ slug: genericTest.slug }) });
+    expect(renderedText(page)).toContain("Generic public test");
+    expect(renderedComponentNames(page)).toContain("TestAccessForm");
   });
 
   it("rejected writes have no effects and the guard itself creates no EventLog or analytics rows", async () => {
