@@ -24,7 +24,6 @@ export type RecoveryConfigErrorCode =
   | "PRODUCTION_LIKE_FORBIDDEN"
   | "MAILER_MODE_MISSING"
   | "MAILER_MODE_INVALID"
-  | "VERIFIED_SESSION_ENFORCEMENT_REQUIRED"
   | "PRODUCT_CODE_MISSING"
   | "PRODUCT_CODE_INVALID"
   | "KEY_RING_MISSING"
@@ -212,10 +211,6 @@ export function parseRecoveryConfig(
     (nodeEnvironment !== "development" && nodeEnvironment !== "test")) {
     throw new RecoveryConfigError("MAILER_MODE_INVALID");
   }
-  if (env.VERIFIED_COMMERCIAL_SESSION_MODE?.trim() !== "enforce") {
-    throw new RecoveryConfigError("VERIFIED_SESSION_ENFORCEMENT_REQUIRED");
-  }
-
   const productCode = env.RECOVERY_COMMERCIAL_PRODUCT_CODE?.trim();
   if (!productCode) {
     throw new RecoveryConfigError("PRODUCT_CODE_MISSING");

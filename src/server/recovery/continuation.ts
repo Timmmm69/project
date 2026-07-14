@@ -44,10 +44,15 @@ export class RecoveryContinuationError extends Error {
   }
 }
 
-type ContinuationTestHooks = Readonly<{
+export type RecoveryContinuationTestHooks = Readonly<{
   /** @internal Test-only fault injection after a proven commit and before HTTP serialization. */
   afterCommit?: () => Promise<void>;
+  /** @internal Test-only fault injection after provisional writes and before commit. */
+  beforeCommit?: (attempt: number) => Promise<void>;
 }>;
+
+const noopAfterCommitHook = async () => {};
+const noopBeforeCommitHook = async (attempt: number) => { void attempt; };
 
 const uuidPattern = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
 const prePathPattern = /^\/tests\/[a-z0-9]+(?:-[a-z0-9]+)*$/;
@@ -121,14 +126,38 @@ function isProvenRollbackConflict(error: unknown) {
   return databaseCode === "40001" || databaseCode === "40P01";
 }
 
+const continuationOperationUniqueTargets = new Set([
+  "continuationOperationId",
+  "continuation_operation_id",
+  "verified_recovery_sessions_continuation_operation_id_key"
+]);
+
+export function isContinuationOperationUniqueConflict(error: unknown) {
+  if (!(error instanceof Prisma.PrismaClientKnownRequestError) || error.code !== "P2002") {
+    return false;
+  }
+  const target = error.meta?.target;
+  if (Array.isArray(target)) {
+    return target.length === 1 && typeof target[0] === "string" &&
+      continuationOperationUniqueTargets.has(target[0]);
+  }
+  return typeof target === "string" && continuationOperationUniqueTargets.has(target);
+}
+
 export function createRecoveryContinuationService(input: {
   client: PrismaClient;
   recoveryConfig: EnabledRecoveryConfig;
   verifiedSessionConfig: VerifiedStudentSessionConfig;
   clock?: () => Date;
-  testHooks?: ContinuationTestHooks;
+  testHooks?: RecoveryContinuationTestHooks;
 }) {
   const clock = input.clock ?? (() => new Date());
+  const testHooks = input.recoveryConfig.mailerMode === "test"
+    ? {
+        afterCommit: input.testHooks?.afterCommit ?? noopAfterCommitHook,
+        beforeCommit: input.testHooks?.beforeCommit ?? noopBeforeCommitHook
+      }
+    : { afterCommit: noopAfterCommitHook, beforeCommit: noopBeforeCommitHook };
   const verifiedSessions = createVerifiedStudentSessionService({
     client: input.client,
     config: input.verifiedSessionConfig,
@@ -138,7 +167,8 @@ export function createRecoveryContinuationService(input: {
   async function exchangeInTransaction(
     transaction: Prisma.TransactionClient,
     rawRecoveryToken: string,
-    operationId: string
+    operationId: string,
+    attempt: number
   ): Promise<RecoveryContinuationResult> {
     let token: { digest: string; keyVersion: string };
     try {
@@ -234,6 +264,7 @@ export function createRecoveryContinuationService(input: {
           occurredAt: now
         }
       });
+      await testHooks.beforeCommit(attempt);
       return {
         status: "SUCCESS",
         nextAction: session.continuationNextAction!,
@@ -318,6 +349,7 @@ export function createRecoveryContinuationService(input: {
         }
       ]
     });
+    await testHooks.beforeCommit(attempt);
     return {
       status: "SUCCESS",
       ...destination,
@@ -332,7 +364,12 @@ export function createRecoveryContinuationService(input: {
       for (let attempt = 0; attempt < 2; attempt += 1) {
         try {
           result = await input.client.$transaction(
-            (transaction) => exchangeInTransaction(transaction, rawRecoveryToken, operationId),
+            (transaction) => exchangeInTransaction(
+              transaction,
+              rawRecoveryToken,
+              operationId,
+              attempt
+            ),
             { isolationLevel: Prisma.TransactionIsolationLevel.Serializable }
           );
           break;
@@ -345,6 +382,9 @@ export function createRecoveryContinuationService(input: {
               ? { status: "SCOPE_NOT_ALLOWED" }
               : { status: "STATE_CHANGED_RETRY_RESOLVE" };
           }
+          if (isContinuationOperationUniqueConflict(error)) {
+            return { status: "CONTINUATION_OPERATION_CONFLICT" };
+          }
           if (isProvenRollbackConflict(error)) {
             if (attempt === 0) continue;
             return { status: "STATE_CHANGED_RETRY_RESOLVE" };
@@ -353,9 +393,9 @@ export function createRecoveryContinuationService(input: {
         }
       }
       if (!result) return { status: "STATE_CHANGED_RETRY_RESOLVE" };
-      if (result.status === "SUCCESS" && input.testHooks?.afterCommit) {
+      if (result.status === "SUCCESS") {
         try {
-          await input.testHooks.afterCommit();
+          await testHooks.afterCommit();
         } catch {
           throw new RecoveryContinuationError("CONTINUATION_OUTCOME_UNKNOWN");
         }

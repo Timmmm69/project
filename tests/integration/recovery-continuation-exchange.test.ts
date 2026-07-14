@@ -4,9 +4,13 @@ import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
 import { createVerifiedStudentSessionService } from "@/server/auth/verified-student-session/service";
 import type { EnabledRecoveryConfig, RecoveryKeyRing } from "@/server/recovery/config";
-import { createRecoveryContinuationService } from "@/server/recovery/continuation";
+import {
+  createRecoveryContinuationService,
+  type RecoveryContinuationTestHooks
+} from "@/server/recovery/continuation";
 import { createRecoveryHttpHandlers } from "@/server/recovery/http-handlers";
 import {
+  createRecoveryHttpRuntime,
   RECOVERY_HTTP_GLOBAL_SOURCE,
   RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
 } from "@/server/recovery/http-runtime";
@@ -112,6 +116,49 @@ function getState(cookie: string) {
   return new Request(`${origin}/api/recovery/state`, { headers: { cookie } });
 }
 
+function deleteSession(cookie?: string) {
+  return new Request(`${origin}/api/recovery/session`, {
+    method: "DELETE",
+    headers: {
+      origin,
+      host: "recovery-continuation.test",
+      ...(cookie ? { cookie } : {})
+    }
+  });
+}
+
+function encoded(byte: number) {
+  return Buffer.alloc(32, byte).toString("base64url");
+}
+
+function runtimeEnvironment(mode: "off" | "shadow" | "enforce" | undefined) {
+  return {
+    NODE_ENV: "test",
+    APP_URL: origin,
+    ACC_01A_RECOVERY_ENABLED: "true",
+    RECOVERY_MAILER_MODE: "test",
+    VERIFIED_COMMERCIAL_SESSION_MODE: mode,
+    RECOVERY_COMMERCIAL_PRODUCT_CODE: recoveryConfig.productCode,
+    RECOVERY_EMAIL_FINGERPRINT_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_EMAIL_FINGERPRINT_HMAC_KEY_RING: `v1:${encoded(91)}`,
+    RECOVERY_CHALLENGE_TOKEN_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_CHALLENGE_TOKEN_HMAC_KEY_RING: `v1:${encoded(92)}`,
+    RECOVERY_OTP_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_OTP_HMAC_KEY_RING: `v1:${encoded(93)}`,
+    RECOVERY_SESSION_TOKEN_ACTIVE_KEY_VERSION: "v1",
+    RECOVERY_SESSION_TOKEN_HMAC_KEY_RING: `v1:${encoded(94)}`,
+    VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION: "v1",
+    VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: `v1:${encoded(95)}`
+  };
+}
+
+function rollbackConflict() {
+  return new Prisma.PrismaClientKnownRequestError("synthetic serialization rollback", {
+    code: "P2034",
+    clientVersion: "test"
+  });
+}
+
 describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () => {
   let now: Date;
   let testId: string;
@@ -121,13 +168,13 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
   let domain: ReturnType<typeof createRecoveryDomainService>;
   let resolver: ReturnType<typeof createRecoveryStateResolver>;
 
-  function continuation(afterCommit?: () => Promise<void>) {
+  function continuation(testHooks?: RecoveryContinuationTestHooks) {
     return createRecoveryContinuationService({
       client: prisma,
       recoveryConfig,
       verifiedSessionConfig: verifiedConfig,
       clock: () => new Date(now),
-      testHooks: afterCommit ? { afterCommit } : undefined
+      testHooks
     });
   }
 
@@ -320,6 +367,54 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     await prisma.$disconnect();
   });
 
+  it.each(["off", "shadow", undefined] as const)(
+    "keeps the complete recovery runtime unavailable without writes in verified mode %s",
+    async (mode) => {
+      const before = {
+        challenges: await prisma.recoveryChallenge.count(),
+        recoverySessions: await prisma.verifiedRecoverySession.count(),
+        verifiedSessions: await prisma.verifiedStudentSession.count(),
+        limiterEvents: await prisma.recoveryRateLimitEvent.count(),
+        securityEvents: await prisma.recoverySecurityEvent.count()
+      };
+      const gated = createRecoveryHttpHandlers({
+        getRuntime: () => createRecoveryHttpRuntime(runtimeEnvironment(mode)),
+        clock: () => new Date(now),
+        normalizeRequestTiming: async () => {},
+        cookieSecure: false
+      });
+      const responses = await Promise.all([
+        gated.requestChallenge(post("/api/recovery/challenges", {
+          email: "gated@example.test",
+          productCode: recoveryConfig.productCode,
+          intent: "recovery",
+          idempotencyKey: randomUUID()
+        })),
+        gated.verifyChallenge(post("/api/recovery/challenges/verify", {
+          code: "908172",
+          operationId: randomUUID()
+        }, "acc01a_recovery_challenge=opaque")),
+        gated.resolveState(getState("acc01a_recovery=opaque")),
+        gated.continueRecovery(post("/api/recovery/continue", {
+          operationId: randomUUID()
+        }, "acc01a_recovery=opaque")),
+        gated.invalidateSession(deleteSession("acc01a_recovery=opaque"))
+      ]);
+      for (const response of responses) {
+        expect(response.status).toBe(404);
+        expect((await response.json()).error.code).toBe("FEATURE_UNAVAILABLE");
+        expect(response.headers.get("set-cookie")).toBeNull();
+      }
+      expect({
+        challenges: await prisma.recoveryChallenge.count(),
+        recoverySessions: await prisma.verifiedRecoverySession.count(),
+        verifiedSessions: await prisma.verifiedStudentSession.count(),
+        limiterEvents: await prisma.recoveryRateLimitEvent.count(),
+        securityEvents: await prisma.recoverySecurityEvent.count()
+      }).toEqual(before);
+    }
+  );
+
   it.each([
     ["access_unstarted", "OPEN_PRE"],
     ["attempt_active", "OPEN_ATTEMPT"],
@@ -350,7 +445,7 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     const setCookie = response.headers.get("set-cookie") ?? "";
     expect(setCookie).toContain("HttpOnly");
     expect(setCookie).toContain("Path=/");
-    expect(setCookie).toContain("SameSite=strict");
+    expect(setCookie).toContain("SameSite=lax");
     const verified = createVerifiedStudentSessionService({
       client: prisma,
       config: verifiedConfig,
@@ -399,6 +494,10 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     const first = await handlers().continueRecovery(post("/api/recovery/continue", { operationId }, recovery.cookie));
     const firstRow = await prisma.verifiedStudentSession.findFirstOrThrow();
     const firstToken = cookieValue(first, "verified_student_session");
+    const intermediateState = await handlers().resolveState(getState(recovery.cookie));
+    expect(intermediateState.status).toBe(401);
+    expect((await intermediateState.json()).error.code).toBe("RECOVERY_SESSION_REQUIRED");
+    expect(intermediateState.headers.get("set-cookie")).toBeNull();
     const second = await handlers().continueRecovery(post("/api/recovery/continue", { operationId }, recovery.cookie));
     const secondRow = await prisma.verifiedStudentSession.findFirstOrThrow();
     const secondToken = cookieValue(second, "verified_student_session");
@@ -419,6 +518,76 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     expect(conflict.status).toBe(409);
     expect((await conflict.json()).error.code).toBe("CONTINUATION_OPERATION_CONFLICT");
     expect(await prisma.verifiedStudentSession.count()).toBe(1);
+  });
+
+  it("clears ordinary revoked recovery authority", async () => {
+    const fixture = await createPaidAccess("ordinary-revoked@example.test");
+    const recovery = await issueRecoveryCookie(fixture.user.email);
+    expect(await domain.invalidateRecoverySession(recovery.rawToken, "USER_INVALIDATED"))
+      .toEqual({ status: "REVOKED" });
+    const response = await handlers().resolveState(getState(recovery.cookie));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("set-cookie")).toContain("acc01a_recovery=");
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+  });
+
+  it("clears an expired recovery cookie instead of preserving replay authority", async () => {
+    const fixture = await createPaidAccess("expired-recovery@example.test");
+    const recovery = await issueRecoveryCookie(fixture.user.email);
+    now = new Date(now.getTime() + 31 * 60_000);
+    const response = await handlers().resolveState(getState(recovery.cookie));
+    expect(response.status).toBe(401);
+    expect(response.headers.get("set-cookie")).toContain("acc01a_recovery=");
+    expect(response.headers.get("set-cookie")).toContain("Max-Age=0");
+    expect(await domain.validateRecoverySession(recovery.rawToken)).toEqual({ status: "EXPIRED" });
+  });
+
+  it("fails malformed continuation state closed and the database rejects partial outcomes", async () => {
+    const fixture = await createPaidAccess("malformed-continuation@example.test");
+    const recovery = await issueRecoveryCookie(fixture.user.email);
+    const recoveryRow = await prisma.verifiedRecoverySession.findFirstOrThrow();
+    await expect(prisma.verifiedRecoverySession.update({
+      where: { id: recoveryRow.id },
+      data: { continuationOperationId: randomUUID() }
+    })).rejects.toBeDefined();
+    expect(await prisma.verifiedRecoverySession.findUniqueOrThrow({ where: { id: recoveryRow.id } }))
+      .toMatchObject({
+        status: "ACTIVE",
+        continuationOperationId: null,
+        continuationNextAction: null,
+        continuationNextUrl: null,
+        continuationVerifiedStudentSessionId: null,
+        continuedAt: null
+      });
+
+    const operationId = randomUUID();
+    const exchanged = await handlers().continueRecovery(post(
+      "/api/recovery/continue",
+      { operationId },
+      recovery.cookie
+    ));
+    expect(exchanged.status).toBe(200);
+    const committed = await prisma.verifiedRecoverySession.findUniqueOrThrow({
+      where: { id: recoveryRow.id }
+    });
+    await prisma.verifiedRecoverySession.update({
+      where: { id: recoveryRow.id },
+      data: { revokedAt: new Date(committed.continuedAt!.getTime() + 1) }
+    });
+
+    const state = await handlers().resolveState(getState(recovery.cookie));
+    expect(state.status).toBe(403);
+    expect(state.headers.get("set-cookie")).toContain("Max-Age=0");
+    const generation = (await prisma.verifiedStudentSession.findFirstOrThrow()).tokenGeneration;
+    const replay = await handlers().continueRecovery(post(
+      "/api/recovery/continue",
+      { operationId },
+      recovery.cookie
+    ));
+    expect(replay.status).toBe(401);
+    expect(cookieValue(replay, "verified_student_session")).toBeNull();
+    expect((await prisma.verifiedStudentSession.findFirstOrThrow()).tokenGeneration)
+      .toBe(generation);
   });
 
   it("uses current truth and refuses non-actionable state without a partial outcome", async () => {
@@ -497,10 +666,12 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     const recovery = await issueRecoveryCookie(fixture.user.email);
     const operationId = randomUUID();
     let fail = true;
-    const faulting = continuation(async () => {
-      if (fail) {
-        fail = false;
-        throw new Error("injected response failure");
+    const faulting = continuation({
+      afterCommit: async () => {
+        if (fail) {
+          fail = false;
+          throw new Error("injected response failure");
+        }
       }
     });
     const unknown = await handlers(faulting).continueRecovery(post(
@@ -513,6 +684,10 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     expect(unknown.headers.get("set-cookie") ?? "").not.toContain("verified_student_session");
     expect(unknown.headers.get("set-cookie") ?? "").not.toContain("acc01a_recovery=;");
     expect(await prisma.verifiedStudentSession.count()).toBe(1);
+
+    const intermediateState = await handlers().resolveState(getState(recovery.cookie));
+    expect(intermediateState.status).toBe(401);
+    expect(intermediateState.headers.get("set-cookie")).toBeNull();
 
     const recovered = await handlers().continueRecovery(post(
       "/api/recovery/continue",
@@ -527,26 +702,125 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     expect((await prisma.verifiedStudentSession.findFirstOrThrow()).tokenGeneration).toBe(2);
   });
 
-  it("serializes parallel same-operation calls and converges on a current token", async () => {
+  it("proves late generation-one responses cannot authorize after generation-two wins", async () => {
     const fixture = await createPaidAccess("parallel@example.test");
     const recovery = await issueRecoveryCookie(fixture.user.email);
     const operationId = randomUUID();
-    const same = await Promise.all([
-      handlers().continueRecovery(post("/api/recovery/continue", { operationId }, recovery.cookie)),
-      handlers().continueRecovery(post("/api/recovery/continue", { operationId }, recovery.cookie))
-    ]);
-    expect(same.some((response) => response.status === 200)).toBe(true);
-    expect(await prisma.verifiedStudentSession.count()).toBe(1);
-    expect(await prisma.verifiedRecoverySession.count({
-      where: { continuationOperationId: operationId }
-    })).toBe(1);
-    const converged = await handlers().continueRecovery(post(
+    let releaseLateResponse!: () => void;
+    let markFirstCommit!: () => void;
+    const firstCommitted = new Promise<void>((resolve) => { markFirstCommit = resolve; });
+    const lateResponseBarrier = new Promise<void>((resolve) => { releaseLateResponse = resolve; });
+    const delayed = continuation({
+      afterCommit: async () => {
+        markFirstCommit();
+        await lateResponseBarrier;
+      }
+    });
+
+    const lateFirstPromise = handlers(delayed).continueRecovery(post(
       "/api/recovery/continue",
       { operationId },
       recovery.cookie
     ));
-    expect(converged.status).toBe(200);
+    await firstCommitted;
+    const generationOneRow = await prisma.verifiedStudentSession.findFirstOrThrow();
+    expect(generationOneRow.tokenGeneration).toBe(1);
 
+    const currentSecond = await handlers().continueRecovery(post(
+      "/api/recovery/continue",
+      { operationId },
+      recovery.cookie
+    ));
+    expect(currentSecond.status).toBe(200);
+    const generationTwoToken = cookieValue(currentSecond, "verified_student_session");
+    const generationTwoRow = await prisma.verifiedStudentSession.findFirstOrThrow();
+    expect(generationTwoRow.tokenGeneration).toBe(2);
+    expect(generationTwoRow.expiresAt).toEqual(generationOneRow.expiresAt);
+
+    releaseLateResponse();
+    const lateFirst = await lateFirstPromise;
+    const generationOneToken = cookieValue(lateFirst, "verified_student_session");
+    expect(lateFirst.status).toBe(200);
+    expect(await lateFirst.clone().json()).toEqual(await currentSecond.clone().json());
+    expect(generationOneToken).not.toBe(generationTwoToken);
+    expect(await prisma.verifiedStudentSession.count()).toBe(1);
+    expect(await prisma.verifiedRecoverySession.count({
+      where: { continuationOperationId: operationId }
+    })).toBe(1);
+
+    const verifier = createVerifiedStudentSessionService({
+      client: prisma,
+      config: verifiedConfig,
+      clock: () => new Date(now)
+    });
+    expect((await verifier.resolve(generationOneToken!)).status).toBe("NOT_FOUND");
+    expect((await verifier.resolve(generationTwoToken!)).status).toBe("RESOLVED");
+
+    const third = await handlers().continueRecovery(post(
+      "/api/recovery/continue",
+      { operationId },
+      recovery.cookie
+    ));
+    const generationThreeToken = cookieValue(third, "verified_student_session");
+    const generationThreeRow = await prisma.verifiedStudentSession.findFirstOrThrow();
+    expect(third.status).toBe(200);
+    expect(await third.clone().json()).toEqual(await currentSecond.clone().json());
+    expect(generationThreeRow.tokenGeneration).toBe(3);
+    expect(generationThreeRow.expiresAt).toEqual(generationOneRow.expiresAt);
+    expect((await verifier.resolve(generationOneToken!)).status).toBe("NOT_FOUND");
+    expect((await verifier.resolve(generationTwoToken!)).status).toBe("NOT_FOUND");
+    expect((await verifier.resolve(generationThreeToken!)).status).toBe("RESOLVED");
+
+    const continuationAudit = JSON.stringify(await prisma.recoverySecurityEvent.findMany({
+      where: { reasonCode: "SESSION_CONTINUED" }
+    }));
+    expect(continuationAudit).not.toContain(generationOneToken!);
+    expect(continuationAudit).not.toContain(generationTwoToken!);
+    expect(continuationAudit).not.toContain(generationThreeToken!);
+    expect(continuationAudit).not.toContain(testSlug);
+    expect(continuationAudit).not.toContain(`/tests/${testSlug}`);
+  });
+
+  it("maps concurrent operation reuse across two recovery sessions to one success and one conflict", async () => {
+    const firstFixture = await createPaidAccess("operation-owner-one@example.test");
+    const secondFixture = await createPaidAccess("operation-owner-two@example.test");
+    const firstRecovery = await issueRecoveryCookie(firstFixture.user.email);
+    const secondRecovery = await issueRecoveryCookie(secondFixture.user.email);
+    const before = await businessSnapshot();
+    const operationId = randomUUID();
+    const responses = await Promise.all([
+      handlers().continueRecovery(post(
+        "/api/recovery/continue",
+        { operationId },
+        firstRecovery.cookie
+      )),
+      handlers().continueRecovery(post(
+        "/api/recovery/continue",
+        { operationId },
+        secondRecovery.cookie
+      ))
+    ]);
+    expect(responses.map((response) => response.status).sort()).toEqual([200, 409]);
+    const conflict = responses.find((response) => response.status === 409)!;
+    expect((await conflict.json()).error.code).toBe("CONTINUATION_OPERATION_CONFLICT");
+    expect(await prisma.verifiedRecoverySession.count({
+      where: { continuationOperationId: operationId }
+    })).toBe(1);
+    expect(await prisma.verifiedStudentSession.count()).toBe(1);
+    expect(await prisma.recoverySecurityEvent.count({
+      where: { reasonCode: "SESSION_CONTINUED" }
+    })).toBe(2);
+    const loser = await prisma.verifiedRecoverySession.findFirstOrThrow({
+      where: { continuationOperationId: null }
+    });
+    expect(loser).toMatchObject({
+      status: "ACTIVE",
+      continuationNextAction: null,
+      continuationNextUrl: null,
+      continuationVerifiedStudentSessionId: null,
+      continuedAt: null
+    });
+    expect(await businessSnapshot()).toEqual(before);
   });
 
   it("lets at most one of two parallel different operations commit", async () => {
@@ -571,6 +845,69 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
     expect(await prisma.verifiedRecoverySession.count({
       where: { continuationOperationId: { not: null } }
     })).toBe(1);
+  });
+
+  it("rolls back provisional writes once and commits exactly one outcome on the built-in retry", async () => {
+    const fixture = await createPaidAccess("single-rollback@example.test");
+    const recovery = await issueRecoveryCookie(fixture.user.email);
+    const before = await businessSnapshot();
+    const attempts: number[] = [];
+    const retrying = continuation({
+      beforeCommit: async (attempt) => {
+        attempts.push(attempt);
+        if (attempt === 0) throw rollbackConflict();
+      }
+    });
+    const response = await handlers(retrying).continueRecovery(post(
+      "/api/recovery/continue",
+      { operationId: randomUUID() },
+      recovery.cookie
+    ));
+    expect(response.status).toBe(200);
+    expect(attempts).toEqual([0, 1]);
+    expect(await prisma.verifiedStudentSession.count()).toBe(1);
+    expect((await prisma.verifiedStudentSession.findFirstOrThrow()).tokenGeneration).toBe(1);
+    expect(await prisma.verifiedRecoverySession.count({
+      where: { continuationOperationId: { not: null } }
+    })).toBe(1);
+    expect(await prisma.recoverySecurityEvent.count({
+      where: { reasonCode: "SESSION_CONTINUED" }
+    })).toBe(2);
+    expect(await businessSnapshot()).toEqual(before);
+  });
+
+  it("rolls back both attempts after two proven conflicts without partial rows", async () => {
+    const fixture = await createPaidAccess("double-rollback@example.test");
+    const recovery = await issueRecoveryCookie(fixture.user.email);
+    const before = await businessSnapshot();
+    const attempts: number[] = [];
+    const alwaysConflicting = continuation({
+      beforeCommit: async (attempt) => {
+        attempts.push(attempt);
+        throw rollbackConflict();
+      }
+    });
+    const response = await handlers(alwaysConflicting).continueRecovery(post(
+      "/api/recovery/continue",
+      { operationId: randomUUID() },
+      recovery.cookie
+    ));
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("STATE_CHANGED_RETRY_RESOLVE");
+    expect(attempts).toEqual([0, 1]);
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+    expect(await prisma.verifiedRecoverySession.findFirstOrThrow()).toMatchObject({
+      status: "ACTIVE",
+      continuationOperationId: null,
+      continuationNextAction: null,
+      continuationNextUrl: null,
+      continuationVerifiedStudentSessionId: null,
+      continuedAt: null
+    });
+    expect(await prisma.recoverySecurityEvent.count({
+      where: { reasonCode: "SESSION_CONTINUED" }
+    })).toBe(0);
+    expect(await businessSnapshot()).toEqual(before);
   });
 
   it("rolls back verified-session and outcome writes when issuance fails", async () => {

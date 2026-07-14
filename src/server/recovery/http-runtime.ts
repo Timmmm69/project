@@ -20,6 +20,7 @@ export type RecoveryHttpService = Pick<
 
 export type EnabledRecoveryHttpRuntime = Readonly<{
   config: Extract<RecoveryConfig, { enabled: true }>;
+  available?: true;
   service: RecoveryHttpService;
   resolveState: ReturnType<typeof createRecoveryStateResolver>;
   continuation?: ReturnType<typeof createRecoveryContinuationService>;
@@ -28,8 +29,14 @@ export type EnabledRecoveryHttpRuntime = Readonly<{
   resolverLimiterInput: string;
 }>;
 
+export type UnavailableRecoveryHttpRuntime = Readonly<{
+  config: Extract<RecoveryConfig, { enabled: true }>;
+  available: false;
+}>;
+
 export type RecoveryHttpRuntime =
   | Readonly<{ config: Extract<RecoveryConfig, { enabled: false }> }>
+  | UnavailableRecoveryHttpRuntime
   | EnabledRecoveryHttpRuntime;
 
 export class RecoveryHttpRuntimeError extends Error {
@@ -50,6 +57,11 @@ export function createRecoveryHttpRuntime(
   const config = parseRecoveryConfig(environment);
   if (!config.enabled) return { config };
 
+  const verifiedSessionConfig = parseVerifiedStudentSessionConfig(environment);
+  if (verifiedSessionConfig.mode !== "enforce") {
+    return { config, available: false };
+  }
+
   const rawAppUrl = environment.APP_URL;
   if (!rawAppUrl) throw new RecoveryHttpRuntimeError("TRUSTED_ORIGIN_MISSING");
   const trustedOrigin = canonicalRecoveryOrigin(rawAppUrl);
@@ -58,10 +70,9 @@ export function createRecoveryHttpRuntime(
   const mailer = config.mailerMode === "fake"
     ? createFakeDevelopmentRecoveryMailer({ environment: environment.NODE_ENV })
     : (testMailbox ??= createTestRecoveryMailbox({ environment: environment.NODE_ENV })).mailer;
-  const verifiedSessionConfig = parseVerifiedStudentSessionConfig(environment);
-
   return {
     config,
+    available: true,
     trustedOrigin,
     sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE,
     resolverLimiterInput: RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE,

@@ -196,7 +196,14 @@ export type ValidateRecoverySessionResult =
       expiresAt: Date;
     }>
   | Readonly<{
-      status: "INVALID_TOKEN" | "UNKNOWN_KEY" | "NOT_FOUND" | "REVOKED" | "EXPIRED" | "SCOPE_MISMATCH";
+      status:
+        | "INVALID_TOKEN"
+        | "UNKNOWN_KEY"
+        | "NOT_FOUND"
+        | "REVOKED"
+        | "EXPIRED"
+        | "SCOPE_MISMATCH"
+        | "CONTINUED_REPLAY";
     }>;
 
 export type InvalidateRecoverySessionResult = Readonly<{
@@ -944,22 +951,21 @@ export function createRecoveryDomainService(input: {
         ) {
           return { status: "SCOPE_MISMATCH" };
         }
-        if (session.status !== "ACTIVE") {
-          return { status: session.status === "EXPIRED" ? "EXPIRED" : "REVOKED" };
-        }
         const now = clock();
         if (now.getTime() >= session.expiresAt.getTime()) {
-          await tx.verifiedRecoverySession.update({
-            where: { id: session.id },
-            data: { status: "EXPIRED", revokedAt: session.expiresAt, revocationCode: "EXPIRED" }
-          });
-          await audit(tx, {
-            correlationId: randomUUID(),
-            eventCode: "SESSION_REVOKED",
-            reasonCode: "SESSION_EXPIRED",
-            recoverySessionId: session.id,
-            occurredAt: now
-          });
+          if (session.status === "ACTIVE") {
+            await tx.verifiedRecoverySession.update({
+              where: { id: session.id },
+              data: { status: "EXPIRED", revokedAt: session.expiresAt, revocationCode: "EXPIRED" }
+            });
+            await audit(tx, {
+              correlationId: randomUUID(),
+              eventCode: "SESSION_REVOKED",
+              reasonCode: "SESSION_EXPIRED",
+              recoverySessionId: session.id,
+              occurredAt: now
+            });
+          }
           return { status: "EXPIRED" };
         }
         const scopeIsConsistent =
@@ -973,6 +979,28 @@ export function createRecoveryDomainService(input: {
           session.challenge.testId === session.testId;
         if (!scopeIsConsistent) {
           return { status: "SCOPE_MISMATCH" };
+        }
+        const continuationFields = [
+          session.continuationOperationId,
+          session.continuationNextAction,
+          session.continuationNextUrl,
+          session.continuationVerifiedStudentSessionId,
+          session.continuedAt
+        ];
+        const continuationIsEmpty = continuationFields.every((value) => value === null);
+        const continuationIsComplete = continuationFields.every((value) => value !== null);
+        if (session.status === "REVOKED" &&
+          session.revocationCode === "CONTINUED" &&
+          session.revokedAt &&
+          continuationIsComplete &&
+          session.revokedAt.getTime() === session.continuedAt!.getTime()) {
+          return { status: "CONTINUED_REPLAY" };
+        }
+        if (!continuationIsEmpty) {
+          return { status: "SCOPE_MISMATCH" };
+        }
+        if (session.status !== "ACTIVE") {
+          return { status: session.status === "EXPIRED" ? "EXPIRED" : "REVOKED" };
         }
         return {
           status: "RESOLVED",

@@ -1,7 +1,12 @@
 import { randomUUID } from "node:crypto";
+import { Prisma, type PrismaClient } from "@prisma/client";
 import { describe, expect, it, vi } from "vitest";
+import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
+import type { EnabledRecoveryConfig, RecoveryKeyRing } from "@/server/recovery/config";
 import {
+  createRecoveryContinuationService,
   createRecoveryDestination,
+  isContinuationOperationUniqueConflict,
   isAllowedRecoveryDestination,
   RecoveryContinuationError
 } from "@/server/recovery/continuation";
@@ -209,7 +214,7 @@ describe("ACC-01A recovery continuation HTTP boundary", () => {
     const cookie = response.headers.get("set-cookie") ?? "";
     expect(cookie).toContain(`verified_student_session=${verifiedToken}`);
     expect(cookie).toContain("HttpOnly");
-    expect(cookie).toContain("SameSite=strict");
+    expect(cookie).toContain("SameSite=lax");
     expect(cookie).toContain("Path=/");
     expect(cookie).toContain("Expires=Tue, 21 Jul 2026 12:00:00 GMT");
     expect(cookie).not.toContain("Max-Age=");
@@ -237,5 +242,90 @@ describe("ACC-01A recovery continuation HTTP boundary", () => {
     expect((await response.json()).error.code).toBe("CONTINUATION_OUTCOME_UNKNOWN");
     expect(response.headers.get("set-cookie") ?? "").not.toContain("verified_student_session");
     expect(response.headers.get("set-cookie") ?? "").not.toContain("acc01a_recovery=;");
+  });
+});
+
+describe("ACC-01A continuation unique-conflict classification", () => {
+  function p2002(target: unknown) {
+    return new Prisma.PrismaClientKnownRequestError("synthetic unique conflict", {
+      code: "P2002",
+      clientVersion: "test",
+      meta: { target }
+    });
+  }
+
+  it.each([
+    "continuationOperationId",
+    "continuation_operation_id",
+    "verified_recovery_sessions_continuation_operation_id_key",
+    ["continuationOperationId"],
+    ["continuation_operation_id"]
+  ])("recognizes only the exact continuation operation target %j", (target) => {
+    expect(isContinuationOperationUniqueConflict(p2002(target))).toBe(true);
+  });
+
+  it.each([
+    "token_digest",
+    "security_correlation_id",
+    "verified_student_sessions_source_source_reference_id_issuan_key",
+    ["source", "sourceReferenceId", "issuanceOperationId"],
+    ["continuationOperationId", "tokenDigest"],
+    undefined
+  ])("does not reclassify unrelated P2002 target %j", (target) => {
+    expect(isContinuationOperationUniqueConflict(p2002(target))).toBe(false);
+  });
+
+  it("does not reclassify rollback or unknown errors as an operation collision", () => {
+    const rollback = new Prisma.PrismaClientKnownRequestError("rollback", {
+      code: "P2034",
+      clientVersion: "test"
+    });
+    expect(isContinuationOperationUniqueConflict(rollback)).toBe(false);
+    expect(isContinuationOperationUniqueConflict(new Error("unknown"))).toBe(false);
+  });
+
+  function ring(byte: number): RecoveryKeyRing {
+    return { activeKeyVersion: "v1", keys: new Map([["v1", Buffer.alloc(32, byte)]]) };
+  }
+
+  const recoveryConfig: EnabledRecoveryConfig = {
+    enabled: true,
+    mailerMode: "test",
+    productCode: "unit-continuation",
+    keyRings: {
+      emailFingerprint: ring(101),
+      challengeToken: ring(102),
+      otpMac: ring(103),
+      sessionToken: ring(104)
+    }
+  };
+  const verifiedConfig: VerifiedStudentSessionConfig = {
+    mode: "enforce",
+    activeKeyVersion: "v1",
+    keys: new Map([["v1", Buffer.alloc(32, 105)]])
+  };
+
+  function throwingService(error: unknown) {
+    const client = {
+      $transaction: vi.fn().mockRejectedValue(error)
+    } as unknown as PrismaClient;
+    return createRecoveryContinuationService({
+      client,
+      recoveryConfig,
+      verifiedSessionConfig: verifiedConfig
+    });
+  }
+
+  it("maps only an exact continuation-operation P2002 to operation conflict", async () => {
+    await expect(throwingService(p2002(["continuation_operation_id"]))
+      .exchange(recoveryToken, operationId)).resolves.toEqual({
+      status: "CONTINUATION_OPERATION_CONFLICT"
+    });
+  });
+
+  it("leaves unrelated P2002 failures unknown for the HTTP boundary", async () => {
+    const unrelated = p2002(["token_digest"]);
+    await expect(throwingService(unrelated).exchange(recoveryToken, operationId))
+      .rejects.toBe(unrelated);
   });
 });

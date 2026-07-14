@@ -143,6 +143,7 @@ export function createRecoveryHttpHandlers(
     try {
       const runtime = getRuntime();
       if (!runtime.config.enabled) return null;
+      if ("available" in runtime && runtime.available === false) return null;
       const enabled = runtime as EnabledRecoveryHttpRuntime;
       if (canonicalRecoveryOrigin(enabled.trustedOrigin) !== enabled.trustedOrigin ||
         enabled.sourceLimiterInput !== RECOVERY_HTTP_GLOBAL_SOURCE ||
@@ -332,6 +333,9 @@ export function createRecoveryHttpHandlers(
 
     try {
       const session = await runtime.service.validateRecoverySession(rawRecoveryToken);
+      if (session.status === "CONTINUED_REPLAY") {
+        return recoverySessionRequired();
+      }
       if (session.status === "SCOPE_MISMATCH") {
         const response = scopeNotAllowed();
         clearRecoverySessionCookie(response, { secure: secureCookies() });

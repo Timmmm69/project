@@ -18,7 +18,7 @@ export function setVerifiedStudentSessionCookie(
   const boundedExpiresAt = new Date(expiresAt);
   response.cookies.set(VERIFIED_STUDENT_SESSION_COOKIE, rawToken, {
     httpOnly: true,
-    sameSite: "strict",
+    sameSite: "lax",
     secure: options.secure ?? verifiedStudentSessionCookiesAreSecure(),
     path: "/",
     expires: boundedExpiresAt
