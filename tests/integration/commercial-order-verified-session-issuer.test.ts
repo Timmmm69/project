@@ -1,6 +1,7 @@
 import { randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
+import { POST as claimCommercialAccess } from "@/app/api/commercial/orders/[publicId]/claim-access/route";
 import { POST as startCommercialAttempt } from "@/app/api/commercial/orders/[publicId]/start-attempt/route";
 import { GET as readAttempt } from "@/app/api/attempts/[attemptId]/route";
 import { POST as saveAnswer } from "@/app/api/attempts/[attemptId]/answers/route";
@@ -169,14 +170,18 @@ async function createCommercialFixture(input: {
   return { test, question, product, user, order, payment, access, lookupToken };
 }
 
-function commercialRequest(fixture: Fixture, operationId = randomUUID()) {
+function commercialRequest(
+  fixture: Fixture,
+  operationId: string | null = randomUUID(),
+  surface: "claim-access" | "start-attempt" = "start-attempt"
+) {
   nextCookieState.values.set(orderTokenCookieName(fixture.order.publicId), fixture.lookupToken);
-  return new Request(`${origin}/api/commercial/orders/${fixture.order.publicId}/start-attempt`, {
+  return new Request(`${origin}/api/commercial/orders/${fixture.order.publicId}/${surface}`, {
     method: "POST",
     headers: {
       origin,
       host: "commercial-order-issuer.test",
-      "Idempotency-Key": operationId
+      ...(operationId === null ? {} : { "Idempotency-Key": operationId })
     }
   });
 }
@@ -207,6 +212,11 @@ function cookieValue(response: Response, name: string) {
   return new RegExp(`(?:^|,\\s*)${name}=([^;,]+)`).exec(header)?.[1] ?? null;
 }
 
+function expectPrivateHeaders(response: Response) {
+  expect(response.headers.get("cache-control")).toBe("no-store");
+  expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+}
+
 async function businessCounts() {
   return {
     orders: await prisma.commercialOrder.count(),
@@ -229,6 +239,7 @@ async function expectRejectedWithoutSession(fixture: Fixture, expectedCode = "PA
   expect(response.status).toBeGreaterThanOrEqual(400);
   expect((await response.clone().json()).error.code).toBe(expectedCode);
   expect(response.headers.get("set-cookie") ?? "").not.toContain("verified_student_session=");
+  expectPrivateHeaders(response);
   expect(await prisma.verifiedStudentSession.count()).toBe(sessionCount);
   expect(await businessCounts()).toEqual(before);
 }
@@ -412,6 +423,7 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     );
     expect(denied.status).toBe(403);
     expect((await denied.json()).error.code).toBe("ORDER_TOKEN_REQUIRED");
+    expectPrivateHeaders(denied);
     expect(await businessCounts()).toEqual(beforeWrongToken);
     expect(await prisma.verifiedStudentSession.count()).toBe(0);
 
@@ -474,19 +486,58 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     await expectRejectedWithoutSession(mismatchedProduct);
   });
 
-  it("preserves off and shadow legacy semantics while enforce remains verified", async () => {
+  it("returns private headers and no cookie when verified issuance is unavailable", async () => {
+    const fixture = await createCommercialFixture();
+    const before = await businessCounts();
+    const previousKeyRing = process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING;
+    process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING = "malformed";
+    try {
+      const response = await startCommercialAttempt(
+        commercialRequest(fixture),
+        commercialContext(fixture)
+      );
+      expect(response.status).toBe(503);
+      expect(cookieValue(response, "verified_student_session")).toBeNull();
+      expect(await prisma.verifiedStudentSession.count()).toBe(0);
+      expect(await businessCounts()).toEqual(before);
+      expectPrivateHeaders(response);
+    } finally {
+      if (previousKeyRing === undefined) delete process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING;
+      else process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING = previousKeyRing;
+    }
+  });
+
+  it("preserves authentic off compatibility without an operation key on both claim surfaces", async () => {
     const fixture = await createCommercialFixture();
 
     process.env.VERIFIED_COMMERCIAL_SESSION_MODE = "off";
-    const off = await startCommercialAttempt(commercialRequest(fixture), commercialContext(fixture));
-    expect(off.status).toBe(200);
-    expect(cookieValue(off, "verified_student_session")).toBeNull();
+    const claim = await claimCommercialAccess(
+      commercialRequest(fixture, null, "claim-access"),
+      commercialContext(fixture)
+    );
+    expect(claim.status).toBe(200);
+    expect(cookieValue(claim, "verified_student_session")).toBeNull();
+    expectPrivateHeaders(claim);
     expect(nextCookieState.values.get("student_session")).toBeDefined();
     expect(await prisma.verifiedStudentSession.count()).toBe(0);
+    expect(await prisma.attempt.count()).toBe(0);
 
-    await prisma.attempt.deleteMany();
-    await prisma.access.update({ where: { id: fixture.access.id }, data: { attemptsAvailable: 1 } });
     nextCookieState.values.delete("student_session");
+    const start = await startCommercialAttempt(
+      commercialRequest(fixture, null),
+      commercialContext(fixture)
+    );
+    expect(start.status).toBe(200);
+    expect(cookieValue(start, "verified_student_session")).toBeNull();
+    expectPrivateHeaders(start);
+    expect(nextCookieState.values.get("student_session")).toBeDefined();
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+    expect(await prisma.attempt.count()).toBe(1);
+  });
+
+  it("preserves shadow and enforce issuance with valid operation UUIDs", async () => {
+    const fixture = await createCommercialFixture();
+
     process.env.VERIFIED_COMMERCIAL_SESSION_MODE = "shadow";
     const shadow = await startCommercialAttempt(commercialRequest(fixture), commercialContext(fixture));
     expect(shadow.status).toBe(200);
@@ -506,17 +557,52 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     expect(await prisma.verifiedStudentSession.count()).toBe(1);
   });
 
-  it("keeps generic commercial Orders on legacy authority without a verified session", async () => {
+  it("keeps generic enforce Orders compatible without an operation key on both claim surfaces", async () => {
     const fixture = await createCommercialFixture({ examMode: "GENERIC" });
-    const response = await startCommercialAttempt(
-      commercialRequest(fixture),
+    const claim = await claimCommercialAccess(
+      commercialRequest(fixture, null, "claim-access"),
       commercialContext(fixture)
     );
-    expect(response.status).toBe(200);
-    expect(cookieValue(response, "verified_student_session")).toBeNull();
+    expect(claim.status).toBe(200);
+    expect(cookieValue(claim, "verified_student_session")).toBeNull();
     expect(nextCookieState.values.get("student_session")).toBeDefined();
     expect(await prisma.verifiedStudentSession.count()).toBe(0);
-    expect((await response.text())).not.toContain("COMMERCIAL_ORDER_CLAIM");
+    expectPrivateHeaders(claim);
+    expect(await claim.clone().text()).not.toContain("VERIFIED_");
+
+    nextCookieState.values.delete("student_session");
+    const start = await startCommercialAttempt(
+      commercialRequest(fixture, null),
+      commercialContext(fixture)
+    );
+    expect(start.status).toBe(200);
+    expect(cookieValue(start, "verified_student_session")).toBeNull();
+    expect(nextCookieState.values.get("student_session")).toBeDefined();
+    expect(await prisma.verifiedStudentSession.count()).toBe(0);
+    expect(await prisma.attempt.count()).toBe(1);
+    expectPrivateHeaders(start);
+    const body = await start.text();
+    expect(body).not.toContain("COMMERCIAL_ORDER_CLAIM");
+    expect(body).not.toContain("VERIFIED_");
+  });
+
+  it.each(["shadow", "enforce"] as const)("authentic %s rejects missing operation UUID without writes", async (mode) => {
+    process.env.VERIFIED_COMMERCIAL_SESSION_MODE = mode;
+    for (const surface of ["claim-access", "start-attempt"] as const) {
+      const fixture = await createCommercialFixture();
+      const before = await businessCounts();
+      const handler = surface === "claim-access" ? claimCommercialAccess : startCommercialAttempt;
+      const response = await handler(
+        commercialRequest(fixture, null, surface),
+        commercialContext(fixture)
+      );
+      expect(response.status).toBe(422);
+      expect((await response.clone().json()).error.code).toBe("VALIDATION_ERROR");
+      expect(cookieValue(response, "verified_student_session")).toBeNull();
+      expect(await prisma.verifiedStudentSession.count()).toBe(0);
+      expect(await businessCounts()).toEqual(before);
+      expectPrivateHeaders(response);
+    }
   });
 
   it("does not expose raw credentials or sensitive claim data in responses or logs", async () => {

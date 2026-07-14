@@ -1,5 +1,6 @@
 import type { PrismaClient } from "@prisma/client";
 import type { NextResponse } from "next/server";
+import { commercialClaimOperationIdSchema } from "@/lib/commercial/schemas";
 import {
   parseVerifiedCommercialSessionMode,
   parseVerifiedStudentSessionConfig,
@@ -28,7 +29,7 @@ export type CommercialOrderSessionClaim = Readonly<{
 export type CommercialOrderSessionIssuance =
   | Readonly<{
       status: "LEGACY";
-      mode: VerifiedCommercialSessionMode;
+      mode: VerifiedCommercialSessionMode | null;
       reason: "MODE_OFF" | "GENERIC_TEST" | "SHADOW_ISSUANCE_UNAVAILABLE";
     }>
   | Readonly<{
@@ -43,7 +44,22 @@ export type CommercialOrderSessionIssuance =
   | Readonly<{
       status: "UNAVAILABLE";
       mode: "enforce" | null;
+    }>
+  | Readonly<{
+      status: "INVALID_OPERATION";
+      mode: "shadow" | "enforce";
     }>;
+
+export type CommercialOrderSessionOperationDecision =
+  | Readonly<{ status: "LEGACY_GENERIC" }>
+  | Readonly<{ status: "LEGACY_MODE_OFF"; mode: "off" }>
+  | Readonly<{
+      status: "ISSUE";
+      mode: "shadow" | "enforce";
+      issuanceOperationId: string;
+    }>
+  | Readonly<{ status: "INVALID_OPERATION"; mode: "shadow" | "enforce" }>
+  | Readonly<{ status: "UNAVAILABLE" }>;
 
 export type CommercialOrderSessionIssuerDependencies = Readonly<{
   client?: PrismaClient;
@@ -67,26 +83,47 @@ function serviceErrorIsScopeFailure(error: VerifiedStudentSessionServiceError) {
     error.code === "SCOPE_MISMATCH";
 }
 
-export async function issueCommercialOrderVerifiedSession(
-  claim: CommercialOrderSessionClaim,
-  issuanceOperationId: string,
-  dependencies: CommercialOrderSessionIssuerDependencies = {}
-): Promise<CommercialOrderSessionIssuance> {
+export function decideCommercialOrderSessionOperation(
+  claim: Pick<CommercialOrderSessionClaim, "examMode">,
+  rawOperationId: string | null,
+  dependencies: Pick<CommercialOrderSessionIssuerDependencies, "environment" | "config"> = {}
+): CommercialOrderSessionOperationDecision {
+  if (!isAuthenticRikzRussianExamMode(claim.examMode, "CURRENT_TEST")) {
+    return { status: "LEGACY_GENERIC" };
+  }
+
   const environment = dependencies.environment ?? process.env;
   let mode: VerifiedCommercialSessionMode;
   try {
     mode = dependencies.config?.mode ??
       parseVerifiedCommercialSessionMode(environment.VERIFIED_COMMERCIAL_SESSION_MODE);
   } catch {
-    return { status: "UNAVAILABLE", mode: null };
+    return { status: "UNAVAILABLE" };
   }
+  if (mode === "off") return { status: "LEGACY_MODE_OFF", mode };
 
-  if (!isAuthenticRikzRussianExamMode(claim.examMode, "CURRENT_TEST")) {
-    return { status: "LEGACY", mode, reason: "GENERIC_TEST" };
+  const operation = commercialClaimOperationIdSchema.safeParse(rawOperationId);
+  if (!operation.success) return { status: "INVALID_OPERATION", mode };
+  return { status: "ISSUE", mode, issuanceOperationId: operation.data };
+}
+
+export async function issueCommercialOrderVerifiedSession(
+  claim: CommercialOrderSessionClaim,
+  rawOperationId: string | null,
+  dependencies: CommercialOrderSessionIssuerDependencies = {}
+): Promise<CommercialOrderSessionIssuance> {
+  const decision = decideCommercialOrderSessionOperation(claim, rawOperationId, dependencies);
+  if (decision.status === "LEGACY_GENERIC") {
+    return { status: "LEGACY", mode: null, reason: "GENERIC_TEST" };
   }
-  if (mode === "off") {
-    return { status: "LEGACY", mode, reason: "MODE_OFF" };
+  if (decision.status === "LEGACY_MODE_OFF") {
+    return { status: "LEGACY", mode: decision.mode, reason: "MODE_OFF" };
   }
+  if (decision.status === "INVALID_OPERATION") return decision;
+  if (decision.status === "UNAVAILABLE") return { status: "UNAVAILABLE", mode: null };
+
+  const { mode, issuanceOperationId } = decision;
+  const environment = dependencies.environment ?? process.env;
 
   try {
     const config = dependencies.config ?? parseVerifiedStudentSessionConfig(environment);
@@ -126,10 +163,10 @@ export function commercialOrderIssuanceUsesLegacySession(
 
 export function finalizeCommercialOrderSessionResponse<T extends NextResponse>(
   response: T,
-  issuance: CommercialOrderSessionIssuance
+  issuance?: CommercialOrderSessionIssuance
 ) {
-  if (issuance.status !== "ISSUED") return response;
   for (const [name, value] of Object.entries(privateHeaders)) response.headers.set(name, value);
+  if (issuance?.status !== "ISSUED") return response;
   setVerifiedStudentSessionCookie(
     response,
     issuance.result.rawToken,

@@ -9,7 +9,9 @@ import {
   createCommercialStartAttemptHandler,
   type CommercialStartAttemptRouteDependencies
 } from "@/app/api/commercial/orders/[publicId]/start-attempt/route";
+import { CommercialError } from "@/lib/commercial/commercial-service";
 import {
+  decideCommercialOrderSessionOperation,
   finalizeCommercialOrderSessionResponse,
   issueCommercialOrderVerifiedSession,
   type CommercialOrderSessionClaim,
@@ -87,8 +89,8 @@ function request(operationId: string | null = ids.operation) {
   });
 }
 
-function context() {
-  return { params: Promise.resolve({ publicId: "order-public-id" }) };
+function context(publicId = "order-public-id") {
+  return { params: Promise.resolve({ publicId }) };
 }
 
 function authorized(
@@ -153,7 +155,7 @@ function startDependencies(input: {
   const dependencies = {
     requireOrderToken: vi.fn(async () => input.orderToken ?? true),
     claimAccess: vi.fn(async () => claimResult),
-    issueSession: vi.fn(async () => input.issuance ?? issued()),
+    resolveIssuance: vi.fn(async () => input.issuance ?? issued()),
     authorizeDestination,
     setLegacySession: vi.fn(async () => {}),
     startAttempt
@@ -162,13 +164,56 @@ function startDependencies(input: {
 }
 
 describe("commercial Order verified-session issuer", () => {
-  it("off mode does not issue a verified session", async () => {
+  it.each([null, "not-a-uuid"])("off mode ignores operation key %s and does not issue", async (key) => {
     const issueSession = vi.fn();
-    expect(await issueCommercialOrderVerifiedSession(claim(), ids.operation, {
+    expect(await issueCommercialOrderVerifiedSession(claim(), key, {
       environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "off" },
       issueSession
     })).toEqual({ status: "LEGACY", mode: "off", reason: "MODE_OFF" });
     expect(issueSession).not.toHaveBeenCalled();
+  });
+
+  it.each([null, "not-a-uuid"])("generic mode ignores operation key %s before mode resolution", async (key) => {
+    const issueSession = vi.fn();
+    expect(await issueCommercialOrderVerifiedSession(claim({ examMode: "GENERIC" }), key, {
+      environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "invalid-mode" },
+      issueSession
+    })).toEqual({ status: "LEGACY", mode: null, reason: "GENERIC_TEST" });
+    expect(issueSession).not.toHaveBeenCalled();
+  });
+
+  it.each(["shadow", "enforce"] as const)("authentic %s requires a valid operation UUID", async (mode) => {
+    const issueSession = vi.fn();
+    for (const key of [null, "not-a-uuid"]) {
+      expect(await issueCommercialOrderVerifiedSession(claim(), key, {
+        config: { mode, activeKeyVersion: "v1", keys: new Map() },
+        issueSession
+      })).toEqual({ status: "INVALID_OPERATION", mode });
+    }
+    expect(issueSession).not.toHaveBeenCalled();
+  });
+
+  it("exposes one closed decision table for both route surfaces", () => {
+    expect(decideCommercialOrderSessionOperation(
+      claim({ examMode: "GENERIC" }),
+      null,
+      { environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "enforce" } }
+    )).toEqual({ status: "LEGACY_GENERIC" });
+    expect(decideCommercialOrderSessionOperation(
+      claim(),
+      "malformed",
+      { environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "off" } }
+    )).toEqual({ status: "LEGACY_MODE_OFF", mode: "off" });
+    expect(decideCommercialOrderSessionOperation(
+      claim(),
+      ids.operation,
+      { environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "enforce" } }
+    )).toEqual({ status: "ISSUE", mode: "enforce", issuanceOperationId: ids.operation });
+    expect(decideCommercialOrderSessionOperation(
+      claim(),
+      null,
+      { environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "shadow" } }
+    )).toEqual({ status: "INVALID_OPERATION", mode: "shadow" });
   });
 
   it.each(["shadow", "enforce"] as const)("%s issues an exact scoped session", async (mode) => {
@@ -206,19 +251,6 @@ describe("commercial Order verified-session issuer", () => {
     expect(input.sourceReferenceId).toBe(ids.order);
     expect(JSON.stringify(input)).not.toContain("public-order");
     expect(JSON.stringify(input)).not.toContain("order-secret");
-  });
-
-  it("keeps a generic Test on legacy behavior even in enforce mode", async () => {
-    const issueSession = vi.fn();
-    expect(await issueCommercialOrderVerifiedSession(
-      claim({ examMode: "GENERIC" }),
-      ids.operation,
-      {
-        environment: { VERIFIED_COMMERCIAL_SESSION_MODE: "enforce" },
-        issueSession
-      }
-    )).toEqual({ status: "LEGACY", mode: "enforce", reason: "GENERIC_TEST" });
-    expect(issueSession).not.toHaveBeenCalled();
   });
 
   it("shadow safely falls back without producing a token after issuance failure", async () => {
@@ -272,20 +304,114 @@ describe("commercial Order verified-session issuer", () => {
 
   it.each([
     { status: "LEGACY", mode: "off", reason: "MODE_OFF" },
+    { status: "INVALID_OPERATION", mode: "enforce" },
     { status: "SCOPE_NOT_ALLOWED", mode: "enforce" },
     { status: "UNAVAILABLE", mode: "enforce" }
   ] as CommercialOrderSessionIssuance[])("does not set a verified cookie for $status", (issuance) => {
     const response = finalizeCommercialOrderSessionResponse(NextResponse.json({ ok: true }), issuance);
     expect(response.headers.get("set-cookie")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
   });
 });
 
 describe("commercial Order issuer route boundary", () => {
-  it.each([null, "not-a-uuid"])("rejects missing or malformed idempotency key: %s", async (key) => {
-    const { dependencies } = startDependencies();
+  function expectPrivate(response: Response) {
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+  }
+
+  it("both private POST surfaces finalize CSRF and malformed public IDs", async () => {
+    const start = startDependencies().dependencies;
+    const claimDependencies = {
+      requireOrderToken: vi.fn(async () => true),
+      claimAccess: vi.fn(async () => claim()),
+      resolveIssuance: vi.fn(async () => issued()),
+      setLegacySession: vi.fn(async () => {})
+    } as unknown as CommercialClaimAccessRouteDependencies;
+    const csrf = new Request("http://issuer.test/private", {
+      method: "POST",
+      headers: { origin: "http://attacker.test" }
+    });
+    const responses = [
+      await createCommercialStartAttemptHandler(start)(csrf.clone(), context()),
+      await createCommercialClaimAccessHandler(claimDependencies)(csrf.clone(), context()),
+      await createCommercialStartAttemptHandler(start)(request(), context("bad")),
+      await createCommercialClaimAccessHandler(claimDependencies)(request(), context("bad"))
+    ];
+    for (const response of responses) {
+      expect(response.status).toBe(403);
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expectPrivate(response);
+    }
+  });
+
+  it("both surfaces finalize commercial claim failures without a verified cookie", async () => {
+    const start = startDependencies().dependencies;
+    start.claimAccess = vi.fn(async () => {
+      throw new CommercialError("PAYMENT_NOT_CONFIRMED");
+    });
+    const claimDependencies = {
+      requireOrderToken: vi.fn(async () => true),
+      claimAccess: vi.fn(async () => {
+        throw new CommercialError("PAYMENT_NOT_CONFIRMED");
+      }),
+      resolveIssuance: vi.fn(async () => issued()),
+      setLegacySession: vi.fn(async () => {})
+    } as unknown as CommercialClaimAccessRouteDependencies;
+    for (const response of [
+      await createCommercialStartAttemptHandler(start)(request(), context()),
+      await createCommercialClaimAccessHandler(claimDependencies)(request(), context())
+    ]) {
+      expect(response.status).toBeGreaterThanOrEqual(400);
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expectPrivate(response);
+    }
+  });
+
+  it.each([null, "not-a-uuid"])("authentic off start accepts operation key %s", async (key) => {
+    const { dependencies } = startDependencies({
+      issuance: { status: "LEGACY", mode: "off", reason: "MODE_OFF" },
+      authorization: { status: "LEGACY", mode: "off", classification: "NOT_EVALUATED" }
+    });
     const response = await createCommercialStartAttemptHandler(dependencies)(request(key), context());
-    expect(response.status).toBe(422);
-    expect(dependencies.requireOrderToken).not.toHaveBeenCalled();
+    expect(response.status).toBe(200);
+    expect(dependencies.resolveIssuance).toHaveBeenCalledWith(claim(), key);
+    expect(dependencies.setLegacySession).toHaveBeenCalledWith(claim().student);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
+  });
+
+  it.each([null, "not-a-uuid"])("generic enforce start accepts operation key %s", async (key) => {
+    const genericClaim = claim({ examMode: "GENERIC" });
+    const { dependencies } = startDependencies({
+      claim: genericClaim,
+      issuance: { status: "LEGACY", mode: null, reason: "GENERIC_TEST" },
+      authorization: { status: "LEGACY", mode: "enforce", classification: "GENERIC" }
+    });
+    const response = await createCommercialStartAttemptHandler(dependencies)(request(key), context());
+    expect(response.status).toBe(200);
+    expect(dependencies.resolveIssuance).toHaveBeenCalledWith(genericClaim, key);
+    expect(dependencies.setLegacySession).toHaveBeenCalledWith(genericClaim.student);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
+  });
+
+  it.each(["shadow", "enforce"] as const)("authentic %s start rejects missing and malformed operation UUID", async (mode) => {
+    for (const key of [null, "not-a-uuid"]) {
+      const { dependencies, startAttempt } = startDependencies({
+        issuance: { status: "INVALID_OPERATION", mode }
+      });
+      const response = await createCommercialStartAttemptHandler(dependencies)(request(key), context());
+      expect(response.status).toBe(422);
+      expect((await response.clone().json()).error.code).toBe("VALIDATION_ERROR");
+      expect(dependencies.requireOrderToken).toHaveBeenCalled();
+      expect(dependencies.claimAccess).toHaveBeenCalled();
+      expect(dependencies.resolveIssuance).toHaveBeenCalledWith(claim(), key);
+      expect(startAttempt).not.toHaveBeenCalled();
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expectPrivate(response);
+    }
   });
 
   it("rejects a missing or invalid Order token before claim or issuance", async () => {
@@ -295,6 +421,7 @@ describe("commercial Order issuer route boundary", () => {
     expect((await response.json()).error.code).toBe("ORDER_TOKEN_REQUIRED");
     expect(dependencies.claimAccess).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it("does not treat the Order token or legacy flow as destination authority in enforce", async () => {
@@ -311,6 +438,7 @@ describe("commercial Order issuer route boundary", () => {
     expect(startAttempt).not.toHaveBeenCalled();
     expect(dependencies.setLegacySession).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it("passes only the newly issued raw token through the guard dependency boundary", async () => {
@@ -334,6 +462,7 @@ describe("commercial Order issuer route boundary", () => {
     expect(response.status).toBe(403);
     expect(startAttempt).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it("START_TEST invokes the existing start service only after verified authorization", async () => {
@@ -349,6 +478,20 @@ describe("commercial Order issuer route boundary", () => {
       authorizedAccessId: ids.access
     });
     expect(response.headers.get("set-cookie")).toContain("verified_student_session=");
+    expectPrivate(response);
+  });
+
+  it("start service failure never exposes an already issued verified cookie", async () => {
+    const fixture = claim({ attemptId: null, nextAction: "START_TEST", nextUrl: `/tests/${ids.test}` });
+    const { dependencies, startAttempt } = startDependencies({
+      claim: fixture,
+      authorization: authorized("PRE", null)
+    });
+    startAttempt.mockRejectedValueOnce(new Error("start unavailable"));
+    const response = await createCommercialStartAttemptHandler(dependencies)(request(), context());
+    expect(response.status).toBeGreaterThanOrEqual(400);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it.each(["RESUME_TEST", "VIEW_RESULT"] as const)("%s returns the allowlisted URL without an Attempt write", async (nextAction) => {
@@ -362,6 +505,7 @@ describe("commercial Order issuer route boundary", () => {
     expect(response.status).toBe(200);
     expect(startAttempt).not.toHaveBeenCalled();
     expect(await response.json()).toMatchObject({ data: { nextAction, nextUrl } });
+    expectPrivate(response);
   });
 
   it("off mode preserves the legacy session and does not set a verified cookie", async () => {
@@ -373,6 +517,7 @@ describe("commercial Order issuer route boundary", () => {
     expect(response.status).toBe(200);
     expect(dependencies.setLegacySession).toHaveBeenCalledWith(claim().student);
     expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it("shadow issues the verified cookie and preserves the legacy flow", async () => {
@@ -384,6 +529,34 @@ describe("commercial Order issuer route boundary", () => {
     expect(response.status).toBe(200);
     expect(dependencies.setLegacySession).toHaveBeenCalledOnce();
     expect(response.headers.get("set-cookie")).toContain("verified_student_session=");
+    expectPrivate(response);
+  });
+
+  it("shadow issuance fallback preserves legacy without a false verified cookie", async () => {
+    const { dependencies } = startDependencies({
+      issuance: {
+        status: "LEGACY",
+        mode: "shadow",
+        reason: "SHADOW_ISSUANCE_UNAVAILABLE"
+      },
+      authorization: { status: "LEGACY", mode: "shadow", classification: "AUTHENTIC" }
+    });
+    const response = await createCommercialStartAttemptHandler(dependencies)(request(), context());
+    expect(response.status).toBe(200);
+    expect(dependencies.setLegacySession).toHaveBeenCalledOnce();
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
+  });
+
+  it("issuer scope rejection is private and never sets a verified cookie", async () => {
+    const { dependencies, startAttempt } = startDependencies({
+      issuance: { status: "SCOPE_NOT_ALLOWED", mode: "enforce" }
+    });
+    const response = await createCommercialStartAttemptHandler(dependencies)(request(), context());
+    expect(response.status).toBe(403);
+    expect(startAttempt).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it("verified issuance unavailable fails safely without setting either session", async () => {
@@ -395,19 +568,24 @@ describe("commercial Order issuer route boundary", () => {
     expect(startAttempt).not.toHaveBeenCalled();
     expect(dependencies.setLegacySession).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 
   it("the separate canonical claim route uses the same issuer and operation UUID", async () => {
     const dependencies = {
       requireOrderToken: vi.fn(async () => true),
       claimAccess: vi.fn(async () => claim()),
-      issueSession: vi.fn(async () => issued()),
+      resolveIssuance: vi.fn(async () => issued()),
       setLegacySession: vi.fn(async () => {})
     } as unknown as CommercialClaimAccessRouteDependencies;
     const response = await createCommercialClaimAccessHandler(dependencies)(request(), context());
     expect(response.status).toBe(200);
-    expect(dependencies.issueSession).toHaveBeenCalledWith(expect.objectContaining({ orderId: ids.order }), ids.operation);
+    expect(dependencies.resolveIssuance).toHaveBeenCalledWith(
+      expect.objectContaining({ orderId: ids.order }),
+      ids.operation
+    );
     expect(response.headers.get("set-cookie")).toContain("verified_student_session=");
+    expectPrivate(response);
     const text = await response.text();
     expect(text).not.toContain(rawToken);
     expect(text).not.toContain(ids.order);
@@ -417,32 +595,58 @@ describe("commercial Order issuer route boundary", () => {
     expect(text).not.toContain(ids.operation);
   });
 
-  it.each([null, "not-a-uuid"])(
-    "claim route rejects missing or malformed idempotency key: %s",
-    async (key) => {
+  it.each([
+    {
+      label: "authentic off",
+      claim: claim(),
+      issuance: { status: "LEGACY", mode: "off", reason: "MODE_OFF" } as const
+    },
+    {
+      label: "generic enforce",
+      claim: claim({ examMode: "GENERIC" }),
+      issuance: { status: "LEGACY", mode: null, reason: "GENERIC_TEST" } as const
+    }
+  ])("claim route preserves $label without an operation key", async ({ claim: claimResult, issuance }) => {
       const dependencies = {
         requireOrderToken: vi.fn(async () => true),
-        claimAccess: vi.fn(async () => claim()),
-        issueSession: vi.fn(async () => issued()),
+        claimAccess: vi.fn(async () => claimResult),
+        resolveIssuance: vi.fn(async () => issuance),
         setLegacySession: vi.fn(async () => {})
       } as unknown as CommercialClaimAccessRouteDependencies;
-      const response = await createCommercialClaimAccessHandler(dependencies)(request(key), context());
-      expect(response.status).toBe(422);
-      expect(dependencies.requireOrderToken).not.toHaveBeenCalled();
-      expect(dependencies.issueSession).not.toHaveBeenCalled();
-    }
-  );
+      const response = await createCommercialClaimAccessHandler(dependencies)(request(null), context());
+      expect(response.status).toBe(200);
+      expect(dependencies.resolveIssuance).toHaveBeenCalledWith(claimResult, null);
+      expect(dependencies.setLegacySession).toHaveBeenCalledWith(claimResult.student);
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expectPrivate(response);
+  });
+
+  it.each(["shadow", "enforce"] as const)("claim route authentic %s requires an operation UUID", async (mode) => {
+    const dependencies = {
+      requireOrderToken: vi.fn(async () => true),
+      claimAccess: vi.fn(async () => claim()),
+      resolveIssuance: vi.fn(async () => ({ status: "INVALID_OPERATION" as const, mode })),
+      setLegacySession: vi.fn(async () => {})
+    } as unknown as CommercialClaimAccessRouteDependencies;
+    const response = await createCommercialClaimAccessHandler(dependencies)(request(null), context());
+    expect(response.status).toBe(422);
+    expect(dependencies.resolveIssuance).toHaveBeenCalledWith(claim(), null);
+    expect(dependencies.setLegacySession).not.toHaveBeenCalled();
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
+  });
 
   it("claim route missing authority cannot issue or set a verified cookie", async () => {
     const dependencies = {
       requireOrderToken: vi.fn(async () => false),
       claimAccess: vi.fn(),
-      issueSession: vi.fn(),
+      resolveIssuance: vi.fn(),
       setLegacySession: vi.fn()
     } as unknown as CommercialClaimAccessRouteDependencies;
     const response = await createCommercialClaimAccessHandler(dependencies)(request(randomUUID()), context());
     expect(response.status).toBe(403);
-    expect(dependencies.issueSession).not.toHaveBeenCalled();
+    expect(dependencies.resolveIssuance).not.toHaveBeenCalled();
     expect(response.headers.get("set-cookie")).toBeNull();
+    expectPrivate(response);
   });
 });

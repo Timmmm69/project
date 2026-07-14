@@ -4,10 +4,7 @@ import { serializeAttemptForStudent } from "@/lib/attempts/serialize";
 import { claimCommercialOrderAccess } from "@/lib/commercial/commercial-service";
 import { requireCommercialOrderToken } from "@/lib/commercial/order-token";
 import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
-import {
-  commercialClaimOperationIdSchema,
-  commercialPublicIdSchema
-} from "@/lib/commercial/schemas";
+import { commercialPublicIdSchema } from "@/lib/commercial/schemas";
 import { setStudentSessionCookie } from "@/server/auth/student-session";
 import {
   commercialOrderIssuanceUsesLegacySession,
@@ -26,7 +23,7 @@ type Context = { params: Promise<{ publicId: string }> };
 const defaultDependencies = {
   requireOrderToken: requireCommercialOrderToken,
   claimAccess: claimCommercialOrderAccess,
-  issueSession: issueCommercialOrderVerifiedSession,
+  resolveIssuance: issueCommercialOrderVerifiedSession,
   authorizeDestination: authorizeVerifiedStudentDestination,
   setLegacySession: setStudentSessionCookie,
   startAttempt: startOrRestoreAttempt
@@ -48,27 +45,39 @@ export function createCommercialStartAttemptHandler(
 ) {
   return async function commercialStartAttemptHandler(request: Request, context: Context) {
     if (!isSameOriginRequest(request)) {
-      return apiFailure({ code: "CSRF_REJECTED", message: "Invalid request origin." }, 403);
+      return finalizeCommercialOrderSessionResponse(
+        apiFailure({ code: "CSRF_REJECTED", message: "Invalid request origin." }, 403)
+      );
     }
     const { publicId } = await context.params;
     if (!commercialPublicIdSchema.safeParse(publicId).success) {
-      return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Order is not available in this session." }, 403);
-    }
-    const operation = commercialClaimOperationIdSchema.safeParse(
-      request.headers.get("Idempotency-Key")
-    );
-    if (!operation.success) {
-      return apiFailure({ code: "VALIDATION_ERROR", message: "A UUID Idempotency-Key is required." }, 422);
+      return finalizeCommercialOrderSessionResponse(
+        apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Order is not available in this session." }, 403)
+      );
     }
 
     try {
       if (!(await dependencies.requireOrderToken(publicId))) {
-        return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Order is not available in this session." }, 403);
+        return finalizeCommercialOrderSessionResponse(
+          apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Order is not available in this session." }, 403)
+        );
       }
       const claim = await dependencies.claimAccess(publicId);
-      const issuance = await dependencies.issueSession(claim, operation.data);
-      if (issuance.status === "UNAVAILABLE") return verifiedDestinationUnavailable();
-      if (issuance.status === "SCOPE_NOT_ALLOWED") return scopeRejection();
+      const issuance = await dependencies.resolveIssuance(
+        claim,
+        request.headers.get("Idempotency-Key")
+      );
+      if (issuance.status === "INVALID_OPERATION") {
+        return finalizeCommercialOrderSessionResponse(
+          apiFailure({ code: "VALIDATION_ERROR", message: "A UUID Idempotency-Key is required." }, 422)
+        );
+      }
+      if (issuance.status === "UNAVAILABLE") {
+        return finalizeCommercialOrderSessionResponse(verifiedDestinationUnavailable());
+      }
+      if (issuance.status === "SCOPE_NOT_ALLOWED") {
+        return finalizeCommercialOrderSessionResponse(scopeRejection());
+      }
 
       const target = claim.nextAction === "START_TEST"
         ? { destination: "PRE" as const, testId: claim.testId }
@@ -77,7 +86,9 @@ export function createCommercialStartAttemptHandler(
           : claim.attemptId
             ? { destination: "RES" as const, attemptId: claim.attemptId }
             : null;
-      if (!target) return verifiedDestinationUnavailable();
+      if (!target) {
+        return finalizeCommercialOrderSessionResponse(verifiedDestinationUnavailable());
+      }
 
       let authorization;
       try {
@@ -89,15 +100,17 @@ export function createCommercialStartAttemptHandler(
             : {}
         );
       } catch {
-        return verifiedDestinationUnavailable();
+        return finalizeCommercialOrderSessionResponse(verifiedDestinationUnavailable());
       }
       if (authorization.status === "REJECTED") {
-        return verifiedDestinationRejection(authorization);
+        return finalizeCommercialOrderSessionResponse(
+          verifiedDestinationRejection(authorization)
+        );
       }
       if (issuance.status === "ISSUED" &&
         issuance.mode === "enforce" &&
         authorization.status !== "AUTHORIZED") {
-        return scopeRejection();
+        return finalizeCommercialOrderSessionResponse(scopeRejection());
       }
       if (commercialOrderIssuanceUsesLegacySession(issuance)) {
         await dependencies.setLegacySession(claim.student);
@@ -136,7 +149,7 @@ export function createCommercialStartAttemptHandler(
         issuance
       );
     } catch (error) {
-      return commercialErrorResponse(error);
+      return finalizeCommercialOrderSessionResponse(commercialErrorResponse(error));
     }
   };
 }
