@@ -64,4 +64,9 @@ jobs:
           RUN_ACC01A_RECOVERY_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_recovery_ci
         run: pnpm exec vitest run tests/integration/recovery-domain-service.test.ts
+      - name: Run ACC-01A recovery HTTP boundary PostgreSQL integration tests
+        env:
+          RUN_ACC01A_HTTP_INTEGRATION: "true"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_recovery_ci
+        run: pnpm exec vitest run tests/integration/recovery-http-boundary.test.ts
       - run: pnpm build
