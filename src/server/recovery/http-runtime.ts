@@ -9,6 +9,8 @@ import { createRecoveryDomainService } from "@/server/recovery/service";
 import { prisma } from "@/server/db/client";
 import { canonicalRecoveryOrigin } from "@/server/recovery/request-protection";
 import { createRecoveryStateResolver } from "@/server/recovery/state-resolver";
+import { parseVerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
+import { createRecoveryContinuationService } from "@/server/recovery/continuation";
 
 export type RecoveryHttpService = Pick<
   ReturnType<typeof createRecoveryDomainService>,
@@ -20,6 +22,7 @@ export type EnabledRecoveryHttpRuntime = Readonly<{
   config: Extract<RecoveryConfig, { enabled: true }>;
   service: RecoveryHttpService;
   resolveState: ReturnType<typeof createRecoveryStateResolver>;
+  continuation?: ReturnType<typeof createRecoveryContinuationService>;
   trustedOrigin: string;
   sourceLimiterInput: string;
   resolverLimiterInput: string;
@@ -55,12 +58,18 @@ export function createRecoveryHttpRuntime(
   const mailer = config.mailerMode === "fake"
     ? createFakeDevelopmentRecoveryMailer({ environment: environment.NODE_ENV })
     : (testMailbox ??= createTestRecoveryMailbox({ environment: environment.NODE_ENV })).mailer;
+  const verifiedSessionConfig = parseVerifiedStudentSessionConfig(environment);
 
   return {
     config,
     trustedOrigin,
     sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE,
     resolverLimiterInput: RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE,
+    continuation: createRecoveryContinuationService({
+      client: prisma,
+      recoveryConfig: config,
+      verifiedSessionConfig
+    }),
     resolveState: createRecoveryStateResolver({
       client: prisma,
       productCode: config.productCode

@@ -20,7 +20,7 @@ export function canonicalRecoveryOrigin(value: string | undefined) {
   }
 }
 
-function hasValidOriginAndHost(request: Request, configuredOrigin: string) {
+export function hasValidRecoveryOriginAndHost(request: Request, configuredOrigin: string) {
   const originValue = request.headers.get("origin");
   const host = request.headers.get("host");
   if (!originValue || originValue === "null" || !host) return false;
@@ -36,7 +36,7 @@ function hasValidOriginAndHost(request: Request, configuredOrigin: string) {
   }
 }
 
-function hasJsonContentType(request: Request) {
+export function hasRecoveryJsonContentType(request: Request) {
   const contentType = request.headers.get("content-type");
   if (!contentType) return false;
   const [mediaType, ...parameters] = contentType.split(";").map((value) => value.trim());
@@ -50,11 +50,11 @@ function hasJsonContentType(request: Request) {
 }
 
 export function isProtectedRecoveryPost(request: Request, configuredOrigin: string) {
-  return hasValidOriginAndHost(request, configuredOrigin) && hasJsonContentType(request);
+  return hasValidRecoveryOriginAndHost(request, configuredOrigin) && hasRecoveryJsonContentType(request);
 }
 
 export async function isProtectedRecoveryDelete(request: Request, configuredOrigin: string) {
-  if (!hasValidOriginAndHost(request, configuredOrigin)) return false;
+  if (!hasValidRecoveryOriginAndHost(request, configuredOrigin)) return false;
   const declaredLength = request.headers.get("content-length");
   if (declaredLength && declaredLength !== "0") return false;
   if (request.headers.has("transfer-encoding")) return false;

@@ -62,6 +62,7 @@ type ProductCandidate = Readonly<{
   isActive: boolean;
   test: Readonly<{
     id: string;
+    slug?: string;
     examMode: string;
     status: TestStatus;
     deletedAt: Date | null;
@@ -136,6 +137,26 @@ export type RecoveryStateSnapshot = Readonly<{
   orders: readonly OrderCandidate[];
   accesses: readonly AccessCandidate[];
   attempts: readonly AttemptCandidate[];
+}>;
+
+type RecoveryContinuationScope = Readonly<{
+  userId: string;
+  commercialProductId: string;
+  testId: string;
+  testSlug: string;
+  accessId: string;
+}>;
+
+export type RecoveryContinuationAuthority =
+  | (RecoveryContinuationScope & Readonly<{ state: "access_unstarted" }>)
+  | (RecoveryContinuationScope & Readonly<{
+      state: "attempt_active" | "result_available";
+      attemptId: string;
+    }>);
+
+export type RecoveryStateResolution = Readonly<{
+  response: RecoveryStateResponse;
+  authority: RecoveryContinuationAuthority | null;
 }>;
 
 const terminalSnapshotQuestionSchema = z.object({
@@ -397,7 +418,7 @@ async function loadRecoveryStateSnapshot(input: {
       priceMinor: true,
       currency: true,
       isActive: true,
-      test: { select: { id: true, examMode: true, status: true, deletedAt: true } }
+      test: { select: { id: true, slug: true, examMode: true, status: true, deletedAt: true } }
     }
   });
   await input.snapshotReadHook?.({ stage: "PRODUCT_READ", transaction });
@@ -509,6 +530,55 @@ async function loadRecoveryStateSnapshot(input: {
   };
 }
 
+export async function resolveRecoveryStateInTransaction(input: {
+  transaction: Prisma.TransactionClient;
+  productCode: string;
+  scope: {
+    emailNormalized: string;
+    commercialProductId: string;
+    testId: string;
+  };
+  now: Date;
+  /** @internal Deterministic PostgreSQL snapshot synchronization for tests only. */
+  snapshotReadHook?: RecoveryStateSnapshotReadHook;
+}): Promise<RecoveryStateResolution> {
+  const snapshot = await loadRecoveryStateSnapshot({
+    transaction: input.transaction,
+    productCode: input.productCode,
+    scope: input.scope,
+    snapshotReadHook: input.snapshotReadHook
+  });
+  const response = resolveRecoveryStateSnapshot(snapshot, input.now);
+  if (response.nextAction !== "CONTINUE") {
+    return { response, authority: null };
+  }
+
+  const product = snapshot.product;
+  const user = uniqueById(snapshot.users)[0];
+  const access = uniqueById(snapshot.accesses)[0];
+  const attempt = uniqueById(snapshot.attempts)[0];
+  if (!product || !product.test.slug || !user || !access) {
+    return { response, authority: null };
+  }
+  const scope = {
+    userId: user.id,
+    commercialProductId: product.id,
+    testId: product.test.id,
+    testSlug: product.test.slug,
+    accessId: access.id
+  };
+  if (response.state === "access_unstarted") {
+    return { response, authority: { state: response.state, ...scope } };
+  }
+  if (!attempt || (response.state !== "attempt_active" && response.state !== "result_available")) {
+    return { response, authority: null };
+  }
+  return {
+    response,
+    authority: { state: response.state, ...scope, attemptId: attempt.id }
+  };
+}
+
 export function createRecoveryStateResolver(input: {
   client: PrismaClient;
   productCode: string;
@@ -526,13 +596,14 @@ export function createRecoveryStateResolver(input: {
     const now = clock();
     return input.client.$transaction(async (transaction) => {
       await transaction.$executeRaw(Prisma.sql`SET TRANSACTION READ ONLY`);
-      const snapshot = await loadRecoveryStateSnapshot({
+      const resolution = await resolveRecoveryStateInTransaction({
         transaction,
         productCode: input.productCode,
         scope,
+        now,
         snapshotReadHook: input.snapshotReadHook
       });
-      return resolveRecoveryStateSnapshot(snapshot, now);
+      return resolution.response;
     }, {
       isolationLevel: Prisma.TransactionIsolationLevel.RepeatableRead
     });
