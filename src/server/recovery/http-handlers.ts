@@ -19,6 +19,7 @@ import {
 import {
   createRecoveryHttpRuntime,
   RECOVERY_HTTP_GLOBAL_SOURCE,
+  RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE,
   type EnabledRecoveryHttpRuntime,
   type RecoveryHttpRuntime
 } from "@/server/recovery/http-runtime";
@@ -32,6 +33,7 @@ import {
   RECOVERY_RESEND_COOLDOWN_MS
 } from "@/server/recovery/service";
 import { normalizeRecoveryTiming } from "@/server/recovery/timing";
+import { RecoveryStateResolverError } from "@/server/recovery/state-resolver";
 
 const challengeRequestSchema = z.object({
   email: normalizedEmailSchema,
@@ -64,6 +66,22 @@ function invalidRequest() {
 
 function temporaryUnavailable() {
   return recoveryError("TEMPORARY_UNAVAILABLE", "Recovery is temporarily unavailable.", 503);
+}
+
+function recoverySessionRequired() {
+  return recoveryError("RECOVERY_SESSION_REQUIRED", "Recovery session is required.", 401);
+}
+
+function scopeNotAllowed() {
+  return recoveryError("SCOPE_NOT_ALLOWED", "Recovery scope is not allowed.", 403);
+}
+
+function resolutionTemporaryError() {
+  return recoveryError(
+    "RESOLUTION_TEMPORARY_ERROR",
+    "Recovery state is temporarily unavailable.",
+    503
+  );
 }
 
 async function strictJson(request: Request) {
@@ -119,7 +137,8 @@ export function createRecoveryHttpHandlers(
       if (!runtime.config.enabled) return null;
       const enabled = runtime as EnabledRecoveryHttpRuntime;
       if (canonicalRecoveryOrigin(enabled.trustedOrigin) !== enabled.trustedOrigin ||
-        enabled.sourceLimiterInput !== RECOVERY_HTTP_GLOBAL_SOURCE) {
+        enabled.sourceLimiterInput !== RECOVERY_HTTP_GLOBAL_SOURCE ||
+        enabled.resolverLimiterInput !== RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE) {
         return null;
       }
       return enabled;
@@ -295,5 +314,51 @@ export function createRecoveryHttpHandlers(
     }
   }
 
-  return { requestChallenge, verifyChallenge, invalidateSession } as const;
+  async function resolveState(request: Request) {
+    const runtime = enabledRuntime();
+    if (!runtime) return featureUnavailable();
+
+    const rawRecoveryToken = readRecoveryCookie(request, RECOVERY_SESSION_COOKIE);
+    if (new URL(request.url).search.length > 0) return invalidRequest();
+    if (!rawRecoveryToken) return recoverySessionRequired();
+
+    try {
+      const session = await runtime.service.validateRecoverySession(rawRecoveryToken);
+      if (session.status === "SCOPE_MISMATCH") {
+        const response = scopeNotAllowed();
+        clearRecoverySessionCookie(response, { secure: secureCookies() });
+        return response;
+      }
+      if (session.status !== "RESOLVED") {
+        const response = recoverySessionRequired();
+        clearRecoverySessionCookie(response, { secure: secureCookies() });
+        return response;
+      }
+
+      const limit = await runtime.service.consumeResolverRead(runtime.resolverLimiterInput);
+      if (!limit.allowed) {
+        return recoveryError(
+          "RATE_LIMITED",
+          "Too many recovery state requests.",
+          429,
+          { "Retry-After": String(limit.retryAfterSeconds) }
+        );
+      }
+
+      return recoveryJson(await runtime.resolveState({
+        emailNormalized: session.emailNormalized,
+        commercialProductId: session.commercialProductId,
+        testId: session.testId
+      }), 200);
+    } catch (error) {
+      if (error instanceof RecoveryStateResolverError && error.code === "SCOPE_NOT_ALLOWED") {
+        const response = scopeNotAllowed();
+        clearRecoverySessionCookie(response, { secure: secureCookies() });
+        return response;
+      }
+      return resolutionTemporaryError();
+    }
+  }
+
+  return { requestChallenge, verifyChallenge, resolveState, invalidateSession } as const;
 }

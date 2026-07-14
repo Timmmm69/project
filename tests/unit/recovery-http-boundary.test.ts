@@ -11,7 +11,8 @@ import type {
 } from "@/server/recovery/http-runtime";
 import {
   createRecoveryHttpRuntime,
-  RECOVERY_HTTP_GLOBAL_SOURCE
+  RECOVERY_HTTP_GLOBAL_SOURCE,
+  RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
 } from "@/server/recovery/http-runtime";
 import { RecoveryDomainServiceError } from "@/server/recovery/service";
 import { normalizeRecoveryTiming } from "@/server/recovery/timing";
@@ -29,8 +30,14 @@ function enabledRuntime(service: RecoveryHttpService): RecoveryHttpRuntime {
   return {
     config: enabledConfig(),
     service,
+    resolveState: async () => ({
+      state: "no_access",
+      screen: "REC-01",
+      nextAction: null
+    }),
     trustedOrigin: origin,
-    sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE
+    sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE,
+    resolverLimiterInput: RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
   };
 }
 
@@ -134,6 +141,8 @@ describe("ACC-01A recovery HTTP boundary", () => {
     requestChallenge: ReturnType<typeof vi.fn>;
     verifyChallenge: ReturnType<typeof vi.fn>;
     invalidateRecoverySession: ReturnType<typeof vi.fn>;
+    validateRecoverySession: ReturnType<typeof vi.fn>;
+    consumeResolverRead: ReturnType<typeof vi.fn>;
   };
   let handlers: ReturnType<typeof createRecoveryHttpHandlers>;
 
@@ -148,7 +157,9 @@ describe("ACC-01A recovery HTTP boundary", () => {
         expiresAt: sessionExpiry,
         correlationId: randomUUID()
       }),
-      invalidateRecoverySession: vi.fn().mockResolvedValue({ status: "REVOKED" })
+      invalidateRecoverySession: vi.fn().mockResolvedValue({ status: "REVOKED" }),
+      validateRecoverySession: vi.fn().mockResolvedValue({ status: "NOT_FOUND" }),
+      consumeResolverRead: vi.fn().mockResolvedValue({ allowed: true })
     };
     const runtime = enabledRuntime(service as unknown as RecoveryHttpService);
     handlers = createRecoveryHttpHandlers({

@@ -3,7 +3,10 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
 import type { EnabledRecoveryConfig, RecoveryKeyRing } from "@/server/recovery/config";
 import { createRecoveryHttpHandlers } from "@/server/recovery/http-handlers";
-import { RECOVERY_HTTP_GLOBAL_SOURCE } from "@/server/recovery/http-runtime";
+import {
+  RECOVERY_HTTP_GLOBAL_SOURCE,
+  RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
+} from "@/server/recovery/http-runtime";
 import type { RecoveryMail, RecoveryMailer } from "@/server/recovery/mailer";
 import { createRecoveryDomainService } from "@/server/recovery/service";
 import { normalizeRecoveryTiming } from "@/server/recovery/timing";
@@ -135,8 +138,14 @@ describeWithDatabase("ACC-01A recovery HTTP boundary PostgreSQL integration", ()
       getRuntime: () => ({
         config: recoveryConfig,
         service,
+        resolveState: async () => ({
+          state: "no_access",
+          screen: "REC-01",
+          nextAction: null
+        }),
         trustedOrigin: origin,
-        sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE
+        sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE,
+        resolverLimiterInput: RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
       }),
       clock: () => new Date(now),
       normalizeRequestTiming: options.normalizeRequestTiming ?? (async () => {}),

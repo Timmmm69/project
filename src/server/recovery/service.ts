@@ -351,6 +351,12 @@ export function createRecoveryDomainService(input: {
   }
 
   return {
+    async consumeResolverRead(source: string) {
+      const config = enabledConfig();
+      const transientSource = validateSource(source);
+      return rateLimiter(config).consumeSourceRequest(transientSource);
+    },
+
     async requestChallenge(request: RequestRecoveryChallengeInput): Promise<RequestRecoveryChallengeResult> {
       const config = enabledConfig();
       const emailNormalized = normalizeAndValidateEmail(request.email);
