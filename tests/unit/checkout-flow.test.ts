@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
+import { checkoutStartedPropertiesSchema, orderCreatedPropertiesSchema } from "@/lib/analytics/schemas";
 import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties } from "@/lib/commercial/checkout-flow";
 import { commercialCheckoutFlowIdSchema, commercialOrderSchema } from "@/lib/commercial/schemas";
 
@@ -23,6 +24,7 @@ describe("commercial checkout flow", () => {
       testId: "russian-training-1",
       examMode: "RIKZ_RUSSIAN_2026"
     });
+    expect(checkoutStartedPropertiesSchema.parse(properties)).toEqual(properties);
     expect(() => assertNoForbiddenAnalyticsPayload(properties)).not.toThrow();
     expect(properties).not.toHaveProperty("email");
   });
@@ -36,6 +38,7 @@ describe("commercial checkout flow", () => {
       amount: 1000,
       currency: "BYN"
     });
+    expect(orderCreatedPropertiesSchema.parse(properties)).toEqual(properties);
     expect(() => assertNoForbiddenAnalyticsPayload(properties)).not.toThrow();
     expect(properties).not.toHaveProperty("email");
   });
