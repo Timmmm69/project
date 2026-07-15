@@ -86,8 +86,9 @@ describe("CatalogView", () => {
     const html = renderToStaticMarkup(createElement(CatalogView, { state: "empty" }));
 
     expect(html).toContain("Сейчас нет доступных тестов");
+    expect(html).toContain("Покупка недоступна. Можно вернуться позже или обратиться в поддержку.");
     expect(html).not.toContain("Подробнее о тесте");
-    expect(html).not.toContain("Обратиться в поддержку");
+    expect(html).not.toContain("<a");
   });
 
   it("renders a safe error state with retry and without provider or database details", () => {
@@ -98,8 +99,9 @@ describe("CatalogView", () => {
     }));
 
     expect(html).toContain("Не удалось загрузить каталог");
-    expect(html).toContain("Данные о тестах не изменены. Повторите загрузку.");
+    expect(html).toContain("Данные о тестах не изменены. Повторите загрузку или обратитесь в поддержку.");
     expect(html).toContain("Повторить");
+    expect(html).not.toContain("<a");
     expect(html).not.toContain("P1001");
     expect(html).not.toContain("Can&#x27;t reach database server");
     expect(html).not.toContain("PrismaClient");

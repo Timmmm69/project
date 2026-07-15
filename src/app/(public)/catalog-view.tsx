@@ -104,7 +104,7 @@ export function CatalogView(props: CatalogViewProps) {
     return (
       <section className={styles.stateSurface}>
         <h2 className={styles.stateTitle}>Сейчас нет доступных тестов</h2>
-        <p className={styles.stateDescription}>Покупка недоступна. Можно вернуться позже.</p>
+        <p className={styles.stateDescription}>Покупка недоступна. Можно вернуться позже или обратиться в поддержку.</p>
       </section>
     );
   }
@@ -113,7 +113,7 @@ export function CatalogView(props: CatalogViewProps) {
     return (
       <section className={`${styles.stateSurface} ${styles.errorSurface}`} role="alert">
         <h2 className={styles.stateTitle}>Не удалось загрузить каталог</h2>
-        <p className={styles.stateDescription}>Данные о тестах не изменены. Повторите загрузку.</p>
+        <p className={styles.stateDescription}>Данные о тестах не изменены. Повторите загрузку или обратитесь в поддержку.</p>
         {props.retryControl}
       </section>
     );

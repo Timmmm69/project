@@ -190,8 +190,9 @@ test("empty state has no product or inactive support action", async ({ page }, t
     await page.setViewportSize({ height: 900, width: 1440 });
     await page.goto("/");
     await expect(page.getByRole("heading", { name: "Сейчас нет доступных тестов" })).toBeVisible();
+    await expect(page.getByText("Покупка недоступна. Можно вернуться позже или обратиться в поддержку.", { exact: true })).toBeVisible();
     await expect(page.getByRole("link", { name: "Подробнее о тесте" })).toHaveCount(0);
-    await expect(page.getByRole("link", { name: "Обратиться в поддержку" })).toHaveCount(0);
+    await expect(page.getByRole("link", { name: /обратиться в поддержку/i })).toHaveCount(0);
     await capture(page, testInfo, "cat-01-empty-state");
   } finally {
     await prisma.test.updateMany({ where: { id: { in: published.map(({ id }) => id) } }, data: { status: "PUBLISHED" } });
