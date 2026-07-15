@@ -72,11 +72,15 @@ const keyCategories = new Map<string, AnalyticsPrivacyCategory>([
   ["viewport_dimensions", "device_tracking"],
   ["answer", "education_content"],
   ["answers", "education_content"],
+  ["answer_hash", "education_content"],
   ["selected_answer", "education_content"],
+  ["selected_options", "education_content"],
   ["answer_text", "education_content"],
   ["answer_token", "education_content"],
   ["answer_length", "education_content"],
   ["is_correct", "education_content"],
+  ["question", "education_content"],
+  ["question_content", "education_content"],
   ["question_id", "education_content"],
   ["question_number", "education_content"],
   ["question_text", "education_content"],
@@ -103,6 +107,16 @@ const keyCategories = new Map<string, AnalyticsPrivacyCategory>([
   ["session_token", "security"],
   ["recovery_token", "security"],
   ["verified_session_token", "security"],
+  ["token", "security"],
+  ["token_hash", "security"],
+  ["api_key", "security"],
+  ["api_key_hash", "security"],
+  ["client_secret", "security"],
+  ["secret_key", "security"],
+  ["private_key", "security"],
+  ["signing_key", "security"],
+  ["encryption_key", "security"],
+  ["webhook_secret", "security"],
   ["access_code", "security"],
   ["access_code_hash", "security"],
   ["otp", "security"],
@@ -119,9 +133,28 @@ const keyCategories = new Map<string, AnalyticsPrivacyCategory>([
   ["password", "security"],
   ["credentials", "security"],
   ["provider_credentials", "security"],
+  ["provider_token", "security"],
+  ["provider_secret", "security"],
   ["provider_payment_id", "security"],
+  ["merchant_id", "security"],
+  ["store_id", "security"],
+  ["wsb_storeid", "security"],
+  ["wsb_signature", "security"],
   ["merchant_reference", "security"],
   ["provider_reference", "security"],
+  ["card_number", "security"],
+  ["pan", "security"],
+  ["cardholder", "security"],
+  ["cardholder_name", "security"],
+  ["cvv", "security"],
+  ["cvc", "security"],
+  ["cvv2", "security"],
+  ["cvc2", "security"],
+  ["card_expiry", "security"],
+  ["expiry_date", "security"],
+  ["expiration_date", "security"],
+  ["card_token", "security"],
+  ["payment_token", "security"],
   ["invoice", "security"],
   ["rrn", "security"],
   ["id", "security"],
@@ -173,6 +206,27 @@ const jwtLike = /\beyJ[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\.[A-Za-z0-9_-]{8,}\b/
 const rawUrlLike = /(?:https?:\/\/|\/\/)[^\s]+/i;
 const queryOrFragmentLike = /(?:^|[/?#&])(?:token|code|key|secret|signature|authorization|session|recovery)[=:][^\s&#]+/i;
 const stackTraceLike = /(?:\n|^)\s*at\s+(?:new\s+)?[\w.$<>]+\s*\(|Error:\s+.+\n\s*at\s+/;
+const paymentCardNumberLike = /^\d(?:[ -]?\d){12,18}$/;
+
+function isLuhnValidPaymentCardNumber(value: string) {
+  if (!paymentCardNumberLike.test(value)) return false;
+
+  const digits = value.replace(/[ -]/g, "");
+  let checksum = 0;
+  let doubleDigit = false;
+
+  for (let index = digits.length - 1; index >= 0; index -= 1) {
+    let digit = Number(digits[index]);
+    if (doubleDigit) {
+      digit *= 2;
+      if (digit > 9) digit -= 9;
+    }
+    checksum += digit;
+    doubleDigit = !doubleDigit;
+  }
+
+  return checksum % 10 === 0;
+}
 
 function normalizeKey(key: string) {
   return key
@@ -202,6 +256,9 @@ function scanString(value: string, path: string, key: string | null): AnalyticsP
   }
   if (userAgentLike.test(value)) {
     return failure("device_tracking", path);
+  }
+  if (isLuhnValidPaymentCardNumber(value)) {
+    return failure("security", path);
   }
   if (bearerLike.test(value) || jwtLike.test(value)) {
     return failure("security", path);
