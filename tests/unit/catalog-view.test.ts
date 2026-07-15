@@ -1,3 +1,4 @@
+import { createElement } from "react";
 import { renderToStaticMarkup } from "react-dom/server";
 import { describe, expect, it } from "vitest";
 import { CatalogLoading, CatalogView, type CatalogTest } from "../../src/app/(public)/catalog-view";
@@ -14,27 +15,29 @@ const authenticTest: CatalogTest = {
   attemptsLimit: 1,
   questionsCount: 40,
   maxRawScore: 80,
-  showScaledScore: false
+  showScaledScore: false,
+  isAuthentic: true
 };
 
-const genericTest: CatalogTest = {
+const adversarialGenericTest: CatalogTest = {
   id: "generic-test",
-  title: "Тест по лексике",
+  title: "Generic-тест с характеристиками ЦЭ/ЦТ",
   slug: "generic-test",
-  mode: "training",
-  shortDescription: "Короткая тематическая тренировка.",
+  mode: "ce_ct",
+  shortDescription: "Обычный опубликованный тест.",
   price: 750,
   currency: "BYN",
-  durationMinutes: 30,
-  attemptsLimit: 2,
-  questionsCount: 12,
-  maxRawScore: 12,
-  showScaledScore: true
+  durationMinutes: 120,
+  attemptsLimit: 1,
+  questionsCount: 40,
+  maxRawScore: 80,
+  showScaledScore: false,
+  isAuthentic: false
 };
 
 describe("CatalogView", () => {
   it("renders a semantic loading state without invented product facts", () => {
-    const html = renderToStaticMarkup(<CatalogLoading />);
+    const html = renderToStaticMarkup(createElement(CatalogLoading));
 
     expect(html).toContain('role="status"');
     expect(html).toContain('aria-label="Загружается каталог тестов"');
@@ -43,12 +46,16 @@ describe("CatalogView", () => {
     expect(html).not.toContain("Доступен для покупки");
   });
 
-  it("renders the approved authentic product content without prohibited public claims", () => {
-    const html = renderToStaticMarkup(<CatalogView state="success" tests={[authenticTest]} />);
+  it("renders authentic-only content when the server marks the product authentic", () => {
+    const html = renderToStaticMarkup(createElement(CatalogView, {
+      state: "success",
+      tests: [authenticTest]
+    }));
 
     expect(html).toContain("Тренировочный тест по русскому языку");
     expect(html).toContain("Оригинальный тренировочный вариант");
     expect(html).toContain("10 BYN");
+    expect(html).toContain("Одна покупка — одна попытка");
     expect(html).toContain("Только первичный результат");
     expect(html).toContain("Подробнее о тесте");
     expect(html).toContain("Уже есть доступ?");
@@ -57,35 +64,45 @@ describe("CatalogView", () => {
     expect(html).not.toContain("разбор ошибок");
   });
 
-  it("keeps a generic product available without authentic-only claims", () => {
-    const html = renderToStaticMarkup(<CatalogView state="success" tests={[genericTest]} />);
+  it("does not infer authenticity from mode or matching numeric characteristics", () => {
+    const html = renderToStaticMarkup(createElement(CatalogView, {
+      state: "success",
+      tests: [adversarialGenericTest]
+    }));
 
-    expect(html).toContain("Тест по лексике");
-    expect(html).toContain("12 заданий");
-    expect(html).toContain("30 минут");
+    expect(html).toContain("Generic-тест с характеристиками ЦЭ/ЦТ");
+    expect(html).toContain("40 заданий");
+    expect(html).toContain("120 минут");
+    expect(html).toContain("1 попытка");
     expect(html).toContain("7,50 BYN");
     expect(html).toContain('href="/tests/generic-test"');
     expect(html).not.toContain("Оригинальный тренировочный вариант");
     expect(html).not.toContain("Одна покупка — одна попытка");
     expect(html).not.toContain("Только первичный результат");
+    expect(html).not.toContain("Не является официальным материалом ЦЭ/ЦТ.");
   });
 
   it("renders the empty state without product or inactive support actions", () => {
-    const html = renderToStaticMarkup(<CatalogView state="empty" />);
+    const html = renderToStaticMarkup(createElement(CatalogView, { state: "empty" }));
 
     expect(html).toContain("Сейчас нет доступных тестов");
     expect(html).not.toContain("Подробнее о тесте");
     expect(html).not.toContain("Обратиться в поддержку");
   });
 
-  it("renders a safe error state with retry and without a raw server error", () => {
-    const html = renderToStaticMarkup(
-      <CatalogView retryControl={<button type="button">Повторить</button>} state="error" />
-    );
+  it("renders a safe error state with retry and without provider or database details", () => {
+    const retryControl = createElement("button", { type: "button" }, "Повторить");
+    const html = renderToStaticMarkup(createElement(CatalogView, {
+      retryControl,
+      state: "error"
+    }));
 
     expect(html).toContain("Не удалось загрузить каталог");
+    expect(html).toContain("Данные о тестах не изменены. Повторите загрузку.");
     expect(html).toContain("Повторить");
     expect(html).not.toContain("P1001");
     expect(html).not.toContain("Can&#x27;t reach database server");
+    expect(html).not.toContain("PrismaClient");
+    expect(html).not.toContain("PostgreSQL");
   });
 });

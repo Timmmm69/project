@@ -12,7 +12,10 @@ export async function CatalogContent() {
       },
       orderBy: [{ publishedAt: "desc" }, { updatedAt: "desc" }]
     });
-    const publicTests = tests.map(serializePublicTest);
+    const publicTests = tests.map((test) => ({
+      ...serializePublicTest(test),
+      isAuthentic: test.examMode === "RIKZ_RUSSIAN_2026"
+    }));
 
     if (publicTests.length === 0) {
       return <CatalogView state="empty" />;

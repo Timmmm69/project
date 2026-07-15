@@ -17,7 +17,7 @@ export type CatalogTest = Pick<
   | "questionsCount"
   | "maxRawScore"
   | "showScaledScore"
->;
+> & Readonly<{ isAuthentic: boolean }>;
 
 type CatalogViewProps =
   | Readonly<{ state: "success"; tests: readonly CatalogTest[] }>
@@ -45,17 +45,8 @@ function formatAttempts(attempts: number) {
   return `${attempts} ${noun}`;
 }
 
-export function isAuthenticTrainingTest(test: CatalogTest) {
-  return test.mode === "ce_ct"
-    && test.questionsCount === 40
-    && test.durationMinutes === 120
-    && test.attemptsLimit === 1
-    && test.maxRawScore === 80
-    && test.showScaledScore === false;
-}
-
 function ProductCard({ test }: Readonly<{ test: CatalogTest }>) {
-  const authentic = isAuthenticTrainingTest(test);
+  const authentic = test.isAuthentic;
   const productUrl = `/tests/${test.slug}`;
 
   return (
@@ -73,7 +64,7 @@ function ProductCard({ test }: Readonly<{ test: CatalogTest }>) {
         <li>{test.questionsCount} заданий</li>
         <li>{test.durationMinutes} минут</li>
         <li>{authentic ? "Одна покупка — одна попытка" : formatAttempts(test.attemptsLimit)}</li>
-        {!test.showScaledScore ? <li>Только первичный результат</li> : null}
+        {authentic ? <li>Только первичный результат</li> : null}
       </ul>
 
       <div className={styles.purchase}>

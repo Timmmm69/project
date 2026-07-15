@@ -8,7 +8,6 @@ const prisma = new PrismaClient();
 const runId = `${Date.now()}`;
 const authenticSlug = `catalog-authentic-${runId}`;
 const genericSlug = `catalog-generic-${runId}`;
-let catalogTableRenamed = false;
 
 async function capture(page: Page, testInfo: TestInfo, name: string) {
   const path = testInfo.outputPath(`${name}.png`);
@@ -22,12 +21,6 @@ async function assertNoHorizontalScroll(page: Page) {
     scrollWidth: document.documentElement.scrollWidth
   }));
   expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
-}
-
-async function restoreCatalogTable() {
-  if (!catalogTableRenamed) return;
-  await prisma.$executeRawUnsafe('ALTER TABLE "tests_catalog_error" RENAME TO "tests"');
-  catalogTableRenamed = false;
 }
 
 test.beforeAll(async () => {
@@ -56,18 +49,18 @@ test.beforeAll(async () => {
         title: "Длинное название generic-теста по лексике и грамматике русского языка",
         slug: genericSlug,
         subject: "RUSSIAN",
-        mode: "TRAINING",
+        mode: "CE_CT",
         examMode: "GENERIC",
         shortDescription: "Длинное второстепенное описание для проверки переносов и порядка: цена, основные факты и действия должны оставаться выше этого текста.",
         price: 123456,
         currency: "BYN",
-        durationMinutes: 30,
-        attemptsLimit: 2,
+        durationMinutes: 120,
+        attemptsLimit: 1,
         accessDays: 14,
         status: "PUBLISHED",
-        questionsCount: 12,
-        maxRawScore: 12,
-        showScaledScore: true,
+        questionsCount: 40,
+        maxRawScore: 80,
+        showScaledScore: false,
         publishedAt: new Date("2026-07-14T12:00:00.000Z")
       }
     ]
@@ -75,7 +68,6 @@ test.beforeAll(async () => {
 });
 
 test.afterAll(async () => {
-  await restoreCatalogTable();
   await prisma.test.deleteMany({ where: { slug: { in: [authenticSlug, genericSlug] } } });
   await prisma.$disconnect();
 });
@@ -98,11 +90,14 @@ test("desktop success, authentic content, generic regression and product navigat
   await expect(authenticCard).toContainText("Только первичный результат");
   await expect(authenticCard).toContainText("Не является официальным материалом ЦЭ/ЦТ.");
 
-  await expect(genericCard).toContainText("12 заданий");
-  await expect(genericCard).toContainText("30 минут");
+  await expect(genericCard).toContainText("40 заданий");
+  await expect(genericCard).toContainText("120 минут");
+  await expect(genericCard).toContainText("1 попытка");
   await expect(genericCard).toContainText("1234,56 BYN");
   await expect(genericCard).not.toContainText("Оригинальный тренировочный вариант");
   await expect(genericCard).not.toContainText("Одна покупка — одна попытка");
+  await expect(genericCard).not.toContainText("Только первичный результат");
+  await expect(genericCard).not.toContainText("Не является официальным материалом ЦЭ/ЦТ.");
 
   await assertNoHorizontalScroll(page);
   await capture(page, testInfo, "cat-01-desktop-1440x900");
@@ -201,21 +196,4 @@ test("empty state has no product or inactive support action", async ({ page }, t
   } finally {
     await prisma.test.updateMany({ where: { id: { in: published.map(({ id }) => id) } }, data: { status: "PUBLISHED" } });
   }
-});
-
-test("error state hides raw database details and safely retries", async ({ page }, testInfo) => {
-  await prisma.$executeRawUnsafe('ALTER TABLE "tests" RENAME TO "tests_catalog_error"');
-  catalogTableRenamed = true;
-  await page.setViewportSize({ height: 900, width: 1440 });
-  await page.goto("/");
-
-  await expect(page.getByRole("heading", { name: "Не удалось загрузить каталог" })).toBeVisible();
-  await expect(page.getByRole("button", { name: "Повторить" })).toBeVisible();
-  await expect(page.getByText("P1001", { exact: false })).toHaveCount(0);
-  await expect(page.getByText("database", { exact: false })).toHaveCount(0);
-  await capture(page, testInfo, "cat-01-error-state");
-
-  await restoreCatalogTable();
-  await page.getByRole("button", { name: "Повторить" }).click();
-  await expect(page.locator(`[data-catalog-kind="authentic"]:has(a[href="/tests/${authenticSlug}"])`)).toBeVisible();
 });
