@@ -2,6 +2,24 @@ import { z } from "zod";
 import { ANALYTICS_ENTITY_ID_PATTERN, ANALYTICS_ID_KEY_VERSION_PATTERN } from "@/lib/analytics/entity-id";
 import { scanAnalyticsPrivacy } from "@/lib/analytics/privacy-scan";
 import {
+  ACCESS_CLAIM_FAILURE_REASON_CODES,
+  ACCESS_GRANT_REASONS,
+  ANALYTICS_FAILURE_STAGES,
+  ANSWER_SAVE_MODES,
+  ATTEMPT_RESUME_METHODS,
+  BACKEND_OPERATION_ERROR_CODES,
+  CHECKOUT_ENTRY_POINTS,
+  CLIENT_ERROR_CODES,
+  CLIENT_ERROR_REPEAT_BUCKETS,
+  PAYMENT_CANCEL_SOURCES,
+  PAYMENT_FAILURE_REASON_CODES,
+  PRODUCT_CTA_SURFACES,
+  PRODUCT_CTA_TYPES,
+  RESULT_REOPEN_SEQUENCE_BUCKETS,
+  RESULT_VIEW_CONTEXTS,
+  type AccessGrantReason
+} from "@/lib/analytics/event-taxonomy";
+import {
   isValidAnalyticsTrafficAssignment,
   TRAFFIC_CLASSES,
   TRAFFIC_CLASS_ASSIGNMENT_SOURCES
@@ -50,6 +68,21 @@ const verificationMethodSchema = z.enum(VERIFICATION_METHODS);
 const completionReasonSchema = z.enum(COMPLETION_REASONS);
 const resolutionTypeSchema = z.enum(RESOLUTION_TYPES);
 const errorCategorySchema = z.enum(ERROR_CATEGORIES);
+const productCtaTypeSchema = z.enum(PRODUCT_CTA_TYPES);
+const productCtaSurfaceSchema = z.enum(PRODUCT_CTA_SURFACES);
+const checkoutEntryPointSchema = z.enum(CHECKOUT_ENTRY_POINTS);
+const resultViewContextSchema = z.enum(RESULT_VIEW_CONTEXTS);
+const resultReopenSequenceBucketSchema = z.enum(RESULT_REOPEN_SEQUENCE_BUCKETS);
+const analyticsFailureStageSchema = z.enum(ANALYTICS_FAILURE_STAGES);
+const clientErrorCodeSchema = z.enum(CLIENT_ERROR_CODES);
+const backendOperationErrorCodeSchema = z.enum(BACKEND_OPERATION_ERROR_CODES);
+const clientErrorRepeatBucketSchema = z.enum(CLIENT_ERROR_REPEAT_BUCKETS);
+const paymentFailureReasonCodeSchema = z.enum(PAYMENT_FAILURE_REASON_CODES);
+const paymentCancelSourceSchema = z.enum(PAYMENT_CANCEL_SOURCES);
+const accessGrantReasonSchema = z.enum(ACCESS_GRANT_REASONS);
+const accessClaimFailureReasonCodeSchema = z.enum(ACCESS_CLAIM_FAILURE_REASON_CODES);
+const answerSaveModeSchema = z.enum(ANSWER_SAVE_MODES);
+const attemptResumeMethodSchema = z.enum(ATTEMPT_RESUME_METHODS);
 
 const uuidSchema = z.string().uuid();
 const utcIsoTimestampSchema = z.string().regex(
@@ -57,7 +90,6 @@ const utcIsoTimestampSchema = z.string().regex(
   "UTC ISO timestamp required"
 ).refine((value) => !Number.isNaN(Date.parse(value)), "UTC ISO timestamp required");
 const publicCodeSchema = z.string().min(1).max(128).regex(/^[a-z0-9][a-z0-9._-]*$/);
-const safeCodeSchema = z.string().min(1).max(64).regex(/^[a-z0-9][a-z0-9_]*$/);
 const analyticsEntityIdSchema = z.string().regex(ANALYTICS_ENTITY_ID_PATTERN);
 const analyticsIdKeyVersionSchema = z.string().regex(ANALYTICS_ID_KEY_VERSION_PATTERN);
 const countSchema = z.number().int().min(0).max(1000);
@@ -75,6 +107,16 @@ const entityFields = {
   attempt_public_id_hash: analyticsEntityIdSchema
 } as const;
 type EntityFieldName = keyof typeof entityFields;
+type AccessSource = (typeof ACCESS_SOURCES)[number];
+
+const accessGrantReasonBySource = {
+  paid: "confirmed_payment",
+  manual_grant: "manual_grant",
+  access_code: "access_code_redeemed",
+  free: "free_access",
+  support_replacement: "support_replacement",
+  qa_fixture: "qa_fixture"
+} as const satisfies Record<AccessSource, AccessGrantReason>;
 
 type Layer = (typeof ANALYTICS_EMITTING_LAYERS)[number];
 type Shape = z.ZodRawShape;
@@ -155,11 +197,11 @@ export const analyticsEventRegistry = {
   }),
   product_cta_clicked: defineEvent({
     eventName: "product_cta_clicked", emittingLayer: "frontend",
-    required: { ...clientBase, ...productBase, cta_type: safeCodeSchema, surface: safeCodeSchema }
+    required: { ...clientBase, ...productBase, cta_type: productCtaTypeSchema, surface: productCtaSurfaceSchema }
   }),
   checkout_started: defineEvent({
     eventName: "checkout_started", emittingLayer: "frontend",
-    required: { ...clientBase, checkout_flow_id: uuidSchema, ...productBase, entry_point: safeCodeSchema, ...clientDevice }
+    required: { ...clientBase, checkout_flow_id: uuidSchema, ...productBase, entry_point: checkoutEntryPointSchema, ...clientDevice }
   }),
   payment_return_viewed: defineEvent({
     eventName: "payment_return_viewed", emittingLayer: "frontend",
@@ -176,12 +218,12 @@ export const analyticsEventRegistry = {
   }),
   result_viewed: defineEvent({
     eventName: "result_viewed", emittingLayer: "frontend",
-    required: { ...clientBase, attempt_public_id_hash: entityFields.attempt_public_id_hash, access_public_id_hash: entityFields.access_public_id_hash, ...productBase, result_view_context: safeCodeSchema, ...clientDevice }
+    required: { ...clientBase, attempt_public_id_hash: entityFields.attempt_public_id_hash, access_public_id_hash: entityFields.access_public_id_hash, ...productBase, result_view_context: resultViewContextSchema, ...clientDevice }
   }),
   client_error_shown: defineEvent({
     eventName: "client_error_shown", emittingLayer: "frontend",
-    required: { ...clientBase, error_category: errorCategorySchema, failure_stage: safeCodeSchema, error_code: safeCodeSchema, retry_available: booleanSchema, ...clientDevice },
-    optional: { ...entityFields, repeat_bucket: safeCodeSchema }
+    required: { ...clientBase, error_category: errorCategorySchema, failure_stage: analyticsFailureStageSchema, error_code: clientErrorCodeSchema, retry_available: booleanSchema, ...clientDevice },
+    optional: { ...entityFields, repeat_bucket: clientErrorRepeatBucketSchema }
   }),
 
   order_created: defineEvent({
@@ -202,11 +244,11 @@ export const analyticsEventRegistry = {
   }),
   payment_failed: defineEvent({
     eventName: "payment_failed", emittingLayer: "backend",
-    required: { ...paymentBase, payment_status: z.literal("failed"), failure_reason_code: safeCodeSchema }
+    required: { ...paymentBase, payment_status: z.literal("failed"), failure_reason_code: paymentFailureReasonCodeSchema }
   }),
   payment_cancelled: defineEvent({
     eventName: "payment_cancelled", emittingLayer: "backend",
-    required: { ...paymentBase, payment_status: z.literal("cancelled"), cancel_source: safeCodeSchema }
+    required: { ...paymentBase, payment_status: z.literal("cancelled"), cancel_source: paymentCancelSourceSchema }
   }),
   payment_expired: defineEvent({
     eventName: "payment_expired", emittingLayer: "backend",
@@ -219,10 +261,13 @@ export const analyticsEventRegistry = {
   }),
   access_granted: defineEvent({
     eventName: "access_granted", emittingLayer: "backend",
-    required: { access_public_id_hash: entityFields.access_public_id_hash, ...productBase, access_source: accessSourceSchema, grant_reason: safeCodeSchema },
+    required: { access_public_id_hash: entityFields.access_public_id_hash, ...productBase, access_source: accessSourceSchema, grant_reason: accessGrantReasonSchema },
     optional: { order_public_id_hash: entityFields.order_public_id_hash, payment_attempt_public_id_hash: entityFields.payment_attempt_public_id_hash },
     refine: (value, ctx) => {
       const paid = value.access_source === "paid";
+      if (value.grant_reason !== accessGrantReasonBySource[value.access_source as AccessSource]) {
+        ctx.addIssue({ code: "custom", message: "grant reason does not match access source", path: ["grant_reason"] });
+      }
       if (paid !== (value.order_public_id_hash !== undefined)) {
         ctx.addIssue({ code: "custom", message: "paid access requires exactly one order link", path: ["order_public_id_hash"] });
       }
@@ -237,7 +282,7 @@ export const analyticsEventRegistry = {
   }),
   access_claim_failed: defineEvent({
     eventName: "access_claim_failed", emittingLayer: "backend",
-    required: { ...productBase, claim_method: z.enum(["access_code", "recovery"]), error_category: errorCategorySchema, failure_reason_code: safeCodeSchema },
+    required: { ...productBase, claim_method: z.enum(["access_code", "recovery"]), error_category: errorCategorySchema, failure_reason_code: accessClaimFailureReasonCodeSchema },
     optional: { access_public_id_hash: entityFields.access_public_id_hash }
   }),
   existing_access_detected: defineEvent({
@@ -251,16 +296,16 @@ export const analyticsEventRegistry = {
   }),
   answer_save_succeeded: defineEvent({
     eventName: "answer_save_succeeded", emittingLayer: "backend",
-    required: { attempt_public_id_hash: entityFields.attempt_public_id_hash, save_operation_id: uuidSchema, save_mode: safeCodeSchema, attempt_status: z.literal("active") },
+    required: { attempt_public_id_hash: entityFields.attempt_public_id_hash, save_operation_id: uuidSchema, save_mode: answerSaveModeSchema, attempt_status: z.literal("active") },
     optional: { latency_bucket: latencyBucketSchema }
   }),
   answer_save_failed: defineEvent({
     eventName: "answer_save_failed", emittingLayer: "backend",
-    required: { attempt_public_id_hash: entityFields.attempt_public_id_hash, save_operation_id: uuidSchema, save_mode: safeCodeSchema, error_category: errorCategorySchema, failure_stage: z.literal("answer_save") }
+    required: { attempt_public_id_hash: entityFields.attempt_public_id_hash, save_operation_id: uuidSchema, save_mode: answerSaveModeSchema, error_category: errorCategorySchema, failure_stage: z.literal("answer_save") }
   }),
   attempt_resumed: defineEvent({
     eventName: "attempt_resumed", emittingLayer: "backend",
-    required: { access_public_id_hash: entityFields.access_public_id_hash, attempt_public_id_hash: entityFields.attempt_public_id_hash, ...productBase, attempt_status: z.literal("active"), resume_method: safeCodeSchema }
+    required: { access_public_id_hash: entityFields.access_public_id_hash, attempt_public_id_hash: entityFields.attempt_public_id_hash, ...productBase, attempt_status: z.literal("active"), resume_method: attemptResumeMethodSchema }
   }),
   attempt_expired: defineEvent({
     eventName: "attempt_expired", emittingLayer: "backend",
@@ -276,7 +321,7 @@ export const analyticsEventRegistry = {
   }),
   backend_operation_failed: defineEvent({
     eventName: "backend_operation_failed", emittingLayer: "backend",
-    required: { error_event_id: uuidSchema, error_category: errorCategorySchema, failure_stage: safeCodeSchema, error_code: safeCodeSchema, retryable: booleanSchema, severity: z.enum(["sev0", "sev1", "sev2", "sev3"]) },
+    required: { error_event_id: uuidSchema, error_category: errorCategorySchema, failure_stage: analyticsFailureStageSchema, error_code: backendOperationErrorCodeSchema, retryable: booleanSchema, severity: z.enum(["sev0", "sev1", "sev2", "sev3"]) },
     optional: entityFields
   }),
 
@@ -291,7 +336,7 @@ export const analyticsEventRegistry = {
   }),
   result_reopened: defineEvent({
     eventName: "result_reopened", emittingLayer: "derived",
-    required: { attempt_public_id_hash: entityFields.attempt_public_id_hash, access_public_id_hash: entityFields.access_public_id_hash, exam_mode: examModeSchema, reopen_sequence_bucket: safeCodeSchema, result_view_context: safeCodeSchema }
+    required: { attempt_public_id_hash: entityFields.attempt_public_id_hash, access_public_id_hash: entityFields.access_public_id_hash, exam_mode: examModeSchema, reopen_sequence_bucket: resultReopenSequenceBucketSchema, result_view_context: resultViewContextSchema }
   })
 } as const;
 
@@ -318,7 +363,7 @@ export type FrontendAnalyticsEventName = {
   [Name in AnalyticsEventName]: (typeof analyticsEventRegistry)[Name]["emittingLayer"] extends "frontend" ? Name : never
 }[AnalyticsEventName];
 export type FrontendAnalyticsInput<Name extends FrontendAnalyticsEventName = FrontendAnalyticsEventName> =
-  Omit<CanonicalAnalyticsEvent<Name>, "received_at" | "traffic_class" | "traffic_class_assignment_source"> &
+  Omit<CanonicalAnalyticsEvent<Name>, "received_at" | "environment" | "traffic_class" | "traffic_class_assignment_source" | "emitting_layer"> &
   Readonly<{ traffic_class_hint?: (typeof TRAFFIC_CLASSES)[number] }>;
 
 export const analyticsEventNames = Object.freeze(Object.keys(analyticsEventRegistry) as AnalyticsEventName[]);
@@ -378,8 +423,6 @@ const frontendEnvelopeSchema = z.object({
   event_name: z.string(),
   event_version: z.literal(ANALYTICS_EVENT_VERSION),
   occurred_at: utcIsoTimestampSchema,
-  environment: environmentSchema,
-  emitting_layer: z.literal("frontend"),
   traffic_class_hint: trafficClassSchema.optional(),
   analytics_id_key_version: analyticsIdKeyVersionSchema.optional(),
   properties: z.unknown()
