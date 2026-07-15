@@ -34,6 +34,7 @@ function enabledEnvironment(overrides: Record<string, string | undefined> = {}) 
     VERIFIED_COMMERCIAL_SESSION_MODE: "enforce",
     VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION: "v1",
     VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: `v1:${encoded(115)}`,
+    APP_URL: "http://localhost:3000",
     ...overrides
   };
 }
@@ -285,6 +286,34 @@ describe("recovery UI server availability", () => {
 
   it("exposes only the server product code for a valid test configuration", () => {
     expect(resolveRecoveryUiAvailability(enabledEnvironment())).toEqual({
+      available: true,
+      productCode: "russian-training-variant-01"
+    });
+  });
+
+  it.each([
+    ["missing APP_URL", undefined],
+    ["a malformed APP_URL", "not-a-url"],
+    ["an unsupported protocol", "ftp://localhost:3000"],
+    ["a username", "http://user@localhost:3000"],
+    ["a password", "http://user:secret@localhost:3000"],
+    ["a non-root path", "http://localhost:3000/recovery"],
+    ["a query", "http://localhost:3000/?mode=recovery"],
+    ["a hash", "http://localhost:3000/#recovery"]
+  ])("fails closed for %s", (_case, appUrl) => {
+    expect(resolveRecoveryUiAvailability(enabledEnvironment({
+      APP_URL: appUrl
+    }))).toEqual({ available: false });
+  });
+
+  it.each([
+    "http://localhost:3000",
+    "http://localhost:3000/",
+    "https://tests.example.com"
+  ])("accepts a canonicalizable trusted origin: %s", (appUrl) => {
+    expect(resolveRecoveryUiAvailability(enabledEnvironment({
+      APP_URL: appUrl
+    }))).toEqual({
       available: true,
       productCode: "russian-training-variant-01"
     });
