@@ -1,5 +1,5 @@
 import { randomUUID } from "node:crypto";
-import { expect, test } from "@playwright/test";
+import { expect, test, type Page, type TestInfo } from "@playwright/test";
 import { Prisma, PrismaClient } from "@prisma/client";
 import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
 import { createVerifiedStudentSessionService } from "@/server/auth/verified-student-session/service";
@@ -8,6 +8,7 @@ test.skip(
   process.env.RUN_PROD03_PRIMARY_RESULT_E2E !== "true",
   "Set RUN_PROD03_PRIMARY_RESULT_E2E=true with the dedicated PostgreSQL schema."
 );
+test.describe.configure({ mode: "serial" });
 
 const prisma = new PrismaClient();
 const verifiedKey = Buffer.alloc(32, 103);
@@ -29,6 +30,53 @@ function assertDedicatedTestSchema() {
   if (new URL(databaseUrl).searchParams.get("schema") !== "prod03_primary_result_e2e") {
     throw new Error("PROD03_PRIMARY_RESULT_E2E_REQUIRES_DEDICATED_SCHEMA");
   }
+}
+
+async function capture(page: Page, testInfo: TestInfo, name: string) {
+  const path = testInfo.outputPath(`${name}.png`);
+  await page.screenshot({ path });
+  await testInfo.attach(name, { contentType: "image/png", path });
+}
+
+async function assertNoHorizontalScroll(page: Page) {
+  const dimensions = await page.evaluate(() => ({
+    clientWidth: document.documentElement.clientWidth,
+    scrollWidth: document.documentElement.scrollWidth
+  }));
+  expect(dimensions.scrollWidth).toBeLessThanOrEqual(dimensions.clientWidth);
+}
+
+async function assertAggregateDom(page: Page) {
+  await expect(page.getByRole("heading", { level: 1, name: "Результат попытки" })).toHaveCount(1);
+  await expect(page.getByText("Статус: завершено вручную", { exact: true })).toBeVisible();
+  await expect(page.getByText("Общий первичный результат: 80 из 80", { exact: true })).toBeVisible();
+  await expect(page.getByText("Part A: 36 из 36", { exact: true })).toBeVisible();
+  await expect(page.getByText("Part B: 44 из 44", { exact: true })).toBeVisible();
+  await expect(page.getByText(
+    "Это первичный результат этой тренировочной попытки. Он не является прогнозом результата ЦЭ или ЦТ.",
+    { exact: true }
+  )).toBeVisible();
+  await expect(page.getByRole("link", { name: "Вернуться в каталог" })).toHaveAttribute("href", "/");
+
+  for (const prohibited of [
+    "PROD-03 browser authentic result",
+    "CE/CT Russian 2026 format",
+    "Первичный балл",
+    "80 / 80",
+    "Ошибки",
+    "Разбор",
+    "Детали ответов",
+    "Ошибки и правильные ответы",
+    "Ответ ученика",
+    "Browser Part A",
+    "Browser Part B",
+    "Тестовый балл",
+    "Шкальный балл",
+    "Результат можно открыть повторно в течение 12 месяцев."
+  ]) {
+    await expect(page.getByText(prohibited, { exact: true })).toHaveCount(0);
+  }
+  await expect(page.locator("body")).not.toContainText("private browser");
 }
 
 test.beforeAll(async () => {
@@ -205,8 +253,7 @@ test.afterAll(async () => {
   await prisma.$disconnect();
 });
 
-test("authentic Result stays primary-only in DOM, network, refresh and mobile", async ({ page, context }) => {
-  await page.setViewportSize({ width: 390, height: 844 });
+test("authentic Result is aggregate-only in DOM, network, refresh and responsive presentation", async ({ page, context }, testInfo) => {
   await context.addCookies([{
     name: "verified_student_session",
     value: rawToken,
@@ -217,33 +264,180 @@ test("authentic Result stays primary-only in DOM, network, refresh and mobile", 
   }]);
 
   const resultResponses: Array<Record<string, unknown>> = [];
+  const completionRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes("/complete")) completionRequests.push(request.url());
+  });
   page.on("response", async (response) => {
     if (response.url().includes(`/api/results/${attemptId}`) && response.ok()) {
       resultResponses.push((await response.json()).data.result as Record<string, unknown>);
     }
   });
 
+  const attemptsBefore = await prisma.attempt.count({ where: { id: attemptId } });
+  await page.setViewportSize({ width: 1440, height: 900 });
   await page.goto(`/results/${attemptId}`);
-  await expect(page.getByText("Первичный балл")).toBeVisible();
-  await expect(page.getByText("80 / 80", { exact: true })).toBeVisible();
-  await expect(page.getByText("Part A", { exact: true })).toBeVisible();
-  await expect(page.getByText("Part B", { exact: true })).toBeVisible();
-  await expect(page.getByText("36 / 36 первичных баллов")).toBeVisible();
-  await expect(page.getByText("44 / 44 первичных баллов")).toBeVisible();
-  await expect(page.getByText(/Тестовый балл/i)).toHaveCount(0);
-  await expect(page.getByText(/Шкальный балл/i)).toHaveCount(0);
-  await expect(page.getByText(/таблиц[аеы]/i)).toHaveCount(0);
-  await expect(page.locator("body")).not.toContainText("private browser");
+  await assertAggregateDom(page);
+  const heading = page.getByRole("heading", { level: 1, name: "Результат попытки" });
+  await expect(heading).toBeFocused();
+  await expect(heading).toHaveAttribute("tabindex", "-1");
+  await assertNoHorizontalScroll(page);
   await expect.poll(() => resultResponses.length).toBe(1);
-  for (const key of ["scaled_score", "max_scaled_score", "scaled_score_note"]) {
-    expect(key in resultResponses[0]!).toBe(false);
+
+  const desktopPartA = await page.locator('[data-result-block="part-a"]').boundingBox();
+  const desktopPartB = await page.locator('[data-result-block="part-b"]').boundingBox();
+  expect(desktopPartA?.y).toBe(desktopPartB?.y);
+  expect(Math.abs((desktopPartA?.width ?? 0) - (desktopPartB?.width ?? 0))).toBeLessThanOrEqual(1);
+  await capture(page, testInfo, "res-01a-authentic-desktop-1440x900");
+
+  const catalogAction = page.getByRole("link", { name: "Вернуться в каталог" });
+  const actionBox = await catalogAction.boundingBox();
+  expect(actionBox?.width).toBeGreaterThanOrEqual(44);
+  expect(actionBox?.height).toBeGreaterThanOrEqual(44);
+  await page.keyboard.press("Tab");
+  await expect(catalogAction).toBeFocused();
+  expect(await catalogAction.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe("none");
+  await capture(page, testInfo, "res-01a-authentic-keyboard-focus");
+
+  for (const viewport of [
+    { width: 1024, height: 768, screenshot: null },
+    { width: 390, height: 844, screenshot: "res-01a-authentic-mobile-390x844" },
+    { width: 320, height: 568, screenshot: "res-01a-authentic-narrow-320x568" },
+    { width: 720, height: 450, screenshot: "res-01a-authentic-200-percent-reflow" }
+  ]) {
+    await page.setViewportSize({ width: viewport.width, height: viewport.height });
+    await assertAggregateDom(page);
+    await assertNoHorizontalScroll(page);
+    const total = page.locator('[data-result-block="total"]');
+    const partA = page.locator('[data-result-block="part-a"]');
+    const partB = page.locator('[data-result-block="part-b"]');
+    for (const block of [total, partA, partB]) {
+      expect(await block.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(true);
+    }
+
+    if (viewport.width < 768) {
+      const [totalBox, partABox, partBBox] = await Promise.all([
+        total.boundingBox(),
+        partA.boundingBox(),
+        partB.boundingBox()
+      ]);
+      expect(totalBox?.y).toBeLessThan(partABox?.y ?? Number.POSITIVE_INFINITY);
+      expect(partABox?.y).toBeLessThan(partBBox?.y ?? Number.POSITIVE_INFINITY);
+    }
+
+    if (viewport.screenshot) await capture(page, testInfo, viewport.screenshot);
   }
 
   await page.reload();
-  await expect(page.getByText("80 / 80", { exact: true })).toBeVisible();
-  await expect(page.getByText(/Тестовый балл/i)).toHaveCount(0);
+  await assertAggregateDom(page);
   await expect.poll(() => resultResponses.length).toBe(2);
-  for (const key of ["scaled_score", "max_scaled_score", "scaled_score_note"]) {
-    expect(key in resultResponses[1]!).toBe(false);
+  expect(await prisma.attempt.count({ where: { id: attemptId } })).toBe(attemptsBefore);
+  expect(completionRequests).toHaveLength(0);
+
+  for (const response of resultResponses) {
+    for (const key of ["scaled_score", "max_scaled_score", "scaled_score_note"]) {
+      expect(key in response).toBe(false);
+    }
   }
+});
+
+test("temporary error, invalid JSON, network failure and not-ready stay safe and retry only GET", async ({ page, context }, testInfo) => {
+  await context.addCookies([{
+    name: "verified_student_session",
+    value: rawToken,
+    domain: "localhost",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax"
+  }]);
+  await page.setViewportSize({ width: 1440, height: 900 });
+
+  type ResponseMode = "temporary" | "invalid-json" | "network" | "not-ready" | "success";
+  let mode: ResponseMode = "temporary";
+  let resultGetCount = 0;
+  const resultMethods: string[] = [];
+  const completionRequests: string[] = [];
+  page.on("request", (request) => {
+    if (request.url().includes(`/api/results/${attemptId}`)) resultMethods.push(request.method());
+    if (request.url().includes("/complete")) completionRequests.push(request.url());
+  });
+
+  await page.route(`**/api/results/${attemptId}`, async (route) => {
+    resultGetCount += 1;
+    if (mode === "success") {
+      await route.fallback();
+      return;
+    }
+    if (mode === "network") {
+      await route.abort("failed");
+      return;
+    }
+    if (mode === "invalid-json") {
+      await route.fulfill({ status: 200, contentType: "text/plain", body: "not-json" });
+      return;
+    }
+    if (mode === "not-ready") {
+      await route.fulfill({
+        status: 409,
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: false,
+          error: { code: "RESULT_NOT_READY", message: "private not-ready provider detail" }
+        })
+      });
+      return;
+    }
+    await route.fulfill({
+      status: 503,
+      contentType: "application/json",
+      body: JSON.stringify({
+        success: false,
+        error: { code: "P1001", message: "Prisma PostgreSQL private provider detail" }
+      })
+    });
+  });
+
+  await page.goto(`/results/${attemptId}`);
+  const temporaryCopy = "Не удалось загрузить результат. Попытка не будет завершена повторно. Повторите загрузку.";
+  await expect(page.getByText(temporaryCopy, { exact: true })).toBeVisible();
+  await expect(page.getByRole("alert", { name: "Результат попытки" })).toBeVisible();
+  await expect(page.getByRole("button", { name: "Повторить загрузку" })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("P1001");
+  await expect(page.locator("body")).not.toContainText("Prisma");
+  await expect(page.locator("body")).not.toContainText("PostgreSQL");
+  const requestsBeforeWait = resultGetCount;
+  await page.waitForTimeout(350);
+  expect(resultGetCount).toBe(requestsBeforeWait);
+  await capture(page, testInfo, "res-01a-temporary-error");
+
+  mode = "invalid-json";
+  await page.reload();
+  await expect(page.getByText(temporaryCopy, { exact: true })).toBeVisible();
+
+  mode = "network";
+  await page.reload();
+  await expect(page.getByText(temporaryCopy, { exact: true })).toBeVisible();
+
+  mode = "not-ready";
+  await page.reload();
+  await expect(page.getByText("Результат ещё не готов. Повторное завершение не требуется.", { exact: true })).toBeVisible();
+  await expect(page.getByText("Общий первичный результат", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("Part A:", { exact: false })).toHaveCount(0);
+  await expect(page.getByText("Part B:", { exact: false })).toHaveCount(0);
+  await expect(page.locator("body")).not.toContainText("private not-ready provider detail");
+  await capture(page, testInfo, "res-01a-not-ready");
+
+  mode = "success";
+  const requestsBeforeRetry = resultGetCount;
+  const attemptsBeforeRetry = await prisma.attempt.count({ where: { id: attemptId } });
+  const retry = page.getByRole("button", { name: "Повторить загрузку" });
+  await retry.evaluate((button) => {
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+    button.dispatchEvent(new MouseEvent("click", { bubbles: true }));
+  });
+  await assertAggregateDom(page);
+  await expect.poll(() => resultGetCount).toBe(requestsBeforeRetry + 1);
+  expect(await prisma.attempt.count({ where: { id: attemptId } })).toBe(attemptsBeforeRetry);
+  expect(resultMethods.every((method) => method === "GET")).toBe(true);
+  expect(completionRequests).toHaveLength(0);
 });
