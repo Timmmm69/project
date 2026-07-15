@@ -31,9 +31,9 @@ export type ResultPayload = {
   exam_mode: "generic" | "rikz_russian_2026";
   raw_score: number;
   max_raw_score: number;
-  scaled_score: number | null;
-  max_scaled_score: number | null;
-  scaled_score_note: string | null;
+  scaled_score?: number | null;
+  max_scaled_score?: number | null;
+  scaled_score_note?: string | null;
   answer_details: ResultAnswerDetail[];
   mistakes: ResultAnswerDetail[];
 };
@@ -50,15 +50,42 @@ export function isAuthenticRikzRussianResult(result: Pick<ResultPayload, "exam_m
 }
 
 export function getScaledScoreDisplay(
-  result: Pick<ResultPayload, "scaled_score" | "max_scaled_score">
+  result: Pick<ResultPayload, "exam_mode"> & {
+    scaled_score?: unknown;
+    max_scaled_score?: unknown;
+  }
 ) {
-  if (result.scaled_score === null) {
+  if (result.exam_mode === "rikz_russian_2026") {
+    return null;
+  }
+
+  if (
+    typeof result.scaled_score !== "number" ||
+    !Number.isFinite(result.scaled_score) ||
+    result.scaled_score < 0
+  ) {
+    return null;
+  }
+
+  if (result.max_scaled_score === undefined || result.max_scaled_score === null) {
+    return {
+      score: result.scaled_score,
+      maxScore: 100
+    };
+  }
+
+  if (
+    typeof result.max_scaled_score !== "number" ||
+    !Number.isFinite(result.max_scaled_score) ||
+    result.max_scaled_score <= 0 ||
+    result.scaled_score > result.max_scaled_score
+  ) {
     return null;
   }
 
   return {
     score: result.scaled_score,
-    maxScore: result.max_scaled_score ?? 100
+    maxScore: result.max_scaled_score
   };
 }
 

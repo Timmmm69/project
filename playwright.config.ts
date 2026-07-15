@@ -30,7 +30,16 @@ export default defineConfig({
       PRIVACY_URL: "https://example.test/privacy",
       REFUND_POLICY_URL: "https://example.test/refund",
       DISCLAIMER_URL: "https://example.test/disclaimer",
-      SUPPORT_EMAIL: "support@example.test"
+      SUPPORT_EMAIL: "support@example.test",
+      ...(process.env.VERIFIED_COMMERCIAL_SESSION_MODE
+        ? { VERIFIED_COMMERCIAL_SESSION_MODE: process.env.VERIFIED_COMMERCIAL_SESSION_MODE }
+        : {}),
+      ...(process.env.VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION
+        ? { VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION: process.env.VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION }
+        : {}),
+      ...(process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING
+        ? { VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING }
+        : {})
     }
   }
 });

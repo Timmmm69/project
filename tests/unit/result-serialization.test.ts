@@ -73,6 +73,7 @@ function serializeScoredAttempt(input: {
   snapshot: TestSnapshot;
   scoringSchemeSnapshot: ScoringSchemeSnapshot | null;
   scoring: ScoringResult;
+  audience?: "student" | "admin";
 }) {
   const answers = input.scoring.answers.map((answer, index) => ({
     id: `answer-${index + 1}`,
@@ -89,12 +90,12 @@ function serializeScoredAttempt(input: {
     updatedAt: now
   }));
 
-  return serializeResult({
+  const attempt = {
     id: "attempt-1",
     userId: "student-1",
     testId: input.snapshot.testId,
     accessId: "access-1",
-    status: "COMPLETED",
+    status: "COMPLETED" as const,
     startedAt: new Date("2026-07-09T10:00:00.000Z"),
     finishedAt: now,
     durationSeconds: 7200,
@@ -113,11 +114,13 @@ function serializeScoredAttempt(input: {
     test: {
       title: input.snapshot.title,
       slug: "rikz-test",
-      mode: "CE_CT",
+      mode: "CE_CT" as const,
       showCorrectAnswers: true
     },
     answers
-  });
+  };
+
+  return serializeResult(attempt, { audience: input.audience });
 }
 
 describe("result serialization", () => {
@@ -175,18 +178,26 @@ describe("result serialization", () => {
         official_number: 1
       }
     ]);
-    expect(result.scaled_score).toBe(100);
+    expect(result.raw_score).toBe(80);
+    expect(result.max_raw_score).toBe(80);
+    expect("scaled_score" in result).toBe(false);
+    expect("max_scaled_score" in result).toBe(false);
+    expect("scaled_score_note" in result).toBe(false);
 
     for (const detail of result.answer_details) {
       expect(detail.correct_answer).toBeNull();
       expect(detail.accepted_answers).toBeNull();
       expect(detail.explanation).toBeNull();
     }
-    expect(JSON.stringify(result)).not.toContain("Part A explanation");
-    expect(JSON.stringify(result)).not.toContain("token\"]");
+    const serialized = JSON.stringify(result);
+    expect(serialized).not.toContain("Part A explanation");
+    expect(serialized).not.toContain("token\"]");
+    expect(serialized).not.toContain('"scaled_score"');
+    expect(serialized).not.toContain('"max_scaled_score"');
+    expect(serialized).not.toContain('"scaled_score_note"');
   });
 
-  it("serializes full RIKZ Russian 2026 primary and scaled score from snapshot lookup", () => {
+  it("serializes a full RIKZ Russian 2026 student result as primary-only", () => {
     const scoring = scoreAttemptSnapshot(
       fullRikzSnapshot,
       [
@@ -205,8 +216,9 @@ describe("result serialization", () => {
     expect(result.exam_mode).toBe("rikz_russian_2026");
     expect(result.raw_score).toBe(80);
     expect(result.max_raw_score).toBe(80);
-    expect(result.scaled_score).toBe(100);
-    expect(result.max_scaled_score).toBe(100);
+    expect("scaled_score" in result).toBe(false);
+    expect("max_scaled_score" in result).toBe(false);
+    expect("scaled_score_note" in result).toBe(false);
     expect(result.answer_details).toMatchObject([
       {
         snapshot_question_id: "a_1",
@@ -232,7 +244,54 @@ describe("result serialization", () => {
     ]);
   });
 
-  it("does not serialize scaled score for partial RIKZ Russian 2026 demo result", () => {
+  it("preserves stored scaled score for an authentic admin result", () => {
+    const scoring = scoreAttemptSnapshot(
+      fullRikzSnapshot,
+      [
+        { snapshotQuestionId: "a_1", selectedAnswer: "A,C" },
+        { snapshotQuestionId: "b_1", selectedAnswer: "token" }
+      ],
+      rikz2026Scale
+    );
+
+    const result = serializeScoredAttempt({
+      snapshot: fullRikzSnapshot,
+      scoringSchemeSnapshot: rikz2026Scale,
+      scoring,
+      audience: "admin"
+    });
+
+    expect(result.scaled_score).toBe(100);
+    expect(result.max_scaled_score).toBe(100);
+    expect(result.scaled_score_note).toContain("таблице соответствия");
+  });
+
+  it("preserves the existing generic student scaled-score contract", () => {
+    const genericSnapshot: TestSnapshot = {
+      ...fullRikzSnapshot,
+      examMode: "generic"
+    };
+    const scoring = scoreAttemptSnapshot(
+      genericSnapshot,
+      [
+        { snapshotQuestionId: "a_1", selectedAnswer: "A,C" },
+        { snapshotQuestionId: "b_1", selectedAnswer: "token" }
+      ],
+      rikz2026Scale
+    );
+
+    const result = serializeScoredAttempt({
+      snapshot: genericSnapshot,
+      scoringSchemeSnapshot: rikz2026Scale,
+      scoring
+    });
+
+    expect(result.scaled_score).toBe(100);
+    expect(result.max_scaled_score).toBe(100);
+    expect("scaled_score_note" in result).toBe(true);
+  });
+
+  it("omits scaled fields for a partial RIKZ Russian 2026 demo result", () => {
     const partialSnapshot: TestSnapshot = {
       ...fullRikzSnapshot,
       maxRawScore: 2,
@@ -252,7 +311,8 @@ describe("result serialization", () => {
 
     expect(result.raw_score).toBe(2);
     expect(result.max_raw_score).toBe(2);
-    expect(result.scaled_score).toBeNull();
-    expect(result.max_scaled_score).toBeNull();
+    expect("scaled_score" in result).toBe(false);
+    expect("max_scaled_score" in result).toBe(false);
+    expect("scaled_score_note" in result).toBe(false);
   });
 });

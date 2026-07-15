@@ -10,6 +10,13 @@ type AttemptResultPayload = Attempt & {
 
 type ResultAudience = "student" | "admin";
 
+function shouldIncludeScaledResultFields(input: {
+  audience: ResultAudience;
+  snapshotExamMode: ReturnType<typeof parseTestSnapshot>["examMode"];
+}) {
+  return input.audience === "admin" || input.snapshotExamMode !== "rikz_russian_2026";
+}
+
 function jsonArray<T>(value: Prisma.JsonValue | null): T[] {
   return Array.isArray(value) ? (value as T[]) : [];
 }
@@ -77,6 +84,10 @@ export function serializeResult(
   // Authentic CE/CT results never expose answer keys. A review mode, if needed,
   // must be introduced separately with its own access policy.
   const isAuthenticRikzRussian = snapshot.examMode === "rikz_russian_2026";
+  const includeScaledResultFields = shouldIncludeScaledResultFields({
+    audience,
+    snapshotExamMode: snapshot.examMode
+  });
   const showCorrectAnswers =
     !isAuthenticRikzRussian && (audience === "admin" || (attempt.test?.showCorrectAnswers ?? true));
   const showTopicReference = audience === "admin" || showCorrectAnswers;
@@ -112,9 +123,13 @@ export function serializeResult(
     max_raw_score: attempt.maxRawScore,
     percent: audience === "admin" ? decimalToNumber(attempt.percent) : null,
     level: audience === "admin" ? attempt.level : null,
-    scaled_score: attempt.scaledScore,
-    max_scaled_score: attempt.maxScaledScore,
-    scaled_score_note: scaledScoreNote(snapshot, attempt),
+    ...(includeScaledResultFields
+      ? {
+          scaled_score: attempt.scaledScore,
+          max_scaled_score: attempt.maxScaledScore,
+          scaled_score_note: scaledScoreNote(snapshot, attempt)
+        }
+      : {}),
     topic_results: audience === "admin" ? jsonArray<TopicResult>(attempt.topicResults) : [],
     recommendations: audience === "admin" ? jsonArray<Recommendation>(attempt.recommendations) : [],
     answer_details: answerDetails,
