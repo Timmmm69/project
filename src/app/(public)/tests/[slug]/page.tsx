@@ -8,6 +8,7 @@ import { TestAccessForm } from "./test-access-form";
 import { parseVerifiedCommercialSessionMode } from "@/server/auth/verified-student-session/config";
 import { authorizeVerifiedStudentDestination } from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
+import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
 
 export const dynamic = "force-dynamic";
 
@@ -36,14 +37,33 @@ export default async function PublicTestPage({ params }: PageProps) {
   }
 
   const publicTest = serializePublicTest(test);
+  const legal = commercialLegalConfig();
+  const authenticCommercialTest = isAuthenticRikzRussianExamMode(
+    test.examMode,
+    "CURRENT_TEST"
+  );
   let isFullCeCt = publicTest.mode === "ce_ct" && publicTest.maxRawScore === 80;
   const commercialProduct = isCommercialCheckoutEnabled()
     ? await prisma.commercialProduct.findFirst({
       where: { code: "russian-training-variant-01", testId: test.id, isActive: true },
-      select: { priceMinor: true, currency: true, attemptLimit: true, startWindowDays: true }
+      select: {
+        code: true,
+        priceMinor: true,
+        currency: true,
+        attemptLimit: true,
+        startWindowDays: true
+      }
     })
     : null;
   const showCommercialCheckout = Boolean(commercialProduct);
+  const recoveryAvailability = resolveRecoveryUiAvailability();
+  const recovery = authenticCommercialTest && commercialProduct && recoveryAvailability.available &&
+    recoveryAvailability.productCode === commercialProduct.code
+    ? {
+        productCode: recoveryAvailability.productCode,
+        supportEmail: legal.supportEmail
+      }
+    : null;
   isFullCeCt &&= !showCommercialCheckout;
   let verifiedPreAuthorized = false;
   let hideLegacyPrivateControls = false;
@@ -140,7 +160,7 @@ export default async function PublicTestPage({ params }: PageProps) {
             <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
-          {verifiedPreAuthorized || showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} priceMinor={commercialProduct?.priceMinor ?? publicTest.price} currency={commercialProduct?.currency ?? publicTest.currency} verifiedPreAuthorized={verifiedPreAuthorized} /> : null}
+          {verifiedPreAuthorized || showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} priceMinor={commercialProduct?.priceMinor ?? publicTest.price} currency={commercialProduct?.currency ?? publicTest.currency} verifiedPreAuthorized={verifiedPreAuthorized} recovery={recovery} /> : null}
           {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
         </aside>
       </section>
