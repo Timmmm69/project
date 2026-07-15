@@ -28,9 +28,15 @@ export function AuthenticResultSurface({ summary }: Readonly<{ summary: Authenti
       </h1>
       <p className={styles.status}>{status}</p>
 
-      <div className={styles.total} data-result-block="total">
-        <p className={styles.totalScore}>
-          Общий первичный результат: {summary.primaryScore} из {summary.primaryMax}
+      <div
+        aria-label={`Общий первичный результат: ${summary.primaryScore} из ${summary.primaryMax}`}
+        className={styles.total}
+        data-result-block="total"
+        role="group"
+      >
+        <p aria-hidden="true" className={styles.totalLabel}>Общий первичный результат</p>
+        <p aria-hidden="true" className={styles.totalScore} data-result-value="total">
+          {summary.primaryScore} из {summary.primaryMax}
         </p>
       </div>
 

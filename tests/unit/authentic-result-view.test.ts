@@ -28,7 +28,9 @@ describe("authentic Result presentation", () => {
     expect(html.match(/<h1/g)).toHaveLength(1);
     expect(html).toContain("Результат попытки");
     expect(html).toContain("Статус: завершено вручную");
-    expect(html).toContain("Общий первичный результат: 80 из 80");
+    expect(html).toContain('aria-label="Общий первичный результат: 80 из 80"');
+    expect(html).toContain('aria-hidden="true" class="');
+    expect(html).toContain('data-result-value="total">80 из 80</p>');
     expect(html).toContain("Part A: 36 из 36");
     expect(html).toContain("Part B: 44 из 44");
     expect(html).toContain("Это первичный результат этой тренировочной попытки. Он не является прогнозом результата ЦЭ или ЦТ.");

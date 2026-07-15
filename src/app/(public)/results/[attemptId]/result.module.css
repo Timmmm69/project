@@ -3,9 +3,9 @@
   background: var(--panel);
   border: 1px solid var(--border);
   border-radius: 12px;
-  box-shadow: var(--shadow);
   box-sizing: border-box;
   display: grid;
+  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
   gap: 20px;
   min-width: 0;
   padding: clamp(22px, 4vw, 40px);
@@ -23,8 +23,8 @@
 
 .heading:focus-visible {
   border-radius: 4px;
-  outline: 3px solid #2557d6;
-  outline-offset: 6px;
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
 }
 
 .status,
@@ -46,21 +46,34 @@
   padding: clamp(18px, 3vw, 28px);
 }
 
+.totalLabel,
 .totalScore,
 .partScore {
   color: var(--foreground);
-  font-weight: 800;
-  line-height: 1.25;
   margin: 0;
+}
+
+.totalLabel {
+  font-size: 17px;
+  font-weight: 600;
+  line-height: 24px;
   overflow-wrap: anywhere;
 }
 
 .totalScore {
-  font-size: clamp(24px, 4vw, 36px);
+  font-size: 56px;
+  font-variant-numeric: tabular-nums;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+  line-height: 64px;
+  white-space: nowrap;
 }
 
 .partScore {
-  font-size: clamp(20px, 3vw, 28px);
+  font-size: 30px;
+  font-weight: 700;
+  line-height: 38px;
+  overflow-wrap: anywhere;
 }
 
 .parts {
@@ -72,11 +85,8 @@
 .catalogAction,
 .retryAction {
   align-items: center;
-  background: var(--accent);
-  border: 1px solid var(--accent);
   border-radius: 8px;
   box-sizing: border-box;
-  color: #ffffff;
   cursor: pointer;
   display: inline-flex;
   font: inherit;
@@ -89,7 +99,24 @@
   text-decoration: none;
 }
 
-.catalogAction:hover,
+.catalogAction {
+  background: #ffffff;
+  border: 1px solid var(--border);
+  color: var(--foreground);
+  font-weight: 700;
+}
+
+.catalogAction:hover {
+  background: var(--panel-soft);
+  border-color: var(--foreground);
+}
+
+.retryAction {
+  background: var(--accent);
+  border: 1px solid var(--accent);
+  color: #ffffff;
+}
+
 .retryAction:hover {
   background: var(--accent-strong);
   border-color: var(--accent-strong);
@@ -97,8 +124,8 @@
 
 .catalogAction:focus-visible,
 .retryAction:focus-visible {
-  outline: 3px solid #2557d6;
-  outline-offset: 3px;
+  outline: 3px solid #1d4ed8;
+  outline-offset: 2px;
 }
 
 .retryAction:disabled {
@@ -108,6 +135,7 @@
 
 .stateSurface {
   align-content: start;
+  max-width: 680px;
   min-height: 220px;
 }
 
@@ -120,6 +148,17 @@
   .stateSurface {
     gap: 18px;
     padding: 20px;
+    padding-bottom: max(20px, env(safe-area-inset-bottom));
+  }
+
+  .totalScore {
+    font-size: 44px;
+    line-height: 52px;
+  }
+
+  .partScore {
+    font-size: 26px;
+    line-height: 34px;
   }
 
   .parts {

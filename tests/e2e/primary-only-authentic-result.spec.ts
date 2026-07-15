@@ -49,7 +49,9 @@ async function assertNoHorizontalScroll(page: Page) {
 async function assertAggregateDom(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: "Результат попытки" })).toHaveCount(1);
   await expect(page.getByText("Статус: завершено вручную", { exact: true })).toBeVisible();
-  await expect(page.getByText("Общий первичный результат: 80 из 80", { exact: true })).toBeVisible();
+  await expect(page.getByRole("group", { name: "Общий первичный результат: 80 из 80" })).toBeVisible();
+  await expect(page.getByText("Общий первичный результат", { exact: true })).toBeVisible();
+  await expect(page.getByText("80 из 80", { exact: true })).toBeVisible();
   await expect(page.getByText("Part A: 36 из 36", { exact: true })).toBeVisible();
   await expect(page.getByText("Part B: 44 из 44", { exact: true })).toBeVisible();
   await expect(page.getByText(
@@ -77,6 +79,30 @@ async function assertAggregateDom(page: Page) {
     await expect(page.getByText(prohibited, { exact: true })).toHaveCount(0);
   }
   await expect(page.locator("body")).not.toContainText("private browser");
+}
+
+async function assertScoreTypography(page: Page, expected: { fontSize: string; lineHeight: string }) {
+  const score = page.getByText("80 из 80", { exact: true });
+  const style = await score.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    const range = document.createRange();
+    range.selectNodeContents(element);
+    const lineTops = [...range.getClientRects()].map((rect) => Math.round(rect.top));
+    return {
+      fontSize: computed.fontSize,
+      fontWeight: computed.fontWeight,
+      lineHeight: computed.lineHeight,
+      lineCount: new Set(lineTops).size,
+      whiteSpace: computed.whiteSpace
+    };
+  });
+  expect(style).toEqual({
+    fontSize: expected.fontSize,
+    fontWeight: "700",
+    lineHeight: expected.lineHeight,
+    lineCount: 1,
+    whiteSpace: "nowrap"
+  });
 }
 
 test.beforeAll(async () => {
@@ -282,6 +308,7 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
   await expect(heading).toBeFocused();
   await expect(heading).toHaveAttribute("tabindex", "-1");
   await assertNoHorizontalScroll(page);
+  await assertScoreTypography(page, { fontSize: "56px", lineHeight: "64px" });
   await expect.poll(() => resultResponses.length).toBe(1);
 
   const desktopPartA = await page.locator('[data-result-block="part-a"]').boundingBox();
@@ -294,9 +321,28 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
   const actionBox = await catalogAction.boundingBox();
   expect(actionBox?.width).toBeGreaterThanOrEqual(44);
   expect(actionBox?.height).toBeGreaterThanOrEqual(44);
+  const catalogStyle = await catalogAction.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { backgroundColor: computed.backgroundColor, color: computed.color };
+  });
+  expect(catalogStyle.backgroundColor).not.toBe("rgb(23, 107, 91)");
+  expect(catalogStyle.color).not.toBe("rgb(255, 255, 255)");
   await page.keyboard.press("Tab");
   await expect(catalogAction).toBeFocused();
-  expect(await catalogAction.evaluate((element) => getComputedStyle(element).outlineStyle)).not.toBe("none");
+  expect(await catalogAction.evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return {
+      outlineColor: computed.outlineColor,
+      outlineOffset: computed.outlineOffset,
+      outlineStyle: computed.outlineStyle,
+      outlineWidth: computed.outlineWidth
+    };
+  })).toEqual({
+    outlineColor: "rgb(29, 78, 216)",
+    outlineOffset: "2px",
+    outlineStyle: "solid",
+    outlineWidth: "3px"
+  });
   await capture(page, testInfo, "res-01a-authentic-keyboard-focus");
 
   for (const viewport of [
@@ -308,6 +354,11 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
     await page.setViewportSize({ width: viewport.width, height: viewport.height });
     await assertAggregateDom(page);
     await assertNoHorizontalScroll(page);
+    if (viewport.width < 768) {
+      await assertScoreTypography(page, { fontSize: "44px", lineHeight: "52px" });
+    } else {
+      await assertScoreTypography(page, { fontSize: "56px", lineHeight: "64px" });
+    }
     const total = page.locator('[data-result-block="total"]');
     const partA = page.locator('[data-result-block="part-a"]');
     const partB = page.locator('[data-result-block="part-b"]');
@@ -402,6 +453,16 @@ test("temporary error, invalid JSON, network failure and not-ready stay safe and
   await expect(page.getByText(temporaryCopy, { exact: true })).toBeVisible();
   await expect(page.getByRole("alert", { name: "Результат попытки" })).toBeVisible();
   await expect(page.getByRole("button", { name: "Повторить загрузку" })).toBeVisible();
+  const temporarySurfaceBox = await page.getByRole("alert", { name: "Результат попытки" }).boundingBox();
+  expect(temporarySurfaceBox?.width).toBeLessThanOrEqual(680);
+  const temporaryRetryStyle = await page.getByRole("button", { name: "Повторить загрузку" }).evaluate((element) => {
+    const computed = getComputedStyle(element);
+    return { backgroundColor: computed.backgroundColor, color: computed.color };
+  });
+  expect(temporaryRetryStyle).toEqual({
+    backgroundColor: "rgb(23, 107, 91)",
+    color: "rgb(255, 255, 255)"
+  });
   await expect(page.locator("body")).not.toContainText("P1001");
   await expect(page.locator("body")).not.toContainText("Prisma");
   await expect(page.locator("body")).not.toContainText("PostgreSQL");
@@ -425,6 +486,8 @@ test("temporary error, invalid JSON, network failure and not-ready stay safe and
   await expect(page.getByText("Part A:", { exact: false })).toHaveCount(0);
   await expect(page.getByText("Part B:", { exact: false })).toHaveCount(0);
   await expect(page.locator("body")).not.toContainText("private not-ready provider detail");
+  const notReadySurfaceBox = await page.locator("section").filter({ hasText: "Результат ещё не готов." }).boundingBox();
+  expect(notReadySurfaceBox?.width).toBeLessThanOrEqual(680);
   await capture(page, testInfo, "res-01a-not-ready");
 
   mode = "success";
