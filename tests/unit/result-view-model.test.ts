@@ -82,6 +82,14 @@ describe("result view model", () => {
     expect(display).toBeNull();
   });
 
+  it("ignores unexpected scaled fields for an authentic primary-only payload", () => {
+    const display = getScaledScoreDisplay(
+      resultPayload({ scaled_score: 77, max_scaled_score: 100 })
+    );
+
+    expect(display).toBeNull();
+  });
+
   it("preserves the generic scaled-score display", () => {
     const display = getScaledScoreDisplay(
       resultPayload({
@@ -95,17 +103,32 @@ describe("result view model", () => {
   });
 
   it.each([
+    { scaled_score: 77, max_scaled_score: null, expected: { score: 77, maxScore: 100 } },
+    { scaled_score: 77, max_scaled_score: undefined, expected: { score: 77, maxScore: 100 } },
+    { scaled_score: 0, max_scaled_score: null, expected: { score: 0, maxScore: 100 } }
+  ])("uses the generic 100-point fallback when max score is absent: %j", (fields) => {
+    expect(
+      getScaledScoreDisplay({
+        exam_mode: "generic",
+        scaled_score: fields.scaled_score,
+        max_scaled_score: fields.max_scaled_score
+      })
+    ).toEqual(fields.expected);
+  });
+
+  it.each([
     {},
-    { scaled_score: null, max_scaled_score: null },
-    { scaled_score: 77 },
+    { scaled_score: null },
     { scaled_score: "77", max_scaled_score: 100 },
     { scaled_score: Number.NaN, max_scaled_score: 100 },
+    { scaled_score: 77, max_scaled_score: "100" },
+    { scaled_score: 77, max_scaled_score: Number.NaN },
     { scaled_score: 77, max_scaled_score: Number.POSITIVE_INFINITY },
     { scaled_score: -1, max_scaled_score: 100 },
-    { scaled_score: 0, max_scaled_score: 0 },
+    { scaled_score: 77, max_scaled_score: 0 },
     { scaled_score: 101, max_scaled_score: 100 }
   ])("returns null for missing or malformed scaled fields: %j", (fields) => {
-    expect(getScaledScoreDisplay(fields)).toBeNull();
+    expect(getScaledScoreDisplay({ exam_mode: "generic", ...fields })).toBeNull();
   });
 
   it("builds Part A and Part B breakdown from completed answer details", () => {
