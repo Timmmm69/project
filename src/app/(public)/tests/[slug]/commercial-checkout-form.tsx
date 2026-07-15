@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { RecoveryAccessPanel } from "./recovery-access-panel";
 
 type LegalLinks = {
   version: string;
@@ -28,12 +29,13 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, verifiedPreAuthorized }: {
+export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, verifiedPreAuthorized, recovery }: {
   legal: LegalLinks;
   testId: string;
   priceMinor: number;
   currency: string;
   verifiedPreAuthorized: boolean;
+  recovery: Readonly<{ productCode: string; supportEmail: string }> | null;
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -207,43 +209,49 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
   const paid = order?.accessStatus === "granted";
   if (verifiedPreAuthorized) {
     return (
-      <section className="subpanel stack compact">
-        {message ? <p className="form-message info">{message}</p> : null}
-        <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
-          Начать или продолжить тест
-        </button>
-      </section>
+      <>
+        <section className="subpanel stack compact" id="commercial-checkout">
+          {message ? <p className="form-message info">{message}</p> : null}
+          <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
+            Начать или продолжить тест
+          </button>
+        </section>
+        {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
+      </>
     );
   }
   return (
-    <section className="subpanel stack compact">
-      <div>
-        <h3 className="subsection-title">Тестовая оплата</h3>
-        <p className="muted">Одна услуга прохождения одного тренировочного онлайн-теста.</p>
-      </div>
-      <p className="form-message info">Тестовый платеж. Реальные деньги не списываются.</p>
-      <ul className="muted">
-        <li>{price}, одна попытка.</li>
-        <li>Начать тест можно в течение 90 дней.</li>
-        <li>После начала: 120 минут без паузы.</li>
-        <li>Показывается первичный результат. Полный возврат доступен до старта.</li>
-      </ul>
-      {!order ? <>
-        <label className="field"><span>Email для заказа</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-        <label className="checkbox-row"><input type="checkbox" checked={adult} onChange={(event) => setAdult(event.target.checked)} /><span>Подтверждаю, что я совершеннолетний покупатель.</span></label>
-      </> : null}
-      <p className="muted">
-        <a className="text-link" href={legal.offerUrl} target="_blank">Оферта</a>{" · "}
-        <a className="text-link" href={legal.privacyUrl} target="_blank">Конфиденциальность</a>{" · "}
-        <a className="text-link" href={legal.refundPolicyUrl} target="_blank">Возврат</a>{" · "}
-        <a className="text-link" href={legal.disclaimerUrl} target="_blank">Дисклеймер</a>
-      </p>
-      <p className="muted">Поддержка: {legal.supportEmail}{legal.supportTelegram ? ` · Telegram: ${legal.supportTelegram}` : ""}</p>
-      {message ? <p className="form-message info">{message}</p> : null}
-      {!order ? <button className="button" type="button" disabled={busy || !email || !adult} onClick={createOrder}>Перейти к оплате {price}</button> : null}
-      {existingAccess ? <button className="button" type="button" disabled={busy} onClick={continueExistingAccess}>Продолжить тест</button> : null}
-      {order && !paid ? <div className="inline-actions"><button className="button" type="button" disabled={busy} onClick={beginPayment}>Открыть тестовую оплату</button><button className="button secondary" type="button" disabled={busy} onClick={refreshStatus}>Проверить статус</button></div> : null}
-      {paid ? <button className="button" type="button" disabled={busy} onClick={claimAndContinue}>{order?.nextAction === "RESUME_TEST" ? "Продолжить тест" : order?.nextAction === "VIEW_RESULT" ? "Посмотреть результат" : "Начать тест"}</button> : null}
-    </section>
+    <>
+      <section className="subpanel stack compact" id="commercial-checkout">
+        <div>
+          <h3 className="subsection-title">Тестовая оплата</h3>
+          <p className="muted">Одна услуга прохождения одного тренировочного онлайн-теста.</p>
+        </div>
+        <p className="form-message info">Тестовый платеж. Реальные деньги не списываются.</p>
+        <ul className="muted">
+          <li>{price}, одна попытка.</li>
+          <li>Начать тест можно в течение 90 дней.</li>
+          <li>После начала: 120 минут без паузы.</li>
+          <li>Показывается первичный результат. Полный возврат доступен до старта.</li>
+        </ul>
+        {!order ? <>
+          <label className="field"><span>Email для заказа</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+          <label className="checkbox-row"><input type="checkbox" checked={adult} onChange={(event) => setAdult(event.target.checked)} /><span>Подтверждаю, что я совершеннолетний покупатель.</span></label>
+        </> : null}
+        <p className="muted">
+          <a className="text-link" href={legal.offerUrl} target="_blank">Оферта</a>{" · "}
+          <a className="text-link" href={legal.privacyUrl} target="_blank">Конфиденциальность</a>{" · "}
+          <a className="text-link" href={legal.refundPolicyUrl} target="_blank">Возврат</a>{" · "}
+          <a className="text-link" href={legal.disclaimerUrl} target="_blank">Дисклеймер</a>
+        </p>
+        <p className="muted">Поддержка: {legal.supportEmail}{legal.supportTelegram ? ` · Telegram: ${legal.supportTelegram}` : ""}</p>
+        {message ? <p className="form-message info">{message}</p> : null}
+        {!order ? <button className="button" type="button" disabled={busy || !email || !adult} onClick={createOrder}>Перейти к оплате {price}</button> : null}
+        {existingAccess ? <button className="button" type="button" disabled={busy} onClick={continueExistingAccess}>Продолжить тест</button> : null}
+        {order && !paid ? <div className="inline-actions"><button className="button" type="button" disabled={busy} onClick={beginPayment}>Открыть тестовую оплату</button><button className="button secondary" type="button" disabled={busy} onClick={refreshStatus}>Проверить статус</button></div> : null}
+        {paid ? <button className="button" type="button" disabled={busy} onClick={claimAndContinue}>{order?.nextAction === "RESUME_TEST" ? "Продолжить тест" : order?.nextAction === "VIEW_RESULT" ? "Посмотреть результат" : "Начать тест"}</button> : null}
+      </section>
+      {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
+    </>
   );
 }

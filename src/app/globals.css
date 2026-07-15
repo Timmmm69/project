@@ -132,6 +132,14 @@ a {
   padding: 18px;
 }
 
+.recovery-panel {
+  min-width: 0;
+}
+
+.recovery-masked {
+  overflow-wrap: anywhere;
+}
+
 .split-layout {
   align-items: start;
   display: grid;
