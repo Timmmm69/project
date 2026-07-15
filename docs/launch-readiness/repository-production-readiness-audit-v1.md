@@ -1,19 +1,21 @@
-# Repository Production Readiness Audit v1
+# Repository Production Readiness Audit v1.1
 
 ## 1. Version, date, baseline and status
 
 | Field | Value |
 |---|---|
-| Version | 1.0 |
+| Version | 1.1 |
 | Audit date | 2026-07-15 |
 | Repository | `Timmmm69/project` |
-| Baseline SHA | `6a58528eaddf7ddb3902db7654a3d214177bcb08` |
+| Baseline SHA | `306200360e59d7d6bf65cf0a6d440816832a731d` |
 | Audited branch basis | `origin/main` at the baseline SHA |
-| Status | `REPOSITORY PRODUCTION READINESS AUDIT DRAFT — CENTRAL REVIEW REQUIRED — NO PRODUCTION ACTIVATION` |
+| Status | `REPOSITORY PRODUCTION READINESS AUDIT SYNCHRONIZED AND CORRECTED — CENTRAL RE-REVIEW REQUIRED — NO PRODUCTION ACTIVATION` |
 | Production activation | Not performed |
 | Real payments | `NO-GO` |
 
 This is a repository-evidence audit, not a launch approval. The inspected build cannot currently be proved safe to deploy to production.
+
+Revision note: version 1.0 was originally prepared against previous audited ancestor `6a58528eaddf7ddb3902db7654a3d214177bcb08`. The audit branch was subsequently synchronized by merge and the repository evidence was revalidated against current `main` at the baseline shown above. This remains static repository evidence, not production execution evidence or launch approval.
 
 ## 2. Evidence boundary and audit limitations
 
@@ -30,8 +32,9 @@ Evidence strength used below:
 
 Important limitations:
 
-- `stage-7-launch-control-v1.md` was not found in the tracked baseline tree. Its older implementation snapshot therefore could not be used as current repository evidence.
-- No runtime, CI, database or provider test was executed because the approved change is documentation-only.
+- `stage-7-launch-control-v1.md` is not present in the tracked repository baseline and therefore is not repository implementation evidence for this audit. It remains the canonical Project Source for Stage 7 launch gates. This audit does not replace it, does not update canonical Stage 7 statuses and does not assert that every Launch Control detail is automatically current. Any discrepancy between repository evidence and Launch Control requires central reconciliation.
+- `legal-product-decision-register-v1.md` and `legal-external-evidence-register-v1.md` are existing external Project Sources, but are not present in the tracked repository baseline and are not repository implementation evidence here. This audit must be reconciled with them rather than creating a parallel register.
+- No local runtime, database or provider test was executed because the approved change is documentation-only. Pull request CI is separate review evidence and is described in section 16.
 - Provider protocols, seller facts, legal/tax conclusions, hosting properties, backup capabilities and operational service levels cannot be verified from this repository alone.
 - “Not found” below always means **not found in inspected repository scope**.
 
@@ -74,7 +77,7 @@ Only variable names and read locations are listed.
 | ExpressPay/E-POS placeholder | `EXPRESSPAY_SANDBOX`, `EXPRESSPAY_BASE_URL`, `EXPRESSPAY_TOKEN`, `EXPRESSPAY_SERVICE_ID`, `EXPRESSPAY_SECRET`, `EXPRESSPAY_NOTIFICATION_SECRET` | `src/lib/payments/providers/expresspay-epos-provider.ts` | Configuration names exist; create/status throw an explicit not-implemented error and webhook signature verification always returns false. | Strong — code/config | Official protocol and credentials are unresolved; not production-capable. |
 | Commercial sandbox | `COMMERCIAL_CHECKOUT_ENABLED`, `PAYMENTS_MODE`, `COMMERCIAL_FAKE_PROVIDER_TEST_ONLY`, `COMMERCIAL_ORDER_TOKEN_HMAC_KEY`, `WEBPAY_SANDBOX_STORE_ID`, `WEBPAY_SANDBOX_SECRET_KEY`, `WEBPAY_SANDBOX_CHECKOUT_URL`, `WEBPAY_SANDBOX_STATUS_URL`, `WEBPAY_SANDBOX_STORE_NAME` | `src/lib/commercial/config.ts`, `src/lib/commercial/providers/**`, `src/lib/commercial/security.ts` | Sandbox checkout requires explicit non-production enablement, legal configuration and an order-token secret; fake provider is separately test-only. | Strong — code/config; provider behavior moderate | Sandbox variables do not constitute production WEBPAY configuration. Final status protocol and controlled sandbox evidence remain unresolved. |
 | Commercial legal/support | `LEGAL_BUNDLE_VERSION`, `OFFER_URL`, `PRIVACY_URL`, `REFUND_POLICY_URL`, `DISCLAIMER_URL`, `SUPPORT_EMAIL`, `SUPPORT_TELEGRAM` | `src/lib/commercial/config.ts` | Required legal/support values gate non-production commercial checkout. | Strong — code/config | Values, seller identity and legal sufficiency are external decisions, not repository-proven. |
-| Analytics | `ANALYTICS_ENABLED`, `ANALYTICS_ID_HMAC_KEY`, `ANALYTICS_ID_KEY_VERSION` | `src/lib/analytics/analytics-id.ts`, `.env.example` | Analytics defaults off; enabled mode requires a key and version and hashes public entity identifiers. | Strong — code/config | Key custody, retention, export, monitoring and production activation are undefined. |
+| Analytics | `ANALYTICS_ENABLED`, `ANALYTICS_ID_HMAC_KEY`, `ANALYTICS_ID_KEY_VERSION` | `src/lib/analytics/analytics-id.ts`, `.env.example` | Analytics remains default-off; enabled mode requires a key and version and hashes public entity identifiers. The centralized taxonomy/frontend authority contract does not activate analytics. | Strong — code/config | Key custody, retention, export, monitoring and production activation are undefined. |
 | Verified student session | `VERIFIED_COMMERCIAL_SESSION_MODE`, `VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION`, `VERIFIED_STUDENT_SESSION_HMAC_KEY_RING`, plus environment-label inputs `VERCEL_ENV`, `DEPLOYMENT_ENV`, `APP_ENV` | `src/server/auth/verified-student-session/config.ts` and destination guards | Mode defaults to `off`; key-ring parser rejects malformed, duplicate, reused and production-placeholder keys. | Strong — code/config | Rotation/custody and production rollout procedure are not defined. |
 | Recovery | `ACC_01A_RECOVERY_ENABLED`, `RECOVERY_MAILER_MODE`, `RECOVERY_COMMERCIAL_PRODUCT_CODE`, `RECOVERY_EMAIL_FINGERPRINT_ACTIVE_KEY_VERSION`, `RECOVERY_EMAIL_FINGERPRINT_HMAC_KEY_RING`, `RECOVERY_CHALLENGE_TOKEN_ACTIVE_KEY_VERSION`, `RECOVERY_CHALLENGE_TOKEN_HMAC_KEY_RING`, `RECOVERY_OTP_ACTIVE_KEY_VERSION`, `RECOVERY_OTP_HMAC_KEY_RING`, `RECOVERY_SESSION_TOKEN_ACTIVE_KEY_VERSION`, `RECOVERY_SESSION_TOKEN_HMAC_KEY_RING` | `src/server/recovery/config.ts`, `src/server/recovery/http-runtime.ts` | Defaults disabled; enabled mode is restricted to development/test mailers and forbidden in production-like environments. | Strong — code/config | No production mailer or approved production recovery activation path. |
 | Seed-only | `COMMERCIAL_PRODUCT_TEST_SLUG` | `scripts/seed-commercial-product.mjs` | Selects a local seeded product/test. | Strong — code/config | Not a deployment or provider control. |
@@ -160,7 +163,7 @@ Backup and restore must not be declared ready until a provider-specific mechanis
 | `src/server/emails/email-log.ts`, `prisma/schema.prisma` | `EmailLog` | Persists recipient email, subject, message body, provider identifiers and raw error message. | Strong — code/config | Contains personal/message content and lacks documented retention/redaction/access policy. |
 | `prisma/schema.prisma`, `src/lib/payments/payment-service.ts` | `Payment.providerPayload`, `providerWebhookPayload` | Generic payment flow can persist adapter-returned raw payloads. | Strong — code/config | No provider-independent redaction guard; future payloads may contain secrets/PII/signatures. |
 | `src/lib/commercial/security.ts`, `CommercialPaymentEvent.redactedPayload` | `redactProviderPayload` | Commercial sandbox stores a payload hash and an allowlisted subset of provider fields. | Strong — code/config | Allowlist still includes transaction/order identifiers and is specific to current sandbox fields. |
-| `src/lib/analytics/forbidden-payload.ts`, `src/lib/analytics/privacy-scan.ts` | analytics privacy guards | Rejects identity, education content, scores, security material, URLs/query strings and free-text/error patterns; failure objects omit inspected values. | Strong — code/config | Applies to analytics only, not EventLog, EmailLog, Prisma or generic payment payloads. |
+| `src/lib/analytics/forbidden-payload.ts`, `src/lib/analytics/privacy-scan.ts`, `src/lib/analytics/event-contract.ts`, `src/lib/analytics/event-taxonomy.ts` | analytics privacy and input-contract guards | Rejects identity, education content, scores, security material, URLs/query strings and free-text/error patterns; controlled code values come from a centralized taxonomy; frontend input cannot supply receiver-owned envelope fields. | Strong — code/config | Applies to analytics only, not EventLog, EmailLog, Prisma or generic payment payloads; it is not operational logging redaction. |
 | `scripts/seed-admin.mjs`, `scripts/seed-commercial-product.mjs` | console output | Seed scripts print email/internal IDs or product/test identifiers; errors are printed directly. | Strong — code/config | Unsafe for production execution/log aggregation without a policy; scripts are intended for setup, not production operations. |
 
 ### Sensitive-data exposure review
@@ -184,12 +187,13 @@ Backup and restore must not be declared ready until a provider-specific mechanis
 | Repository path / search scope | Surface | Verified current behavior | Evidence strength | Residual gap |
 |---|---|---|---|---|
 | `src/lib/analytics/**`, `prisma/schema.prisma` `AnalyticsEvent` | Product analytics | A contract foundation, privacy guards and a partial backend commercial event writer/database model exist. Analytics defaults off. | Strong — code/config | This is not operational observability. No dashboards, export, retention job or health signal are present. |
-| `src/lib/analytics/event-contract.ts` | broad analytics contract | Defines frontend/backend/derived event shapes and privacy constraints. | Strong — code/config | Most frontend/derived events have no runtime emitter/collector in the inspected scope. |
+| `src/lib/analytics/event-contract.ts`, `src/lib/analytics/event-taxonomy.ts` | broad analytics contract and centralized taxonomy | Defines frontend/backend/derived event shapes and privacy constraints using centralized closed enum/code values. | Strong — code/config | A contract and taxonomy do not prove a complete frontend or derived-event runtime. |
+| `src/lib/analytics/event-contract.ts` | frontend input authority boundary | `validateFrontendAnalyticsInput` accepts only frontend event names and excludes receiver-owned `received_at`, traffic classification, `environment` and `emitting_layer` from client authority. | Strong — code/config | No full frontend emitter, receiver enrichment/persistence path or derived-event runtime is proved by this boundary. |
 | `src/lib/analytics/schemas.ts`, `src/lib/analytics/analytics-service.ts`, `src/lib/commercial/commercial-service.ts` | partial analytics runtime | A narrower backend registry persists selected checkout/order/payment/access events after domain transitions when enabled. | Strong — code/config | Runtime is partial and must be kept distinct from the broader contract foundation. |
 | repository-wide dependency/code search | operational monitoring | No Sentry, OpenTelemetry, Prometheus, Datadog, New Relic or equivalent integration was found in inspected repository scope. | Strong — scoped absence | Unhandled errors, latency, saturation and dependency health are not observed. |
 | repository-wide code/config search | alerts | No alert rule, notification channel, on-call routing or severity/SLO policy was found. | Strong — scoped absence | Release cannot prove detection/response capability. |
 
-Product analytics and operational observability are separate systems. The former is partially implemented and default-off; the latter was not found in inspected repository scope.
+Product analytics and operational observability are separate systems: **product analytics != operational observability**. The former has a strengthened contract/privacy foundation and a partial default-off backend runtime; the latter was not found in inspected repository scope. The taxonomy and frontend authority changes do not create monitoring, alerts, dashboards, on-call routing or dependency health, and do not prove ANA-02 complete or ready.
 
 ## 13. Scheduled jobs and reconciliation inventory
 
@@ -224,41 +228,55 @@ Product analytics and operational observability are separate systems. The former
 
 | Repository path | Coverage | Verified current behavior | Evidence strength | Residual gap |
 |---|---|---|---|---|
-| `tests/unit/**` | 30 test files | Covers domain validation, access codes, attempts/snapshots, scoring/results, analytics/privacy, commercial security and recovery foundations. | Strong — code/config | Not executed for this docs-only audit. |
+| `tests/unit/**` | 30 test files | Covers domain validation, access codes, attempts/snapshots, scoring/results, analytics/privacy, commercial security and recovery foundations. Analytics contract coverage now explicitly checks closed taxonomy values and rejection of client authority over server-owned envelope fields. | Strong — code/config | Not manually executed for this docs-only correction. |
 | `tests/integration/**` | 8 test files | Includes verified-session, recovery, continuation, destination guards and primary-only authentic Result PostgreSQL paths. | Strong — code/config | Several suites are opt-in by environment flag; external providers are not exercised. |
 | `tests/e2e/**` | 6 Playwright spec files | Browser flows exist for MVP/commercial/concurrency/recovery/primary Result. | Strong — code/config | Current CI does not run `pnpm test:e2e`. |
 | `.github/workflows/ci.yml` | CI quality job | Runs locked install, Prisma validate/generate/deploy, typecheck, lint, unit test command, selected PostgreSQL integrations and build. | Strong — code/config | No browser suite, provider sandbox test, restore/rollback rehearsal, load/security scan or deployed smoke. |
 | `tests/integration/primary-only-authentic-result.test.ts`, `src/lib/scoring/result-serialize.ts` | primary-only Result | Public authentic Result omits scaled-score fields and correct/accepted answers/explanations; admin can see internal scoring. | Strong — code/config | Behavior was not re-executed in this docs-only task. |
 | `src/server/recovery/**`, recovery tests | recovery dev/test | Recovery domain/HTTP/continuation code and tests exist, but configuration and mailers restrict it to development/test and forbid production-like activation. | Strong — code/config | No production email/recovery channel. |
 
-Test execution for this audit:
+### Local task execution
 
-`Unit tests: NOT RUN — documentation-only scope; no runtime or test files changed.`
+Local unit tests were not manually run because the implementation scope was documentation-only.
 
-`Integration tests: NOT RUN — documentation-only scope; no runtime or database files changed.`
+Local integration tests were not manually run because the implementation scope was documentation-only.
 
-Generic regression is established only by the final absence of runtime/config/test/CI changes, not by rerunning generic tests.
+### Pull request CI evidence
+
+Pull request CI is separate review evidence for the checked branch state. The current GitHub workflow performs typecheck, lint, unit tests, selected PostgreSQL integration tests and build. Its actual result must be checked on the pull request before merge and is not embedded here as an unstable run number or head SHA.
+
+Current GitHub CI does not run Playwright. Successful PR CI does not replace browser release QA or prove a deployed production scenario.
+
+Generic regression for this correction requires both a successful PR CI result and a final PR diff with no runtime/config/test/CI changes authored by this audit task.
 
 ## 17. Production readiness gap matrix
 
+`PRG-*` identifiers are repository audit findings, not canonical Stage 7 launch gates.
+
+They do not replace or update `INF-*`, `OPS-*`, `SUP-*`, `QA-*`, `PAY-*`, `ACC-*`, `ANA-*` or `UX-*` statuses.
+
+Only `READY`, `PARTIAL`, `BLOCKED` and `NOT STARTED` are used in the Current status column.
+
+`NO-GO` is reserved for the overall real-payment and production-activation decision.
+
 | ID | Gate / area | Repository evidence | Current status | Required proof before closure |
 |---|---|---|---|---|
-| PRG-01 | Hosting/deployment | No production deployment manifest/runbook found. | `NO-GO` | Approved provider/topology, immutable artifact, deployment procedure and controlled non-production deploy evidence. |
-| PRG-02 | Startup/config | `next start` has no complete config/dependency preflight. | Open | Versioned environment contract and fail-safe startup/readiness behavior. |
-| PRG-03 | Readiness | `/api/health` is static liveness only. | Open | Database/schema/config readiness plus defined dependency-health policy. |
-| PRG-04 | Production migrations | CI deploys migrations only to ephemeral schemas. | Open | Production owner, ordering, backup gate, pre/post checks and rehearsal. |
-| PRG-05 | Backup | No mechanism found. | `NO-GO` | Provider backup/PITR configuration, retention/encryption evidence and monitoring. |
-| PRG-06 | Restore | No mechanism/rehearsal found. | `NO-GO` | Successful isolated restore with data/integrity verification and measured RTO/RPO. |
-| PRG-07 | Release/database rollback | No deploy rollback or data compatibility procedure found. | `NO-GO` | Prior-artifact/traffic rollback and forward-fix/restore decision rehearsal. |
-| PRG-08 | Operational logging/redaction | EventLog/EmailLog/generic provider payloads lack a shared guard. | Open, high risk | Approved schema/redaction/retention/access policy and tests. |
-| PRG-09 | Monitoring/alerts | No operational integration or alerts found. | `NO-GO` | Error/latency/dependency signals, alert routing and exercised incident signal. |
-| PRG-10 | Scheduled operations | Cleanup exists without a scheduler; no reconciliation job. | Open | Idempotent scheduled runner, concurrency policy, metrics/alerts and runbook. |
-| PRG-11 | Production email | Disabled adapter records disabled sends; SMTP names have no active adapter. | `NO-GO` | Selected provider, credentials/custody, verified delivery/bounce/failure behavior and redaction. |
-| PRG-12 | Real payments | Mock, fake and WebPay sandbox are not production WEBPAY; ExpressPay is a stub. | `NO-GO` | Legal/tax/provider/bank approvals, official protocol, signed verification and controlled transaction. |
-| PRG-13 | Release identity | No commit/artifact/deployment identity. | Open | Safe build metadata and deployment record mapped to migrations. |
-| PRG-14 | Release QA | CI omits Playwright and deployed smoke/provider/restore checks. | Open | Approved release checklist executed against controlled environment. |
-| PRG-15 | Operational support | Product admin exists; system/provider/backup/log operations UI is absent. | Open | Minimum support runbook and bounded privileged operations surfaces. |
-| PRG-16 | Legal/tax/IP/domain | Required external evidence is not in repository. | `NO-GO` where applicable | Written decisions/evidence from named owners. |
+| PRG-01 | Hosting/deployment | No production deployment manifest/runbook found. | `NOT STARTED` | Approved provider/topology, immutable artifact, deployment procedure and controlled non-production deploy evidence. |
+| PRG-02 | Startup/config | `next start` has no complete config/dependency preflight. | `PARTIAL` | Versioned environment contract and fail-safe startup/readiness behavior. |
+| PRG-03 | Readiness | `/api/health` is static liveness only. | `NOT STARTED` | Database/schema/config readiness plus defined dependency-health policy. |
+| PRG-04 | Production migrations | CI deploys migrations only to ephemeral schemas. | `PARTIAL` | Production owner, ordering, backup gate, pre/post checks and rehearsal. |
+| PRG-05 | Backup | No mechanism found. | `NOT STARTED` | Provider backup/PITR configuration, retention/encryption evidence and monitoring. |
+| PRG-06 | Restore | No mechanism/rehearsal found. | `NOT STARTED` | Successful isolated restore with data/integrity verification and measured RTO/RPO. |
+| PRG-07 | Release/database rollback | No deploy rollback or data compatibility procedure found. | `NOT STARTED` | Prior-artifact/traffic rollback and forward-fix/restore decision rehearsal. |
+| PRG-08 | Operational logging/redaction | EventLog/EmailLog/generic provider payloads lack a shared guard. | `PARTIAL` | Approved schema/redaction/retention/access policy and tests. |
+| PRG-09 | Monitoring/alerts | No operational integration or alerts found. | `NOT STARTED` | Error/latency/dependency signals, alert routing and exercised incident signal. |
+| PRG-10 | Scheduled operations | Cleanup exists without a scheduler; no reconciliation job. | `PARTIAL` | Idempotent scheduled runner, concurrency policy, metrics/alerts and runbook. |
+| PRG-11 | Production email | Disabled adapter records disabled sends; SMTP names have no active adapter. | `BLOCKED` | Selected provider, credentials/custody, verified delivery/bounce/failure behavior and redaction. |
+| PRG-12 | Real payments | Mock, fake and WebPay sandbox are not production WEBPAY; ExpressPay is a stub. | `BLOCKED` | Legal/tax/provider/bank approvals, official protocol, signed verification and controlled transaction. |
+| PRG-13 | Release identity | No commit/artifact/deployment identity. | `NOT STARTED` | Safe build metadata and deployment record mapped to migrations. |
+| PRG-14 | Release QA | CI omits Playwright and deployed smoke/provider/restore checks. | `PARTIAL` | Approved release checklist executed against controlled environment. |
+| PRG-15 | Operational support | Product admin exists; system/provider/backup/log operations UI is absent. | `PARTIAL` | Minimum support runbook and bounded privileged operations surfaces. |
+| PRG-16 | Legal/tax/IP/domain | Required external evidence is not in repository. | `BLOCKED` | Written decisions/evidence from named owners. |
 
 ## 18. Evidence matrix with exact repository paths
 
@@ -281,7 +299,7 @@ Generic regression is established only by the final absence of runtime/config/te
 | EventLog untyped payload | `src/server/events/log-event.ts`, `prisma/schema.prisma` | `logEvent`, `EventLog.payload` | Strong | Cross-system redaction absent. |
 | Commercial redaction | `src/lib/commercial/security.ts` | `redactProviderPayload` | Strong | Provider-specific and identifier-bearing. |
 | Analytics privacy guard | `src/lib/analytics/privacy-scan.ts`, `src/lib/analytics/forbidden-payload.ts` | scanner/assertion | Strong | Analytics only. |
-| Analytics contract foundation | `src/lib/analytics/event-contract.ts` | broad registry | Strong | Not equivalent to full runtime. |
+| Analytics contract/privacy foundation | `src/lib/analytics/event-contract.ts`, `src/lib/analytics/event-taxonomy.ts`, `tests/unit/analytics-event-contract.test.ts` | broad registry, centralized closed taxonomy, frontend authority validation | Strong | Strengthened contract coverage is not equivalent to full frontend/derived runtime or ANA-02 readiness. |
 | Partial backend analytics runtime | `src/lib/analytics/schemas.ts`, `src/lib/analytics/analytics-service.ts`, `src/lib/commercial/commercial-service.ts` | writer/call sites | Strong | Default-off, partial, no frontend/derived runtime. |
 | Recovery dev/test only | `src/server/recovery/config.ts`, `src/server/recovery/mailer.ts` | config/mailer guards | Strong | Production forbidden. |
 | Recovery cleanup not scheduled | `src/server/recovery/service.ts`, `tests/integration/recovery-domain-service.test.ts` | `cleanup` | Strong | No runtime invoker. |
@@ -311,10 +329,11 @@ No provider protocol, credential, seller fact, legal conclusion or tax conclusio
 
 ## 20. Parallel-work collision matrix
 
-The audit itself changes only this document and has no runtime collision. Future implementation tasks have the following likely overlaps with the active Analytics Runtime and UX Implementation workstreams.
+The audit itself changes only this document and has no runtime collision. Current `main` has a strengthened centralized analytics taxonomy and frontend authority boundary, but not a complete frontend or derived runtime. Future implementation tasks have the following likely overlaps with the active Analytics Runtime and UX Implementation workstreams.
 
 | Future change area | Likely repository paths | Analytics Runtime collision | UX Implementation collision | Coordination requirement |
 |---|---|---|---|---|
+| Frontend/derived analytics runtime | `src/lib/analytics/event-contract.ts`, `src/lib/analytics/event-taxonomy.ts`, future receiver/emitter code and analytics tests | High: the closed taxonomy and receiver-owned fields are now active contract boundaries. | High: frontend event emission would touch active user flows. | Preserve server authority and privacy guards; do not treat the contract as completed ANA-02 runtime. |
 | Readiness/dependency health | `src/app/api/health/**`, `src/server/db/client.ts`, future runtime config | Low/medium: operational events must not be mixed with product analytics. | Low: only if status/error UI is added. | Agree endpoint semantics and keep operational telemetry separate. |
 | Logging/redaction | `src/server/events/**`, `src/server/emails/**`, `src/lib/payments/**`, `src/lib/commercial/**`, `src/lib/analytics/**` | High: shared payload/privacy concepts and analytics failure handling. | Medium: safe error codes/messages can affect UI. | Analytics owner approves boundaries; UX owner approves user-visible errors. |
 | Monitoring/error capture | route boundaries, `src/lib/api-response.ts`, future instrumentation | Medium/high: avoid double-counting product events and leaking analytics payloads. | Medium: error presentation/retry signals. | Define operational event taxonomy independently, then map safe UX codes. |
@@ -331,7 +350,7 @@ These are candidate scopes, not approval to implement them.
 
 | Order | Bounded task | Dependency | Intended deliverable | Explicit exclusion |
 |---|---|---|---|---|
-| 1 | Resolve external launch decision register | Named owners in section 19 | Approved provider/legal/tax/hosting/DNS/monitoring choices and evidence requirements | No credentials or runtime code |
+| 1 | Reconcile canonical external decision and evidence registers with the repository audit | Current Stage 7 source pack and named external owners | Reviewed mapping from existing external decisions and evidence requirements to PRG findings and canonical Stage 7 gates | No new parallel source of truth, no credentials and no runtime code |
 | 2 | Define production runtime and environment contract | Hosting/database and DNS decisions | Versioned required/optional variable names, safe defaults, secret ownership and startup failure rules | No provider values in repository |
 | 3 | Build immutable deployment and release identity | Runtime contract | Reproducible artifact, safe commit/build metadata and deployment record | No production activation |
 | 4 | Define production migration gate | Database provider and artifact flow | Preflight, backup prerequisite, deploy ordering, post-check and failure decision runbook | No automatic destructive rollback |
@@ -347,6 +366,8 @@ These are candidate scopes, not approval to implement them.
 
 Each task requires its own approval when it affects architecture, money, security or MVP scope.
 
+Task 1 reconciles the existing external Project Sources `legal-product-decision-register-v1.md` and `legal-external-evidence-register-v1.md`; it does not create a new legal, tax or provider decision register. Because those Project Sources are not in the tracked baseline, this statement records their reconciliation role rather than treating them as repository implementation evidence.
+
 ## 22. Explicit conclusions
 
 ### Confirmed
@@ -356,7 +377,7 @@ Each task requires its own approval when it affects architecture, money, securit
 - Mock/fake payments are non-production gated; WebPay implementation is sandbox-only; ExpressPay/E-POS real calls are explicitly unimplemented.
 - Recovery domain and UI foundations exist for development/test, and production-like recovery is explicitly forbidden.
 - Primary-only authentic Result behavior exists: public RIKZ result suppresses scaled score and answer keys while admin/internal scoring remains available.
-- Analytics has a broad contract/privacy foundation and a distinct partial backend runtime for selected commercial events; analytics defaults off.
+- Analytics has a broad contract/privacy foundation with centralized closed taxonomy values and a frontend boundary that rejects client authority over receiver-owned fields. A distinct partial backend runtime persists selected commercial events and remains default-off. This does not prove complete frontend/derived runtime, ANA-02 readiness or operational observability.
 - Commercial payment processing includes idempotency/uniqueness constraints and a redacted sandbox event path.
 - Product admin/support surfaces exist for tests, imports, payments, accesses, codes and attempts.
 
@@ -385,10 +406,16 @@ Each task requires its own approval when it affects architecture, money, securit
 
 The current build is **not proved safe to deploy to production**. Infrastructure, dependency, data-protection and release gates remain open. Production email is not configured. Fake/mock/sandbox payment behavior is not WEBPAY production behavior. Browser redirect is not payment confirmation.
 
+**Production email: not activated.**
+
+**Production WEBPAY: not activated.**
+
+**Recovery production activation: prohibited.**
+
 **Real payments remain `NO-GO`.**
 
 **Production activation status: NOT PERFORMED.**
 
 **Merge recommendation: `CENTRAL REVIEW REQUIRED — DO NOT MERGE YET`.**
 
-Final document status: `REPOSITORY PRODUCTION READINESS AUDIT DRAFT — CENTRAL REVIEW REQUIRED — NO PRODUCTION ACTIVATION`
+Final document status: `REPOSITORY PRODUCTION READINESS AUDIT SYNCHRONIZED AND CORRECTED — CENTRAL RE-REVIEW REQUIRED — NO PRODUCTION ACTIVATION`
