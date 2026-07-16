@@ -5,12 +5,15 @@ import { GET as readAttempt } from "@/app/api/attempts/[attemptId]/route";
 import { POST as saveAnswer } from "@/app/api/attempts/[attemptId]/answers/route";
 import { POST as completeAttempt } from "@/app/api/attempts/[attemptId]/complete/route";
 import { POST as expireAttempt } from "@/app/api/attempts/[attemptId]/expire/route";
+import { GET as readAdminResult } from "@/app/api/admin/attempts/[attemptId]/route";
 import { POST as startAttempt } from "@/app/api/attempts/start/route";
 import { POST as claimCommercialAccess } from "@/app/api/commercial/orders/[publicId]/claim-access/route";
 import { GET as readResult } from "@/app/api/results/[attemptId]/route";
 import { orderTokenCookieName } from "@/lib/commercial/commercial-service";
 import { createLookupToken, hashLookupToken } from "@/lib/commercial/security";
 import { serializeResult } from "@/lib/scoring/result-serialize";
+import { createStudentSessionToken } from "@/server/auth/student-session";
+import { createAdminSessionToken } from "@/server/auth/session";
 import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
 import { createVerifiedStudentSessionService } from "@/server/auth/verified-student-session/service";
 
@@ -277,15 +280,17 @@ async function resultReadCounts() {
 }
 
 function expectPrimaryOnlyResult(result: Record<string, unknown>) {
-  expect(result).toMatchObject({
+  expect(result).toEqual({
     status: "completed",
+    mode: "ce_ct",
     exam_mode: "rikz_russian_2026",
     raw_score: 80,
-    max_raw_score: 80
+    max_raw_score: 80,
+    part_a_score: 36,
+    part_a_max_score: 36,
+    part_b_score: 44,
+    part_b_max_score: 44
   });
-  expect("scaled_score" in result).toBe(false);
-  expect("max_scaled_score" in result).toBe(false);
-  expect("scaled_score_note" in result).toBe(false);
 }
 
 describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integration", () => {
@@ -371,31 +376,62 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(adminResult.max_scaled_score).toBe(100);
     expect(adminResult.scaled_score_note).toContain("таблице соответствия");
 
+    const admin = await prisma.user.create({
+      data: { email: `prod03-admin-${randomUUID()}@example.test`, role: "ADMIN" }
+    });
+    nextCookieState.values.set("admin_session", createAdminSessionToken({
+      userId: admin.id,
+      email: admin.email,
+      role: "ADMIN"
+    }));
+    const adminResponse = await readAdminResult(
+      destinationRequest("GET", `/api/admin/attempts/${started.attemptId}`),
+      attemptContext(started.attemptId)
+    );
+    expect(adminResponse.status).toBe(200);
+    const adminApiResult = (await adminResponse.json()).data.result as Record<string, unknown>;
+    expect(adminApiResult.student_email).toBe(fixture.user.email);
+    expect(adminApiResult.scaled_score).toBe(100);
+    expect(adminApiResult.max_scaled_score).toBe(100);
+    expect(adminApiResult.answer_details).toHaveLength(40);
+    expect((adminApiResult.answer_details as Array<Record<string, unknown>>)[0]).toMatchObject({
+      question_text: "Part A 1",
+      selected_answer: "A,C",
+      correct_answer: "A,C",
+      explanation: "private Part A explanation 1"
+    });
+
     const beforeRead = await resultReadCounts();
     const response = await readResult(
       destinationRequest("GET", `/api/results/${started.attemptId}`, started.rawToken),
       attemptContext(started.attemptId)
     );
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
     const responseText = await response.clone().text();
     const result = (await response.json()).data.result as Record<string, unknown>;
     expectPrimaryOnlyResult(result);
-    for (const key of ["scaled_score", "max_scaled_score", "scaled_score_note"]) {
+    for (const key of [
+      "attempt_id", "student_email", "test_id", "test_title", "test_slug",
+      "started_at", "finished_at", "duration_seconds", "percent", "level",
+      "scaled_score", "max_scaled_score", "scaled_score_note", "topic_results",
+      "recommendations", "answer_details", "mistakes", "snapshot_question_id",
+      "order_index", "question_text", "question_type", "official_part",
+      "official_number", "response_subtype", "selected_answer", "normalized_answer",
+      "correct_answer", "accepted_answers", "is_correct", "points_earned",
+      "max_points", "explanation"
+    ]) {
       expect(responseText).not.toContain(`"${key}"`);
     }
+    expect(responseText).not.toContain("Part A 1");
+    expect(responseText).not.toContain("Part B 1");
+    expect(responseText).not.toContain("A,C");
+    expect(responseText).not.toContain("token1");
+    expect(responseText).not.toContain("private Part");
     expect(responseText.toLowerCase()).not.toContain("lookup");
     expect(responseText.toLowerCase()).not.toContain("таблиц");
-    const details = result.answer_details as Array<Record<string, unknown>>;
-    expect(details).toHaveLength(40);
-    expect(details.filter((detail) => detail.official_part === "A")).toHaveLength(18);
-    expect(details.filter((detail) => detail.official_part === "B")).toHaveLength(22);
-    for (const detail of details) {
-      expect(detail.points_earned).toBe(2);
-      expect(detail.max_points).toBe(2);
-      expect(detail.correct_answer).toBeNull();
-      expect(detail.accepted_answers).toBeNull();
-      expect(detail.explanation).toBeNull();
-    }
 
     const reopened = await readResult(
       destinationRequest("GET", `/api/results/${started.attemptId}`, started.rawToken),
@@ -409,6 +445,10 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(storedAfterGet.testSnapshot).toEqual(storedBeforeGet.testSnapshot);
     expect(storedAfterGet.scoringSchemeSnapshot).toEqual(storedBeforeGet.scoringSchemeSnapshot);
     expect(storedAfterGet).toMatchObject({ rawScore: 80, maxRawScore: 80, scaledScore: 100, maxScaledScore: 100 });
+    expect(await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    })).toEqual(storedBeforeGet.answers);
 
     const verifiedSessions = createVerifiedStudentSessionService({ client: prisma, config: verifiedConfig });
     const recoverySessionId = randomUUID();
@@ -499,10 +539,90 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
       ...(storedBeforeGet.testSnapshot as Prisma.JsonObject),
       examMode: "generic"
     } as Prisma.JsonObject;
-    const genericResult = serializeResult({ ...storedBeforeGet, testSnapshot: genericSnapshot });
+    await prisma.attempt.update({
+      where: { id: started.attemptId },
+      data: { testSnapshot: genericSnapshot }
+    });
+    await prisma.test.update({
+      where: { id: fixture.test.id },
+      data: { examMode: "GENERIC" }
+    });
+    nextCookieState.values.set("student_session", createStudentSessionToken({
+      userId: fixture.user.id,
+      email: fixture.user.email,
+      role: "STUDENT"
+    }));
+    const genericResponse = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`),
+      attemptContext(started.attemptId)
+    );
+    expect(genericResponse.status, await genericResponse.clone().text()).toBe(200);
+    const genericResult = (await genericResponse.json()).data.result as Record<string, unknown>;
+    expect(genericResult.exam_mode).toBe("generic");
     expect(genericResult.scaled_score).toBe(100);
     expect(genericResult.max_scaled_score).toBe(100);
-    expect("scaled_score_note" in genericResult).toBe(true);
+    expect(genericResult.answer_details).toHaveLength(40);
+    expect(genericResult.mistakes).toEqual([]);
+    await prisma.test.update({
+      where: { id: fixture.test.id },
+      data: { examMode: "RIKZ_RUSSIAN_2026" }
+    });
+
+    const originalQuestions = (storedBeforeGet.testSnapshot as Prisma.JsonObject).questions;
+    const malformedSnapshot = {
+      ...(storedBeforeGet.testSnapshot as Prisma.JsonObject),
+      questions: Array.isArray(originalQuestions)
+        ? originalQuestions.slice(0, 39)
+        : []
+    } as Prisma.JsonObject;
+    await prisma.attempt.update({
+      where: { id: started.attemptId },
+      data: { testSnapshot: malformedSnapshot }
+    });
+    const malformedBefore = await resultReadCounts();
+    const malformedAttemptBefore = await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } });
+    const malformed = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`, recoverySession.rawToken),
+      attemptContext(started.attemptId)
+    );
+    expect(malformed.status).toBe(409);
+    expect(malformed.headers.get("cache-control")).toBe("no-store");
+    expect(malformed.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(await malformed.json()).toEqual({
+      success: false,
+      error: {
+        code: "RESULT_NOT_READY",
+        message: "Result is available after attempt completion"
+      }
+    });
+    expect(await resultReadCounts()).toEqual(malformedBefore);
+    expect((await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } })).updatedAt)
+      .toEqual(malformedAttemptBefore.updatedAt);
+  });
+
+  it("returns RESULT_NOT_READY for an active authentic attempt without scoring or writes", async () => {
+    const fixture = await createCommercialFixture();
+    const started = await startFixture(fixture);
+    const before = await resultReadCounts();
+    const attemptBefore = await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } });
+    process.env.VERIFIED_COMMERCIAL_SESSION_MODE = "off";
+    nextCookieState.values.set("student_session", createStudentSessionToken({
+      userId: fixture.user.id,
+      email: fixture.user.email,
+      role: "STUDENT"
+    }));
+
+    const response = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`),
+      attemptContext(started.attemptId)
+    );
+    process.env.VERIFIED_COMMERCIAL_SESSION_MODE = "enforce";
+
+    expect(response.status).toBe(409);
+    expect((await response.json()).error.code).toBe("RESULT_NOT_READY");
+    expect(await resultReadCounts()).toEqual(before);
+    expect((await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } })).updatedAt)
+      .toEqual(attemptBefore.updatedAt);
   });
 
   it("keeps expiry response primary-only", async () => {
