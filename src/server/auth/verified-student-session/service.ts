@@ -102,6 +102,24 @@ function scopeFromInput(input: VerifiedStudentSessionScope): VerifiedStudentSess
   };
 }
 
+function exactAttemptPreservesExpiredAccess(
+  attempts: readonly Readonly<{
+    userId: string;
+    testId: string;
+    accessId: string;
+    status: string;
+  }>[],
+  scope: VerifiedStudentSessionScope
+) {
+  if (attempts.length !== 1) return false;
+  const attempt = attempts[0];
+  const status = attempt.status.toUpperCase();
+  return attempt.userId === scope.userId &&
+    attempt.testId === scope.testId &&
+    attempt.accessId === scope.accessId &&
+    (status === "STARTED" || status === "COMPLETED" || status === "EXPIRED");
+}
+
 async function validateVerifiedStudentSessionScope(
   tx: Tx,
   scope: VerifiedStudentSessionScope,
@@ -163,7 +181,24 @@ async function validateVerifiedStudentSessionScope(
     throw new VerifiedStudentSessionServiceError("ACCESS_REVOKED");
   }
   if (access && now.getTime() >= access.expiresAt.getTime()) {
-    throw new VerifiedStudentSessionServiceError("ACCESS_EXPIRED");
+    const attempts = await tx.$queryRaw<Array<{
+      userId: string;
+      testId: string;
+      accessId: string;
+      status: string;
+    }>>`
+      SELECT
+        "user_id" AS "userId",
+        "test_id" AS "testId",
+        "access_id" AS "accessId",
+        "status"::text AS "status"
+      FROM "attempts"
+      WHERE "access_id" = ${scope.accessId}::uuid
+      FOR SHARE
+    `;
+    if (!exactAttemptPreservesExpiredAccess(attempts, scope)) {
+      throw new VerifiedStudentSessionServiceError("ACCESS_EXPIRED");
+    }
   }
 }
 
@@ -303,7 +338,17 @@ export function createVerifiedStudentSessionService(input: {
               testId: true,
               commercialProductId: true,
               revokedAt: true,
-              expiresAt: true
+              expiresAt: true,
+              attempts: {
+                take: 2,
+                orderBy: { createdAt: "asc" },
+                select: {
+                  userId: true,
+                  testId: true,
+                  accessId: true,
+                  status: true
+                }
+              }
             }
           }
         }
@@ -326,10 +371,6 @@ export function createVerifiedStudentSessionService(input: {
       if (session.access.revokedAt) {
         return { status: "ACCESS_REVOKED" };
       }
-      if (clock().getTime() >= session.access.expiresAt.getTime()) {
-        return { status: "ACCESS_EXPIRED" };
-      }
-
       const scope = scopeFromInput(session);
       const scopeIsConsistent =
         session.user.id === scope.userId &&
@@ -342,6 +383,10 @@ export function createVerifiedStudentSessionService(input: {
         session.access.commercialProductId === scope.commercialProductId;
       if (!scopeIsConsistent) {
         return { status: "SCOPE_MISMATCH" };
+      }
+      if (clock().getTime() >= session.access.expiresAt.getTime() &&
+        !exactAttemptPreservesExpiredAccess(session.access.attempts, scope)) {
+        return { status: "ACCESS_EXPIRED" };
       }
 
       return {

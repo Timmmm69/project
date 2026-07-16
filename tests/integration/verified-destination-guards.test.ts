@@ -10,7 +10,8 @@ import { GET as readResultRoute } from "@/app/api/results/[attemptId]/route";
 import PublicTestPage from "@/app/(public)/tests/[slug]/page";
 import { createStudentSessionToken } from "@/server/auth/student-session";
 import {
-  authorizeVerifiedStudentDestination
+  authorizeVerifiedStudentDestination,
+  resolveVerifiedStudentEntryDestination
 } from "@/server/auth/verified-student-session/destination-guard";
 import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
 import { createVerifiedStudentSessionService } from "@/server/auth/verified-student-session/service";
@@ -271,11 +272,13 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
 
   async function createAuthenticAttempt(
     fixture: Awaited<ReturnType<typeof createPaidAccess>>,
-    status: "STARTED" | "COMPLETED" = "STARTED",
+    status: "STARTED" | "COMPLETED" | "EXPIRED" | "CANCELLED" = "STARTED",
     overrides: { userId?: string; accessId?: string } = {}
   ) {
     const startedAt = new Date(now.getTime() - 60_000);
-    const finishedAt = status === "COMPLETED" ? new Date(now.getTime() - 1_000) : null;
+    const finishedAt = status === "COMPLETED" || status === "EXPIRED"
+      ? new Date(now.getTime() - 1_000)
+      : null;
     return prisma.attempt.create({
       data: {
         userId: overrides.userId ?? fixture.user.id,
@@ -342,6 +345,32 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
       eventLogs: await prisma.eventLog.count(),
       analytics: await prisma.analyticsEvent.count()
     };
+  }
+
+  async function setConsumed(fixture: Awaited<ReturnType<typeof createPaidAccess>>) {
+    await prisma.access.update({
+      where: { id: fixture.access.id },
+      data: { attemptsAvailable: 0 }
+    });
+  }
+
+  async function expectPageRedirect(rawToken: string, expectedUrl: string) {
+    nextCookieState.values.set("verified_student_session", rawToken);
+    try {
+      await PublicTestPage({ params: Promise.resolve({ slug: testSlug }) });
+      throw new Error("EXPECTED_NEXT_REDIRECT");
+    } catch (error) {
+      expect(error).toMatchObject({
+        digest: expect.stringContaining(expectedUrl)
+      });
+    }
+  }
+
+  async function authenticStart(rawToken: string) {
+    return startAttemptRoute(request("POST", "/api/attempts/start", {
+      cookie: `verified_student_session=${rawToken}`,
+      body: { testId }
+    }));
   }
 
   beforeAll(() => {
@@ -506,6 +535,196 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
       config: verifiedConfig,
       clock: () => new Date(now)
     }).resolve(verifiedToken!)).toMatchObject({ status: "RESOLVED", source: "EMAIL_OTP_RECOVERY" });
+  });
+
+  it("keeps unstarted PRE read-only, starts once, and resolves every active re-entry to the same ATT", async () => {
+    const fixture = await createPaidAccess("entry-active@example.test");
+    const issued = await issueSession(fixture);
+    nextCookieState.values.set("verified_student_session", issued.rawToken);
+
+    const page = await PublicTestPage({ params: Promise.resolve({ slug: testSlug }) });
+    expect(renderedComponentNames(page)).toContain("CommercialCheckoutForm");
+    expect(await prisma.attempt.count()).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
+
+    const first = await authenticStart(issued.rawToken);
+    expect(first.status).toBe(200);
+    const firstBody = await first.json();
+    const attemptId = firstBody.data.attempt.attemptId as string;
+    expect(firstBody.data).toMatchObject({
+      nextAction: "OPEN_ATTEMPT",
+      nextUrl: `/attempts/${attemptId}`,
+      restored: false
+    });
+    const storedBefore = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+    expect(await prisma.attempt.count()).toBe(1);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(0);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(1);
+
+    await expectPageRedirect(issued.rawToken, `/attempts/${attemptId}`);
+    const repeated = await authenticStart(issued.rawToken);
+    expect(repeated.status).toBe(200);
+    const repeatedBody = await repeated.json();
+    expect(repeatedBody.data).toMatchObject({
+      nextAction: "OPEN_ATTEMPT",
+      nextUrl: `/attempts/${attemptId}`,
+      restored: true
+    });
+    const storedAfter = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+    expect(storedAfter).toEqual(storedBefore);
+    expect(await prisma.attempt.count()).toBe(1);
+    expect(await prisma.answer.count({ where: { attemptId } })).toBe(0);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(1);
+  });
+
+  it.each(["COMPLETED", "EXPIRED"] as const)(
+    "resolves exact %s re-entry and final start to the same immutable RES",
+    async (status) => {
+      const fixture = await createPaidAccess(`entry-${status.toLowerCase()}@example.test`);
+      const attempt = await createAuthenticAttempt(fixture, status);
+      await setConsumed(fixture);
+      const issued = await issueSession(fixture);
+      const before = await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
+      const beforeEvents = await prisma.eventLog.count();
+
+      await expectPageRedirect(issued.rawToken, `/results/${attempt.id}`);
+      const response = await authenticStart(issued.rawToken);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: {
+          nextAction: "OPEN_RESULT",
+          nextUrl: `/results/${attempt.id}`,
+          restored: true
+        }
+      });
+
+      expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(before);
+      expect(await prisma.attempt.count()).toBe(1);
+      expect(await prisma.eventLog.count()).toBe(beforeEvents);
+      expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
+      expect(await prisma.eventLog.count({
+        where: { eventType: status === "EXPIRED" ? "attempt_expired" : "attempt_completed" }
+      })).toBe(0);
+    }
+  );
+
+  it("rejects expired unstarted Access while expired exact active and terminal Attempts remain reachable", async () => {
+    const unstarted = await createPaidAccess("expired-unstarted@example.test");
+    const unstartedSession = await issueSession(unstarted);
+    const expiredAt = new Date(now.getTime() - 1);
+    await prisma.access.update({
+      where: { id: unstarted.access.id },
+      data: { expiresAt: expiredAt, startDeadlineAt: expiredAt }
+    });
+    const unstartedBefore = await counts();
+    const rejected = await authenticStart(unstartedSession.rawToken);
+    expect(rejected.status).toBe(401);
+    expect((await rejected.json()).error.code).toBe("VERIFIED_SESSION_REQUIRED");
+    expect(await counts()).toEqual(unstartedBefore);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: unstarted.access.id } })).expiresAt).toEqual(expiredAt);
+
+    for (const status of ["STARTED", "COMPLETED", "EXPIRED"] as const) {
+      const fixture = await createPaidAccess(`expired-${status.toLowerCase()}@example.test`);
+      const attempt = await createAuthenticAttempt(fixture, status);
+      await setConsumed(fixture);
+      await prisma.access.update({
+        where: { id: fixture.access.id },
+        data: { expiresAt: expiredAt, startDeadlineAt: expiredAt }
+      });
+      const issued = await issueSession(fixture);
+      const destination = status === "STARTED" ? `/attempts/${attempt.id}` : `/results/${attempt.id}`;
+      const action = status === "STARTED" ? "OPEN_ATTEMPT" : "OPEN_RESULT";
+      const before = await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
+
+      await expectPageRedirect(issued.rawToken, destination);
+      const response = await authenticStart(issued.rawToken);
+      expect(response.status).toBe(200);
+      expect(await response.json()).toMatchObject({
+        data: { nextAction: action, nextUrl: destination, restored: true }
+      });
+      expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(before);
+      const persistedAccess = await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } });
+      expect(persistedAccess.expiresAt).toEqual(expiredAt);
+      expect(persistedAccess.startDeadlineAt).toEqual(expiredAt);
+    }
+  });
+
+  it.each(["two attempts", "different access", "zero availability", "unsupported status"] as const)(
+    "fails closed for ambiguous entry state: %s",
+    async (scenario) => {
+      const fixture = await createPaidAccess(`ambiguous-${scenario.replaceAll(" ", "-")}@example.test`);
+      await setConsumed(fixture);
+      if (scenario === "two attempts") {
+        await createAuthenticAttempt(fixture);
+        await createAuthenticAttempt(fixture, "COMPLETED");
+      } else if (scenario === "different access") {
+        const otherAccess = await prisma.access.create({
+          data: {
+            userId: fixture.user.id,
+            testId,
+            source: "COMMERCIAL",
+            attemptsTotal: 1,
+            attemptsAvailable: 0,
+            expiresAt: new Date(now.getTime() + 86_400_000),
+            commercialProductId: productId
+          }
+        });
+        await createAuthenticAttempt(fixture, "STARTED", { accessId: otherAccess.id });
+      } else if (scenario === "unsupported status") {
+        await createAuthenticAttempt(fixture, "CANCELLED");
+      }
+      const issued = await issueSession(fixture);
+      const before = await counts();
+      expect(await resolveVerifiedStudentEntryDestination(
+        { testId },
+        request("GET", `/tests/${testSlug}`, {
+          cookie: `verified_student_session=${issued.rawToken}`
+        })
+      )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+      const response = await authenticStart(issued.rawToken);
+      expect(response.status).toBe(403);
+      const bodyText = await response.text();
+      expect(bodyText).toContain("VERIFIED_SCOPE_NOT_ALLOWED");
+      for (const sensitive of [
+        issued.rawToken,
+        fixture.user.email,
+        fixture.order.id,
+        fixture.access.id,
+        fixture.productId
+      ]) {
+        expect(bodyText).not.toContain(sensitive);
+      }
+      expect(response.headers.get("set-cookie")).toBeNull();
+      expect(await counts()).toEqual(before);
+    }
+  );
+
+  it("converges parallel authentic final starts on one ATT identity", async () => {
+    const fixture = await createPaidAccess("concurrent-entry@example.test");
+    const issued = await issueSession(fixture);
+    const initial = await Promise.all([
+      authenticStart(issued.rawToken),
+      authenticStart(issued.rawToken)
+    ]);
+    expect(initial.every((response) => response.status === 200 || response.status === 409)).toBe(true);
+
+    const successful = [] as Response[];
+    for (const response of initial) {
+      successful.push(response.status === 200 ? response : await authenticStart(issued.rawToken));
+    }
+    expect(successful.every((response) => response.status === 200)).toBe(true);
+    const bodies = await Promise.all(successful.map((response) => response.json()));
+    const urls = bodies.map((body) => body.data.nextUrl as string);
+    expect(new Set(urls).size).toBe(1);
+    expect(urls[0]).toMatch(/^\/attempts\/[0-9a-f-]{36}$/);
+
+    const attempts = await prisma.attempt.findMany({ where: { accessId: fixture.access.id } });
+    expect(attempts).toHaveLength(1);
+    expect(attempts[0].status).toBe("STARTED");
+    expect(attempts[0].testSnapshot).toBeDefined();
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(0);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(1);
   });
 
   it("recovery or legacy cookie alone cannot open authentic PRE, ATT or RES", async () => {

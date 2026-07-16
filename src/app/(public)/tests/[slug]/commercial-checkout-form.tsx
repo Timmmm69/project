@@ -29,6 +29,10 @@ function newKey() {
   return crypto.randomUUID();
 }
 
+function isSafeVerifiedDestination(value: string) {
+  return /^\/(?:attempts|results)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
 export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, verifiedPreAuthorized, recovery }: {
   legal: LegalLinks;
   testId: string;
@@ -196,13 +200,22 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ testId })
     });
-    const body = await response.json() as ApiResponse<{ attempt: { attemptId: string } }>;
+    const body = await response.json() as ApiResponse<{
+      nextAction: "OPEN_ATTEMPT" | "OPEN_RESULT";
+      nextUrl: string;
+      attempt?: { attemptId: string };
+      restored: boolean;
+    }>;
     setBusy(false);
     if (!body.success) {
       setMessage(body.error.message);
       return;
     }
-    window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
+    if (!isSafeVerifiedDestination(body.data.nextUrl)) {
+      setMessage("Не удалось восстановить заказ в этой сессии.");
+      return;
+    }
+    window.location.assign(body.data.nextUrl);
   }
 
   const price = `${(priceMinor / 100).toFixed(2)} ${currency}`;
