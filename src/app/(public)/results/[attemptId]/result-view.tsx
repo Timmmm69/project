@@ -1,32 +1,41 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  buildPartBreakdown,
+  buildAuthenticResultSummary,
   formatResultQuestionLabel,
-  formatResultQuestionType,
   getScaledScoreDisplay,
   isAuthenticRikzRussianResult,
   type ResultPayload
 } from "./result-view-model";
+import {
+  AuthenticResultSurface,
+  ResultLoadingSurface,
+  ResultNotReadySurface,
+  ResultTemporaryErrorSurface
+} from "./result-surface";
 
-type ApiSuccess<T> = {
-  success: true;
-  data: T;
-};
+type LoadState =
+  | Readonly<{ kind: "loading" }>
+  | Readonly<{ kind: "temporary-error" }>
+  | Readonly<{ kind: "not-ready" }>
+  | Readonly<{ kind: "success"; result: ResultPayload }>;
 
-type ApiFailure = {
-  success: false;
-  error: {
-    code: string;
-    message: string;
-  };
-};
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null;
+}
 
-type ApiResponse<T> = ApiSuccess<T> | ApiFailure;
+function apiFailureCode(body: unknown) {
+  if (!isRecord(body) || body.success !== false || !isRecord(body.error)) return null;
+  return typeof body.error.code === "string" ? body.error.code : null;
+}
 
-async function readJson<T>(response: Response) {
-  return (await response.json()) as ApiResponse<T>;
+function resultFromApiBody(body: unknown): ResultPayload | null {
+  if (!isRecord(body) || body.success !== true || !isRecord(body.data) || !isRecord(body.data.result)) {
+    return null;
+  }
+
+  return body.data.result as ResultPayload;
 }
 
 function statusLabel(status: ResultPayload["status"]) {
@@ -34,55 +43,82 @@ function statusLabel(status: ResultPayload["status"]) {
 }
 
 export function ResultView({ attemptId }: { attemptId: string }) {
-  const [result, setResult] = useState<ResultPayload | null>(null);
-  const [message, setMessage] = useState<string | null>(null);
+  const [loadState, setLoadState] = useState<LoadState>({ kind: "loading" });
+  const requestInFlight = useRef(false);
 
-  useEffect(() => {
-    async function loadResult() {
-      const response = await fetch(`/api/results/${attemptId}`);
-      const body = await readJson<{ result: ResultPayload }>(response);
-      if (!body.success) {
-        setMessage(body.error.message);
+  const loadResult = useCallback(async () => {
+    if (requestInFlight.current) return;
+    requestInFlight.current = true;
+    setLoadState({ kind: "loading" });
+
+    try {
+      const response = await fetch(`/api/results/${attemptId}`, {
+        cache: "no-store",
+        method: "GET"
+      });
+      let body: unknown;
+      try {
+        body = await response.json();
+      } catch {
+        setLoadState({ kind: "temporary-error" });
         return;
       }
 
-      setResult(body.data.result);
-    }
+      if (!response.ok || (isRecord(body) && body.success === false)) {
+        setLoadState({
+          kind: apiFailureCode(body) === "RESULT_NOT_READY" ? "not-ready" : "temporary-error"
+        });
+        return;
+      }
 
-    void loadResult();
+      const result = resultFromApiBody(body);
+      setLoadState(result ? { kind: "success", result } : { kind: "temporary-error" });
+    } catch {
+      setLoadState({ kind: "temporary-error" });
+    } finally {
+      requestInFlight.current = false;
+    }
   }, [attemptId]);
 
-  if (!result) {
-    return (
-      <section className="panel">
-        <p className={message ? "form-error" : "muted"}>{message ?? "Загрузка результата"}</p>
-      </section>
-    );
+  useEffect(() => {
+    void loadResult();
+  }, [loadResult]);
+
+  if (loadState.kind === "loading") {
+    return <ResultLoadingSurface />;
   }
 
-  const isAuthentic = isAuthenticRikzRussianResult(result);
+  if (loadState.kind === "temporary-error") {
+    return <ResultTemporaryErrorSurface onRetry={() => void loadResult()} retrying={requestInFlight.current} />;
+  }
+
+  if (loadState.kind === "not-ready") {
+    return <ResultNotReadySurface onRetry={() => void loadResult()} retrying={requestInFlight.current} />;
+  }
+
+  const result = loadState.result;
+  if (isAuthenticRikzRussianResult(result)) {
+    const summary = buildAuthenticResultSummary(result);
+    return summary
+      ? <AuthenticResultSurface summary={summary} />
+      : <ResultNotReadySurface onRetry={() => void loadResult()} retrying={requestInFlight.current} />;
+  }
+
   const scaledScore = getScaledScoreDisplay(result);
-  const partBreakdown = isAuthentic ? buildPartBreakdown(result.answer_details) : [];
-  const detailItems = isAuthentic ? result.answer_details : result.mistakes;
+  const detailItems = result.mistakes;
 
   return (
     <>
       <section className="hero compact">
         <div className="stack compact">
           <div className="badge-row">
-            <span className="badge accent">
-              {isAuthentic ? "CE/CT Russian 2026 format" : result.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}
-            </span>
+            <span className="badge accent">{result.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</span>
             <span className={result.status === "expired" ? "status-pill pending" : "status-pill success"}>
               {statusLabel(result.status)}
             </span>
           </div>
           <h1 className="page-title">{result.test_title}</h1>
-          <p className="lead">
-            {isAuthentic
-              ? "Результат тренировочного теста в формате ЦЭ/ЦТ по русскому языку."
-              : "Итоговая оценка и разбор ошибок доступны после завершения попытки."}
-          </p>
+          <p className="lead">Итоговая оценка и разбор ошибок доступны после завершения попытки.</p>
         </div>
       </section>
 
@@ -92,11 +128,6 @@ export function ResultView({ attemptId }: { attemptId: string }) {
           <h2 className="metric-value">
             {result.raw_score} / {result.max_raw_score}
           </h2>
-          {isAuthentic ? (
-            <p className="muted">
-              Набрано: {result.raw_score} из {result.max_raw_score} первичных баллов
-            </p>
-          ) : null}
         </article>
 
         {scaledScore ? (
@@ -116,24 +147,10 @@ export function ResultView({ attemptId }: { attemptId: string }) {
 
       {result.scaled_score_note ? <p className="state-box">{result.scaled_score_note}</p> : null}
 
-      {partBreakdown.length > 0 ? (
-        <section className="cards-grid">
-          {partBreakdown.map((part) => (
-            <article className="panel compact" key={part.part}>
-              <p className="eyebrow">Part {part.part}</p>
-              <h2 className="metric-value">{part.count}</h2>
-              <p className="muted">
-                Заданий, {part.score} / {part.maxScore} первичных баллов
-              </p>
-            </article>
-          ))}
-        </section>
-      ) : null}
-
       <section className="panel stack">
         <div>
           <p className="eyebrow">Разбор</p>
-          <h2 className="section-title">{isAuthentic ? "Детали ответов" : "Ошибки и правильные ответы"}</h2>
+          <h2 className="section-title">Ошибки и правильные ответы</h2>
         </div>
         {detailItems.length === 0 ? <p className="state-box success">Ошибок нет.</p> : null}
         {detailItems.map((detail) => (
@@ -144,19 +161,16 @@ export function ResultView({ attemptId }: { attemptId: string }) {
               {detail.subtopic ? ` / ${detail.subtopic}` : ""}
             </p>
             <h3 className="card-title">{detail.question_text}</h3>
-            {isAuthentic ? <p className="muted">{formatResultQuestionType(detail)}</p> : null}
             <p>
-              <strong>{isAuthentic ? "Ответ ученика:" : "Ваш ответ:"}</strong> {detail.selected_answer}
+              <strong>Ваш ответ:</strong> {detail.selected_answer}
             </p>
-            {!isAuthentic && detail.correct_answer ? (
+            {detail.correct_answer ? (
               <p>
                 <strong>Правильный ответ:</strong> {detail.correct_answer}
               </p>
             ) : null}
-            <p className="muted">
-              {isAuthentic ? "Первичные баллы" : "Баллы"}: {detail.points_earned} / {detail.max_points}
-            </p>
-            {!isAuthentic && detail.explanation ? <p className="state-box">{detail.explanation}</p> : null}
+            <p className="muted">Баллы: {detail.points_earned} / {detail.max_points}</p>
+            {detail.explanation ? <p className="state-box">{detail.explanation}</p> : null}
           </article>
         ))}
       </section>

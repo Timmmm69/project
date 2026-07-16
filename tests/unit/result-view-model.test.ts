@@ -1,5 +1,6 @@
 import { describe, expect, it } from "vitest";
 import {
+  buildAuthenticResultSummary,
   buildPartBreakdown,
   formatResultQuestionLabel,
   getScaledScoreDisplay,
@@ -21,8 +22,8 @@ const partADetail: ResultAnswerDetail = {
   correct_answer: null,
   topic: "Topic A",
   subtopic: null,
-  points_earned: 2,
-  max_points: 2,
+  points_earned: 36,
+  max_points: 36,
   explanation: null
 };
 
@@ -39,8 +40,8 @@ const partBDetail: ResultAnswerDetail = {
   correct_answer: null,
   topic: "Topic B",
   subtopic: null,
-  points_earned: 0,
-  max_points: 2,
+  points_earned: 44,
+  max_points: 44,
   explanation: null
 };
 
@@ -51,7 +52,7 @@ function resultPayload(overrides: Partial<ResultPayload>): ResultPayload {
     status: "completed",
     mode: "ce_ct",
     exam_mode: "rikz_russian_2026",
-    raw_score: 64,
+    raw_score: 80,
     max_raw_score: 80,
     scaled_score: 77,
     max_scaled_score: 100,
@@ -63,6 +64,26 @@ function resultPayload(overrides: Partial<ResultPayload>): ResultPayload {
 }
 
 describe("result view model", () => {
+  it("builds a completed authentic aggregate summary", () => {
+    expect(buildAuthenticResultSummary(resultPayload({}))).toEqual({
+      status: "completed",
+      primaryScore: 80,
+      primaryMax: 80,
+      partA: { score: 36, maxScore: 36 },
+      partB: { score: 44, maxScore: 44 }
+    });
+  });
+
+  it("builds an expired authentic aggregate summary", () => {
+    expect(buildAuthenticResultSummary(resultPayload({ status: "expired" }))).toEqual({
+      status: "expired",
+      primaryScore: 80,
+      primaryMax: 80,
+      partA: { score: 36, maxScore: 36 },
+      partB: { score: 44, maxScore: 44 }
+    });
+  });
+
   it("keeps generic results on the generic display path", () => {
     const result = resultPayload({
       mode: "training",
@@ -72,6 +93,74 @@ describe("result view model", () => {
     });
 
     expect(isAuthenticRikzRussianResult(result)).toBe(false);
+    expect(buildAuthenticResultSummary(result)).toBeNull();
+  });
+
+  it("returns not ready when Part A is missing", () => {
+    expect(buildAuthenticResultSummary(resultPayload({
+      answer_details: [partBDetail],
+      raw_score: 44,
+      max_raw_score: 44
+    }))).toBeNull();
+  });
+
+  it("returns not ready when Part B is missing", () => {
+    expect(buildAuthenticResultSummary(resultPayload({
+      answer_details: [partADetail],
+      raw_score: 36,
+      max_raw_score: 36
+    }))).toBeNull();
+  });
+
+  it("returns not ready for a cancelled authentic payload", () => {
+    expect(buildAuthenticResultSummary(resultPayload({ status: "cancelled" }))).toBeNull();
+  });
+
+  it.each([
+    { raw_score: Number.NaN },
+    { max_raw_score: Number.POSITIVE_INFINITY },
+    {
+      answer_details: [
+        { ...partADetail, points_earned: Number.NaN },
+        partBDetail
+      ]
+    },
+    {
+      answer_details: [
+        partADetail,
+        { ...partBDetail, max_points: Number.POSITIVE_INFINITY }
+      ]
+    }
+  ])("returns not ready for non-finite aggregate data: %j", (overrides) => {
+    expect(buildAuthenticResultSummary(resultPayload(overrides))).toBeNull();
+  });
+
+  it.each([
+    { raw_score: -1 },
+    { max_raw_score: -1 },
+    {
+      answer_details: [
+        { ...partADetail, points_earned: -1 },
+        partBDetail
+      ]
+    },
+    {
+      answer_details: [
+        partADetail,
+        { ...partBDetail, max_points: -1 }
+      ]
+    }
+  ])("returns not ready for negative aggregate data: %j", (overrides) => {
+    expect(buildAuthenticResultSummary(resultPayload(overrides))).toBeNull();
+  });
+
+  it("does not mutate the authentic Result payload", () => {
+    const result = resultPayload({});
+    const before = structuredClone(result);
+
+    buildAuthenticResultSummary(result);
+
+    expect(result).toEqual(before);
   });
 
   it("does not create a scaled card for an authentic primary-only payload", () => {
@@ -133,8 +222,8 @@ describe("result view model", () => {
 
   it("builds Part A and Part B breakdown from completed answer details", () => {
     expect(buildPartBreakdown([partADetail, partBDetail])).toEqual([
-      { part: "A", count: 1, score: 2, maxScore: 2 },
-      { part: "B", count: 1, score: 0, maxScore: 2 }
+      { part: "A", count: 1, score: 36, maxScore: 36 },
+      { part: "B", count: 1, score: 44, maxScore: 44 }
     ]);
   });
 

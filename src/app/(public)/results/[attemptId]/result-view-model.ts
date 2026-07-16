@@ -45,8 +45,72 @@ export type PartBreakdown = {
   maxScore: number;
 };
 
+export type AuthenticResultSummary = Readonly<{
+  status: "completed" | "expired";
+  primaryScore: number;
+  primaryMax: number;
+  partA: Readonly<{ score: number; maxScore: number }>;
+  partB: Readonly<{ score: number; maxScore: number }>;
+}>;
+
 export function isAuthenticRikzRussianResult(result: Pick<ResultPayload, "exam_mode">) {
   return result.exam_mode === "rikz_russian_2026";
+}
+
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+export function buildAuthenticResultSummary(result: ResultPayload): AuthenticResultSummary | null {
+  if (!isAuthenticRikzRussianResult(result)) return null;
+  if (result.status !== "completed" && result.status !== "expired") return null;
+  if (
+    !isFiniteNonNegativeNumber(result.raw_score)
+    || !isFiniteNonNegativeNumber(result.max_raw_score)
+    || result.max_raw_score <= 0
+    || result.raw_score > result.max_raw_score
+  ) {
+    return null;
+  }
+  if (!Array.isArray(result.answer_details)) return null;
+
+  const parts = {
+    A: { count: 0, score: 0, maxScore: 0 },
+    B: { count: 0, score: 0, maxScore: 0 }
+  };
+
+  for (const detail of result.answer_details) {
+    if (detail.official_part !== "A" && detail.official_part !== "B") continue;
+    if (
+      !isFiniteNonNegativeNumber(detail.points_earned)
+      || !isFiniteNonNegativeNumber(detail.max_points)
+      || detail.max_points <= 0
+      || detail.points_earned > detail.max_points
+    ) {
+      return null;
+    }
+
+    const part = parts[detail.official_part];
+    part.count += 1;
+    part.score += detail.points_earned;
+    part.maxScore += detail.max_points;
+  }
+
+  if (parts.A.count === 0 || parts.B.count === 0) return null;
+  if (
+    parts.A.score + parts.B.score !== result.raw_score
+    || parts.A.maxScore + parts.B.maxScore !== result.max_raw_score
+  ) {
+    return null;
+  }
+
+  return {
+    status: result.status,
+    primaryScore: result.raw_score,
+    primaryMax: result.max_raw_score,
+    partA: { score: parts.A.score, maxScore: parts.A.maxScore },
+    partB: { score: parts.B.score, maxScore: parts.B.maxScore }
+  };
 }
 
 export function getScaledScoreDisplay(
