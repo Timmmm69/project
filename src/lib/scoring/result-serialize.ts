@@ -102,6 +102,10 @@ function finiteNonNegative(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
+function positiveInteger(value: unknown): value is number {
+  return typeof value === "number" && Number.isInteger(value) && value > 0;
+}
+
 function serializeAuthenticStudentResult(
   attempt: AttemptResultPayload,
   snapshot: ReturnType<typeof parseTestSnapshot>
@@ -127,7 +131,7 @@ function serializeAuthenticStudentResult(
       || typeof question.snapshotQuestionId !== "string"
       || question.snapshotQuestionId.length === 0
       || questionsById.has(question.snapshotQuestionId)
-      || !finiteNonNegative(question.points)
+      || !positiveInteger(question.points)
     ) {
       projectionNotReady();
     }
@@ -203,15 +207,16 @@ function serializeDetailedResult(
 ) {
   const snapshot = parseTestSnapshot(attempt.testSnapshot);
   // Authentic students return through the aggregate-only branch before this
-  // detailed serializer; admins retain the existing review contract here.
+  // detailed serializer. Authentic answer keys remain suppressed for every
+  // audience unless a separate review policy is introduced.
   const isAuthenticRikzRussian = snapshot.examMode === "rikz_russian_2026";
   const includeScaledResultFields = shouldIncludeScaledResultFields({
     audience,
     snapshotExamMode: snapshot.examMode
   });
   const showCorrectAnswers =
-    audience === "admin"
-    || (!isAuthenticRikzRussian && (attempt.test?.showCorrectAnswers ?? true));
+    !isAuthenticRikzRussian
+    && (audience === "admin" || (attempt.test?.showCorrectAnswers ?? true));
   const showTopicReference = audience === "admin" || showCorrectAnswers;
   const answerByQuestion = new Map(
     attempt.answers

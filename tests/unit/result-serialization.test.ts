@@ -235,6 +235,23 @@ describe("result serialization", () => {
     expectProjectionFailure(attempt);
   });
 
+  it.each([
+    { label: "zero", points: 0, compensatingPoints: 4, omit: false },
+    { label: "negative", points: -1, compensatingPoints: 5, omit: false },
+    { label: "fractional", points: 1.5, compensatingPoints: 2.5, omit: false },
+    { label: "NaN", points: Number.NaN, compensatingPoints: 2, omit: false },
+    { label: "Infinity", points: Number.POSITIVE_INFINITY, compensatingPoints: 2, omit: false },
+    { label: "string", points: "2", compensatingPoints: 2, omit: false },
+    { label: "null", points: null, compensatingPoints: 2, omit: false },
+    { label: "missing", points: undefined, compensatingPoints: 2, omit: true }
+  ])("fails closed for $label immutable snapshot points", ({ points, compensatingPoints, omit }) => {
+    const snapshot = authenticSnapshot();
+    snapshot.questions[0] = { ...snapshot.questions[0]!, points: points as number };
+    if (omit) delete (snapshot.questions[0] as { points?: unknown }).points;
+    snapshot.questions[1] = { ...snapshot.questions[1]!, points: compensatingPoints };
+    expectProjectionFailure(makeAttempt({ snapshot }));
+  });
+
   it("fails closed when part sums do not equal the stored total", () => {
     expectProjectionFailure(makeAttempt({ rawScore: 79 }));
   });
@@ -272,23 +289,57 @@ describe("result serialization", () => {
     });
   });
 
-  it("preserves the detailed authentic admin contract", () => {
-    const result = serializeResult(makeAttempt({}), { audience: "admin" });
+  it("keeps authentic admin details while suppressing every answer-key field", () => {
+    const snapshot = authenticSnapshot();
+    snapshot.questions[0] = {
+      ...snapshot.questions[0]!,
+      correctAnswer: "A,E",
+      explanation: "ADMIN_A_EXPLANATION_SECRET"
+    };
+    snapshot.questions[18] = {
+      ...snapshot.questions[18]!,
+      correctAnswer: "correctsecret1",
+      acceptedAnswers: ["acceptedsecret1"],
+      explanation: "ADMIN_B_EXPLANATION_SECRET"
+    };
+    const attempt = makeAttempt({ snapshot });
+    attempt.answers[0]!.selectedAnswer = "B,D";
+    attempt.answers[18]!.selectedAnswer = "studenttoken1";
+    const result = serializeResult(attempt, { audience: "admin" });
 
     expect(result.attempt_id).toBe("attempt-1");
     expect(result.student_email).toBe("private-student@example.test");
     expect(result.answer_details).toHaveLength(40);
     expect(result.answer_details[0]).toMatchObject({
       question_text: "Private Part A question 1",
-      selected_answer: "A,C",
-      correct_answer: "A,C",
+      selected_answer: "B,D",
+      correct_answer: null,
+      accepted_answers: null,
       points_earned: 2,
       max_points: 2,
-      explanation: "Private Part A explanation 1"
+      explanation: null
     });
-    expect(result.answer_details[18]?.accepted_answers).toEqual(["token1"]);
+    expect(result.answer_details[18]).toMatchObject({
+      question_text: "Private Part B question 1",
+      selected_answer: "studenttoken1",
+      correct_answer: null,
+      accepted_answers: null,
+      points_earned: 2,
+      max_points: 2,
+      explanation: null
+    });
     expect(result.scaled_score).toBe(100);
     expect(result.max_scaled_score).toBe(100);
+    const serialized = JSON.stringify(result);
+    for (const secret of [
+      "A,E",
+      "correctsecret1",
+      "acceptedsecret1",
+      "ADMIN_A_EXPLANATION_SECRET",
+      "ADMIN_B_EXPLANATION_SECRET"
+    ]) {
+      expect(serialized).not.toContain(secret);
+    }
   });
 
   it("preserves the detailed generic admin contract", () => {
@@ -299,5 +350,10 @@ describe("result serialization", () => {
     expect(result.scaled_score).toBe(100);
     expect(result.topic_results).toHaveLength(1);
     expect(result.recommendations).toHaveLength(1);
+    expect(result.answer_details[0]).toMatchObject({
+      correct_answer: "A,C",
+      explanation: "Private Part A explanation 1"
+    });
+    expect(result.answer_details[18]?.accepted_answers).toEqual(["token1"]);
   });
 });

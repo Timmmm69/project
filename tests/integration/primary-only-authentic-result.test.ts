@@ -86,8 +86,10 @@ function authenticQuestions() {
       optionC: "C",
       optionD: "D",
       optionE: "E",
-      correctAnswer: "A,C",
-      explanation: `private Part A explanation ${index + 1}`,
+      correctAnswer: index === 0 ? "A,E" : "A,C",
+      explanation: index === 0
+        ? "ADMIN_A_EXPLANATION_SECRET"
+        : `private Part A explanation ${index + 1}`,
       topic: "Part A integration",
       points: 2,
       officialPart: "A" as const,
@@ -97,9 +99,11 @@ function authenticQuestions() {
     ...Array.from({ length: 22 }, (_, index) => ({
       questionText: `Part B ${index + 1}`,
       questionType: "SHORT_ANSWER_TOKEN" as const,
-      correctAnswer: `token${index + 1}`,
-      acceptedAnswers: [`token${index + 1}`],
-      explanation: `private Part B explanation ${index + 1}`,
+      correctAnswer: index === 0 ? "correctsecret1" : `token${index + 1}`,
+      acceptedAnswers: index === 0 ? ["acceptedsecret1"] : [`token${index + 1}`],
+      explanation: index === 0
+        ? "ADMIN_B_EXPLANATION_SECRET"
+        : `private Part B explanation ${index + 1}`,
       topic: "Part B integration",
       points: 2,
       officialPart: "B" as const,
@@ -335,14 +339,15 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     const questions = (await active.json()).data.attempt.questions as Array<{
       snapshotQuestionId: string;
       questionType: "multi_select_five" | "short_answer_token";
+      officialPart: "A" | "B";
       officialNumber: number;
     }>;
     expect(questions).toHaveLength(40);
 
     for (const question of questions) {
       const selectedAnswer = question.questionType === "multi_select_five"
-        ? "A,C"
-        : `token${question.officialNumber}`;
+        ? (question.officialNumber === 1 ? "A,E" : "A,C")
+        : (question.officialNumber === 1 ? "acceptedsecret1" : `token${question.officialNumber}`);
       const saved = await saveAnswer(
         destinationRequest("POST", `/api/attempts/${started.attemptId}/answers`, started.rawToken, {
           snapshotQuestionId: question.snapshotQuestionId,
@@ -362,6 +367,27 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(completionText).not.toContain("scaled_score");
     expect(completionText).not.toContain("max_scaled_score");
     expect(completionText).not.toContain("scaled_score_note");
+
+    const firstPartA = questions.find((question) => question.officialPart === "A" && question.officialNumber === 1);
+    const firstPartB = questions.find((question) => question.officialPart === "B" && question.officialNumber === 1);
+    expect(firstPartA).toBeDefined();
+    expect(firstPartB).toBeDefined();
+    await prisma.$transaction([
+      prisma.answer.updateMany({
+        where: {
+          attemptId: started.attemptId,
+          snapshotQuestionId: firstPartA!.snapshotQuestionId
+        },
+        data: { selectedAnswer: "B,D" }
+      }),
+      prisma.answer.updateMany({
+        where: {
+          attemptId: started.attemptId,
+          snapshotQuestionId: firstPartB!.snapshotQuestionId
+        },
+        data: { selectedAnswer: "studenttoken1" }
+      })
+    ]);
 
     const storedBeforeGet = await prisma.attempt.findUniqueOrThrow({
       where: { id: started.attemptId },
@@ -389,6 +415,7 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
       attemptContext(started.attemptId)
     );
     expect(adminResponse.status).toBe(200);
+    const adminResponseText = await adminResponse.clone().text();
     const adminApiResult = (await adminResponse.json()).data.result as Record<string, unknown>;
     expect(adminApiResult.student_email).toBe(fixture.user.email);
     expect(adminApiResult.scaled_score).toBe(100);
@@ -396,10 +423,31 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(adminApiResult.answer_details).toHaveLength(40);
     expect((adminApiResult.answer_details as Array<Record<string, unknown>>)[0]).toMatchObject({
       question_text: "Part A 1",
-      selected_answer: "A,C",
-      correct_answer: "A,C",
-      explanation: "private Part A explanation 1"
+      selected_answer: "B,D",
+      correct_answer: null,
+      accepted_answers: null,
+      points_earned: 2,
+      max_points: 2,
+      explanation: null
     });
+    expect((adminApiResult.answer_details as Array<Record<string, unknown>>)[18]).toMatchObject({
+      question_text: "Part B 1",
+      selected_answer: "studenttoken1",
+      correct_answer: null,
+      accepted_answers: null,
+      points_earned: 2,
+      max_points: 2,
+      explanation: null
+    });
+    for (const secret of [
+      "A,E",
+      "correctsecret1",
+      "acceptedsecret1",
+      "ADMIN_A_EXPLANATION_SECRET",
+      "ADMIN_B_EXPLANATION_SECRET"
+    ]) {
+      expect(adminResponseText).not.toContain(secret);
+    }
 
     const beforeRead = await resultReadCounts();
     const response = await readResult(
@@ -449,6 +497,99 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
       where: { attemptId: started.attemptId },
       orderBy: { createdAt: "asc" }
     })).toEqual(storedBeforeGet.answers);
+
+    const zeroPointSnapshot = JSON.parse(JSON.stringify(storedBeforeGet.testSnapshot)) as Prisma.JsonObject;
+    const zeroPointQuestions = zeroPointSnapshot.questions;
+    if (!Array.isArray(zeroPointQuestions)) throw new Error("Expected authentic snapshot questions");
+    zeroPointSnapshot.questions = zeroPointQuestions.map((question, index) => ({
+      ...(question as Prisma.JsonObject),
+      ...(index === 0 ? { points: 0 } : {}),
+      ...(index === 1 ? { points: 4 } : {})
+    }));
+    const originalFirstPartAAnswer = storedBeforeGet.answers.find(
+      (answer) => answer.snapshotQuestionId === firstPartA!.snapshotQuestionId
+    );
+    const originalSecondAnswer = storedBeforeGet.answers.find(
+      (answer) => answer.snapshotQuestionId === questions[1]!.snapshotQuestionId
+    );
+    expect(originalFirstPartAAnswer).toBeDefined();
+    expect(originalSecondAnswer).toBeDefined();
+    await prisma.$transaction([
+      prisma.attempt.update({
+        where: { id: started.attemptId },
+        data: { testSnapshot: zeroPointSnapshot as Prisma.InputJsonValue }
+      }),
+      prisma.answer.update({
+        where: { id: originalFirstPartAAnswer!.id },
+        data: { pointsEarned: 0, maxPoints: 0 }
+      }),
+      prisma.answer.update({
+        where: { id: originalSecondAnswer!.id },
+        data: { pointsEarned: 4, maxPoints: 4 }
+      })
+    ]);
+    const zeroPointCountsBefore = await resultReadCounts();
+    const zeroPointAttemptBefore = await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } });
+    const zeroPointAnswersBefore = await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    });
+    const zeroPointResponse = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`, started.rawToken),
+      attemptContext(started.attemptId)
+    );
+    expect(zeroPointResponse.status).toBe(409);
+    expect(zeroPointResponse.headers.get("cache-control")).toBe("no-store");
+    expect(zeroPointResponse.headers.get("referrer-policy")).toBe("no-referrer");
+    const zeroPointResponseText = await zeroPointResponse.clone().text();
+    expect(await zeroPointResponse.json()).toEqual({
+      success: false,
+      error: {
+        code: "RESULT_NOT_READY",
+        message: "Result is available after attempt completion"
+      }
+    });
+    for (const privateValue of [
+      started.attemptId,
+      firstPartA!.snapshotQuestionId,
+      questions[1]!.snapshotQuestionId,
+      "Part A 1",
+      "A,E",
+      "correctsecret1",
+      "acceptedsecret1",
+      "ADMIN_A_EXPLANATION_SECRET"
+    ]) {
+      expect(zeroPointResponseText).not.toContain(privateValue);
+    }
+    expect(await resultReadCounts()).toEqual(zeroPointCountsBefore);
+    expect(await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } }))
+      .toEqual(zeroPointAttemptBefore);
+    expect(await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    })).toEqual(zeroPointAnswersBefore);
+    await prisma.$transaction([
+      prisma.attempt.update({
+        where: { id: started.attemptId },
+        data: { testSnapshot: storedBeforeGet.testSnapshot as Prisma.InputJsonValue }
+      }),
+      prisma.answer.update({
+        where: { id: originalFirstPartAAnswer!.id },
+        data: {
+          selectedAnswer: originalFirstPartAAnswer!.selectedAnswer,
+          pointsEarned: originalFirstPartAAnswer!.pointsEarned,
+          maxPoints: originalFirstPartAAnswer!.maxPoints
+        }
+      }),
+      prisma.answer.update({
+        where: { id: originalSecondAnswer!.id },
+        data: {
+          selectedAnswer: originalSecondAnswer!.selectedAnswer,
+          pointsEarned: originalSecondAnswer!.pointsEarned,
+          maxPoints: originalSecondAnswer!.maxPoints
+        }
+      })
+    ]);
 
     const verifiedSessions = createVerifiedStudentSessionService({ client: prisma, config: verifiedConfig });
     const recoverySessionId = randomUUID();
