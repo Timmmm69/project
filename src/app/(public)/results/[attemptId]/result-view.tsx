@@ -6,6 +6,7 @@ import {
   formatResultQuestionLabel,
   getScaledScoreDisplay,
   isAuthenticRikzRussianResult,
+  parseResultPayload,
   type ResultPayload
 } from "./result-view-model";
 import {
@@ -35,7 +36,15 @@ function resultFromApiBody(body: unknown): ResultPayload | null {
     return null;
   }
 
-  return body.data.result as ResultPayload;
+  return parseResultPayload(body.data.result);
+}
+
+function hasRejectedAuthenticResult(body: unknown) {
+  return isRecord(body)
+    && body.success === true
+    && isRecord(body.data)
+    && isRecord(body.data.result)
+    && body.data.result.exam_mode === "rikz_russian_2026";
 }
 
 function statusLabel(status: ResultPayload["status"]) {
@@ -72,7 +81,9 @@ export function ResultView({ attemptId }: { attemptId: string }) {
       }
 
       const result = resultFromApiBody(body);
-      setLoadState(result ? { kind: "success", result } : { kind: "temporary-error" });
+      setLoadState(result
+        ? { kind: "success", result }
+        : { kind: hasRejectedAuthenticResult(body) ? "not-ready" : "temporary-error" });
     } catch {
       setLoadState({ kind: "temporary-error" });
     } finally {

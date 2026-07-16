@@ -116,40 +116,40 @@ test.beforeAll(async () => {
       mode: "CE_CT",
       examMode: "RIKZ_RUSSIAN_2026",
       status: "PUBLISHED",
-      questionsCount: 2,
+      questionsCount: 40,
       maxRawScore: 80,
       showCorrectAnswers: false,
       questions: {
         create: [
-          {
-            questionText: "Browser Part A",
-            questionType: "MULTI_SELECT_FIVE",
+          ...Array.from({ length: 18 }, (_, index) => ({
+            questionText: `Browser Part A ${index + 1}`,
+            questionType: "MULTI_SELECT_FIVE" as const,
             optionA: "A",
             optionB: "B",
             optionC: "C",
             optionD: "D",
             optionE: "E",
             correctAnswer: "A,C",
-            explanation: "private browser Part A explanation",
+            explanation: `private browser Part A explanation ${index + 1}`,
             topic: "Browser Part A",
-            points: 36,
-            officialPart: "A",
-            officialNumber: 1,
-            orderIndex: 1
-          },
-          {
-            questionText: "Browser Part B",
-            questionType: "SHORT_ANSWER_TOKEN",
-            correctAnswer: "token",
-            acceptedAnswers: ["token"],
-            explanation: "private browser Part B explanation",
+            points: 2,
+            officialPart: "A" as const,
+            officialNumber: index + 1,
+            orderIndex: index + 1
+          })),
+          ...Array.from({ length: 22 }, (_, index) => ({
+            questionText: `Browser Part B ${index + 1}`,
+            questionType: "SHORT_ANSWER_TOKEN" as const,
+            correctAnswer: `token${index + 1}`,
+            acceptedAnswers: [`token${index + 1}`],
+            explanation: `private browser Part B explanation ${index + 1}`,
             topic: "Browser Part B",
-            points: 44,
-            officialPart: "B",
-            officialNumber: 1,
-            responseSubtype: "WORD",
-            orderIndex: 2
-          }
+            points: 2,
+            officialPart: "B" as const,
+            officialNumber: index + 1,
+            responseSubtype: "WORD" as const,
+            orderIndex: index + 19
+          }))
         ]
       }
     },
@@ -190,24 +190,27 @@ test.beforeAll(async () => {
     examMode: "rikz_russian_2026",
     durationMinutes: 120,
     maxRawScore: 80,
-    questions: testRecord.questions.map((question, index) => ({
+    questions: testRecord.questions.map((question, index) => {
+      const isPartA = index < 18;
+      return {
       snapshotQuestionId: `q_${index + 1}`,
       originalQuestionId: question.id,
       orderIndex: question.orderIndex,
       questionText: question.questionText,
-      questionType: index === 0 ? "multi_select_five" : "short_answer_token",
-      options: index === 0 ? { A: "A", B: "B", C: "C", D: "D", E: "E" } : {},
+      questionType: isPartA ? "multi_select_five" : "short_answer_token",
+      options: isPartA ? { A: "A", B: "B", C: "C", D: "D", E: "E" } : {},
       correctAnswer: question.correctAnswer,
       topic: question.topic,
       subtopic: null,
       points: question.points,
-      scoringRule: index === 0 ? "full_match" : "exact_text",
+      scoringRule: isPartA ? "full_match" : "exact_text",
       explanation: question.explanation,
-      officialPart: index === 0 ? "A" : "B",
-      officialNumber: 1,
-      responseSubtype: index === 0 ? null : "word",
-      acceptedAnswers: index === 0 ? null : ["token"]
-    }))
+      officialPart: isPartA ? "A" : "B",
+      officialNumber: question.officialNumber,
+      responseSubtype: isPartA ? null : "word",
+      acceptedAnswers: isPartA ? null : [question.correctAnswer]
+    };
+    })
   };
   const now = new Date();
   const attempt = await prisma.attempt.create({
@@ -241,7 +244,7 @@ test.beforeAll(async () => {
           questionId: testRecord.questions[index]!.id,
           snapshotQuestionId: question.snapshotQuestionId,
           questionSnapshot: question as unknown as Prisma.InputJsonValue,
-          selectedAnswer: index === 0 ? "A,C" : "token",
+          selectedAnswer: index < 18 ? "A,C" : question.correctAnswer,
           isCorrect: true,
           pointsEarned: question.points,
           maxPoints: question.points,
@@ -386,9 +389,30 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
   expect(completionRequests).toHaveLength(0);
 
   for (const response of resultResponses) {
-    for (const key of ["scaled_score", "max_scaled_score", "scaled_score_note"]) {
+    expect(response).toEqual({
+      status: "completed",
+      mode: "ce_ct",
+      exam_mode: "rikz_russian_2026",
+      raw_score: 80,
+      max_raw_score: 80,
+      part_a_score: 36,
+      part_a_max_score: 36,
+      part_b_score: 44,
+      part_b_max_score: 44
+    });
+    for (const key of [
+      "answer_details", "mistakes", "question_text", "selected_answer",
+      "normalized_answer", "correct_answer", "accepted_answers", "explanation",
+      "points_earned", "max_points", "scaled_score", "max_scaled_score",
+      "scaled_score_note", "attempt_id", "student_email", "test_id"
+    ]) {
       expect(key in response).toBe(false);
     }
+    const json = JSON.stringify(response);
+    expect(json).not.toContain("Browser Part");
+    expect(json).not.toContain("A,C");
+    expect(json).not.toContain("token1");
+    expect(json).not.toContain("private browser");
   }
 });
 
@@ -403,7 +427,7 @@ test("temporary error, invalid JSON, network failure and not-ready stay safe and
   }]);
   await page.setViewportSize({ width: 1440, height: 900 });
 
-  type ResponseMode = "temporary" | "invalid-json" | "network" | "not-ready" | "success";
+  type ResponseMode = "temporary" | "invalid-json" | "network" | "unsafe-authentic" | "not-ready" | "success";
   let mode: ResponseMode = "temporary";
   let resultGetCount = 0;
   const resultMethods: string[] = [];
@@ -425,6 +449,30 @@ test("temporary error, invalid JSON, network failure and not-ready stay safe and
     }
     if (mode === "invalid-json") {
       await route.fulfill({ status: 200, contentType: "text/plain", body: "not-json" });
+      return;
+    }
+    if (mode === "unsafe-authentic") {
+      await route.fulfill({
+        status: 200,
+        contentType: "application/json",
+        body: JSON.stringify({
+          success: true,
+          data: {
+            result: {
+              status: "completed",
+              mode: "ce_ct",
+              exam_mode: "rikz_russian_2026",
+              raw_score: 80,
+              max_raw_score: 80,
+              part_a_score: 36,
+              part_a_max_score: 36,
+              part_b_score: 44,
+              part_b_max_score: 44,
+              answer_details: [{ question_text: "private unsafe question" }]
+            }
+          }
+        })
+      });
       return;
     }
     if (mode === "not-ready") {
@@ -478,6 +526,11 @@ test("temporary error, invalid JSON, network failure and not-ready stay safe and
   mode = "network";
   await page.reload();
   await expect(page.getByText(temporaryCopy, { exact: true })).toBeVisible();
+
+  mode = "unsafe-authentic";
+  await page.reload();
+  await expect(page.getByText("Результат ещё не готов. Повторное завершение не требуется.", { exact: true })).toBeVisible();
+  await expect(page.locator("body")).not.toContainText("private unsafe question");
 
   mode = "not-ready";
   await page.reload();

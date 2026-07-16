@@ -1,3 +1,5 @@
+import type { AuthenticStudentResultPayload as ServerAuthenticStudentResultPayload } from "@/lib/scoring/result-serialize";
+
 export type ResultQuestionType =
   | "single_choice"
   | "multiple_choice"
@@ -23,12 +25,12 @@ export type ResultAnswerDetail = {
   explanation: string | null;
 };
 
-export type ResultPayload = {
+export type GenericResultPayload = {
   attempt_id: string;
   test_title: string;
   status: "completed" | "expired" | "cancelled";
   mode: "training" | "ce_ct";
-  exam_mode: "generic" | "rikz_russian_2026";
+  exam_mode: "generic";
   raw_score: number;
   max_raw_score: number;
   scaled_score?: number | null;
@@ -37,6 +39,10 @@ export type ResultPayload = {
   answer_details: ResultAnswerDetail[];
   mistakes: ResultAnswerDetail[];
 };
+
+export type AuthenticStudentResultPayload = ServerAuthenticStudentResultPayload;
+
+export type ResultPayload = AuthenticStudentResultPayload | GenericResultPayload;
 
 export type PartBreakdown = {
   part: "A" | "B";
@@ -53,76 +59,102 @@ export type AuthenticResultSummary = Readonly<{
   partB: Readonly<{ score: number; maxScore: number }>;
 }>;
 
-export function isAuthenticRikzRussianResult(result: Pick<ResultPayload, "exam_mode">) {
+export function isAuthenticRikzRussianResult(
+  result: ResultPayload
+): result is AuthenticStudentResultPayload {
   return result.exam_mode === "rikz_russian_2026";
+}
+
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isFiniteNonNegativeNumber(value: unknown): value is number {
   return typeof value === "number" && Number.isFinite(value) && value >= 0;
 }
 
-export function buildAuthenticResultSummary(result: ResultPayload): AuthenticResultSummary | null {
-  if (!isAuthenticRikzRussianResult(result)) return null;
+const authenticResultKeys = new Set([
+  "status",
+  "mode",
+  "exam_mode",
+  "raw_score",
+  "max_raw_score",
+  "part_a_score",
+  "part_a_max_score",
+  "part_b_score",
+  "part_b_max_score"
+]);
+
+function hasValidAuthenticAggregates(result: Record<string, unknown>) {
+  const values = [
+    result.raw_score,
+    result.max_raw_score,
+    result.part_a_score,
+    result.part_a_max_score,
+    result.part_b_score,
+    result.part_b_max_score
+  ];
+  if (!values.every(isFiniteNonNegativeNumber)) return false;
+  const rawScore = result.raw_score as number;
+  const maxRawScore = result.max_raw_score as number;
+  const partAScore = result.part_a_score as number;
+  const partAMaxScore = result.part_a_max_score as number;
+  const partBScore = result.part_b_score as number;
+  const partBMaxScore = result.part_b_max_score as number;
+  return rawScore <= maxRawScore
+    && partAScore <= partAMaxScore
+    && partBScore <= partBMaxScore
+    && partAScore + partBScore === rawScore
+    && partAMaxScore + partBMaxScore === maxRawScore
+    && maxRawScore === 80;
+}
+
+export function parseAuthenticStudentResultPayload(value: unknown): AuthenticStudentResultPayload | null {
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== authenticResultKeys.size || keys.some((key) => !authenticResultKeys.has(key))) {
+    return null;
+  }
+  if (
+    (value.status !== "completed" && value.status !== "expired")
+    || value.mode !== "ce_ct"
+    || value.exam_mode !== "rikz_russian_2026"
+    || !hasValidAuthenticAggregates(value)
+  ) {
+    return null;
+  }
+  return value as AuthenticStudentResultPayload;
+}
+
+export function parseResultPayload(value: unknown): ResultPayload | null {
+  if (!isRecord(value)) return null;
+  if (value.exam_mode === "rikz_russian_2026") {
+    return parseAuthenticStudentResultPayload(value);
+  }
+  return value as GenericResultPayload;
+}
+
+export function buildAuthenticResultSummary(
+  result: AuthenticStudentResultPayload
+): AuthenticResultSummary | null {
   if (result.status !== "completed" && result.status !== "expired") return null;
-  if (
-    !isFiniteNonNegativeNumber(result.raw_score)
-    || !isFiniteNonNegativeNumber(result.max_raw_score)
-    || result.max_raw_score <= 0
-    || result.raw_score > result.max_raw_score
-  ) {
-    return null;
-  }
-  if (!Array.isArray(result.answer_details)) return null;
-
-  const parts = {
-    A: { count: 0, score: 0, maxScore: 0 },
-    B: { count: 0, score: 0, maxScore: 0 }
-  };
-
-  for (const detail of result.answer_details) {
-    if (detail.official_part !== "A" && detail.official_part !== "B") continue;
-    if (
-      !isFiniteNonNegativeNumber(detail.points_earned)
-      || !isFiniteNonNegativeNumber(detail.max_points)
-      || detail.max_points <= 0
-      || detail.points_earned > detail.max_points
-    ) {
-      return null;
-    }
-
-    const part = parts[detail.official_part];
-    part.count += 1;
-    part.score += detail.points_earned;
-    part.maxScore += detail.max_points;
-  }
-
-  if (parts.A.count === 0 || parts.B.count === 0) return null;
-  if (
-    parts.A.score + parts.B.score !== result.raw_score
-    || parts.A.maxScore + parts.B.maxScore !== result.max_raw_score
-  ) {
-    return null;
-  }
+  if (!hasValidAuthenticAggregates(result as unknown as Record<string, unknown>)) return null;
 
   return {
     status: result.status,
     primaryScore: result.raw_score,
     primaryMax: result.max_raw_score,
-    partA: { score: parts.A.score, maxScore: parts.A.maxScore },
-    partB: { score: parts.B.score, maxScore: parts.B.maxScore }
+    partA: { score: result.part_a_score, maxScore: result.part_a_max_score },
+    partB: { score: result.part_b_score, maxScore: result.part_b_max_score }
   };
 }
 
 export function getScaledScoreDisplay(
-  result: Pick<ResultPayload, "exam_mode"> & {
+  result: Pick<GenericResultPayload, "exam_mode"> & {
     scaled_score?: unknown;
     max_scaled_score?: unknown;
   }
 ) {
-  if (result.exam_mode === "rikz_russian_2026") {
-    return null;
-  }
-
   if (
     typeof result.scaled_score !== "number" ||
     !Number.isFinite(result.scaled_score) ||
