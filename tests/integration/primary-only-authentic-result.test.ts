@@ -5,7 +5,8 @@ import { GET as readAttempt } from "@/app/api/attempts/[attemptId]/route";
 import { POST as saveAnswer } from "@/app/api/attempts/[attemptId]/answers/route";
 import { POST as completeAttempt } from "@/app/api/attempts/[attemptId]/complete/route";
 import { POST as expireAttempt } from "@/app/api/attempts/[attemptId]/expire/route";
-import { POST as startCommercialAttempt } from "@/app/api/commercial/orders/[publicId]/start-attempt/route";
+import { POST as startAttempt } from "@/app/api/attempts/start/route";
+import { POST as claimCommercialAccess } from "@/app/api/commercial/orders/[publicId]/claim-access/route";
 import { GET as readResult } from "@/app/api/results/[attemptId]/route";
 import { orderTokenCookieName } from "@/lib/commercial/commercial-service";
 import { createLookupToken, hashLookupToken } from "@/lib/commercial/security";
@@ -209,7 +210,7 @@ async function createCommercialFixture(email = `prod03-${randomUUID()}@example.t
 
 function commercialRequest(fixture: Fixture) {
   nextCookieState.values.set(orderTokenCookieName(fixture.order.publicId), fixture.lookupToken);
-  return new Request(`${origin}/api/commercial/orders/${fixture.order.publicId}/start-attempt`, {
+  return new Request(`${origin}/api/commercial/orders/${fixture.order.publicId}/claim-access`, {
     method: "POST",
     headers: {
       origin,
@@ -246,10 +247,22 @@ function cookieValue(response: Response, name: string) {
 }
 
 async function startFixture(fixture: Fixture) {
-  const response = await startCommercialAttempt(commercialRequest(fixture), commercialContext(fixture));
-  expect(response.status).toBe(200);
-  const rawToken = cookieValue(response, "verified_student_session");
+  const claim = await claimCommercialAccess(commercialRequest(fixture), commercialContext(fixture));
+  expect(claim.status).toBe(200);
+  const rawToken = cookieValue(claim, "verified_student_session");
   expect(rawToken).toMatch(/^vs1\.v1\./);
+  expect((await claim.clone().json()).data).toMatchObject({
+    nextAction: "OPEN_PRE",
+    nextUrl: `/tests/${fixture.test.slug}`
+  });
+  expect(await prisma.attempt.count()).toBe(0);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+  expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
+
+  const response = await startAttempt(destinationRequest("POST", "/api/attempts/start", rawToken!, {
+    testId: fixture.test.id
+  }));
+  expect(response.status).toBe(200);
   const body = await response.json();
   return { attemptId: body.data.attempt.attemptId as string, rawToken: rawToken! };
 }
