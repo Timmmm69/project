@@ -29,16 +29,11 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-function isSafeVerifiedDestination(value: string) {
-  return /^\/(?:attempts|results)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
-
-export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, verifiedPreAuthorized, recovery }: {
+export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, recovery }: {
   legal: LegalLinks;
   testId: string;
   priceMinor: number;
   currency: string;
-  verifiedPreAuthorized: boolean;
   recovery: Readonly<{ productCode: string; supportEmail: string }> | null;
 }) {
   const query = useSearchParams();
@@ -192,47 +187,8 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
     window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
   }
 
-  async function startVerifiedAttempt() {
-    setBusy(true);
-    setMessage(null);
-    const response = await fetch("/api/attempts/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ testId })
-    });
-    const body = await response.json() as ApiResponse<{
-      nextAction: "OPEN_ATTEMPT" | "OPEN_RESULT";
-      nextUrl: string;
-      attempt?: { attemptId: string };
-      restored: boolean;
-    }>;
-    setBusy(false);
-    if (!body.success) {
-      setMessage(body.error.message);
-      return;
-    }
-    if (!isSafeVerifiedDestination(body.data.nextUrl)) {
-      setMessage("Не удалось восстановить заказ в этой сессии.");
-      return;
-    }
-    window.location.assign(body.data.nextUrl);
-  }
-
   const price = `${(priceMinor / 100).toFixed(2)} ${currency}`;
   const paid = order?.accessStatus === "granted";
-  if (verifiedPreAuthorized) {
-    return (
-      <>
-        <section className="subpanel stack compact" id="commercial-checkout">
-          {message ? <p className="form-message info">{message}</p> : null}
-          <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
-            Начать или продолжить тест
-          </button>
-        </section>
-        {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
-      </>
-    );
-  }
   return (
     <>
       <section className="subpanel stack compact" id="commercial-checkout">

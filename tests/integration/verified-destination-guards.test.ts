@@ -354,10 +354,13 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     });
   }
 
-  async function expectPageRedirect(rawToken: string, expectedUrl: string) {
+  async function expectPageRedirect(rawToken: string, expectedUrl: string, view?: string) {
     nextCookieState.values.set("verified_student_session", rawToken);
     try {
-      await PublicTestPage({ params: Promise.resolve({ slug: testSlug }) });
+      await PublicTestPage({
+        params: Promise.resolve({ slug: testSlug }),
+        ...(view === undefined ? {} : { searchParams: Promise.resolve({ view }) })
+      });
       throw new Error("EXPECTED_NEXT_REDIRECT");
     } catch (error) {
       expect(error).toMatchObject({
@@ -542,11 +545,24 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     const issued = await issueSession(fixture);
     nextCookieState.values.set("verified_student_session", issued.rawToken);
 
+    const beforePresentation = await counts();
     const page = await PublicTestPage({ params: Promise.resolve({ slug: testSlug }) });
-    expect(renderedComponentNames(page)).toContain("CommercialCheckoutForm");
-    expect(await prisma.attempt.count()).toBe(0);
+    expect(renderedComponentNames(page)).toContain("PrestartConfirmation");
+    expect(renderedComponentNames(page)).not.toContain("CommercialCheckoutForm");
+    expect(await counts()).toEqual(beforePresentation);
     expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
-    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
+
+    const productView = await PublicTestPage({
+      params: Promise.resolve({ slug: testSlug }),
+      searchParams: Promise.resolve({ view: "product" })
+    });
+    expect(renderedComponentNames(productView)).not.toContain("PrestartConfirmation");
+    expect(renderedComponentNames(productView)).not.toContain("CommercialCheckoutForm");
+    expect(renderedText(productView)).toContain("Доступ готов. Попытка ещё не начата.");
+    expect(renderedText(productView)).toContain("Перейти к началу");
+    expect(renderedText(productView)).toContain("Что входит");
+    expect(renderedText(productView)).toContain("Как проходит тест");
+    expect(await counts()).toEqual(beforePresentation);
 
     const first = await authenticStart(issued.rawToken);
     expect(first.status).toBe(200);
@@ -563,6 +579,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(1);
 
     await expectPageRedirect(issued.rawToken, `/attempts/${attemptId}`);
+    await expectPageRedirect(issued.rawToken, `/attempts/${attemptId}`, "product");
     const repeated = await authenticStart(issued.rawToken);
     expect(repeated.status).toBe(200);
     const repeatedBody = await repeated.json();
@@ -589,6 +606,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
       const beforeEvents = await prisma.eventLog.count();
 
       await expectPageRedirect(issued.rawToken, `/results/${attempt.id}`);
+      await expectPageRedirect(issued.rawToken, `/results/${attempt.id}`, "product");
       const response = await authenticStart(issued.rawToken);
       expect(response.status).toBe(200);
       expect(await response.json()).toMatchObject({
