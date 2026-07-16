@@ -6,6 +6,7 @@ import { requireStudent } from "@/server/auth/student-session";
 import { resolveVerifiedStudentEntryDestination } from "@/server/auth/verified-student-session/destination-guard";
 import {
   finalizeVerifiedDestinationResponse,
+  verifiedEntryBlockedResponse,
   verifiedDestinationRejection,
   verifiedDestinationUnavailable
 } from "@/server/auth/verified-student-session/destination-response";
@@ -46,10 +47,7 @@ export function createAttemptStartHandler(
       return verifiedDestinationRejection(resolution);
     }
     if (resolution.status === "BLOCKED") {
-      return apiFailure({
-        code: "ACCESS_EXPIRED",
-        message: "Attempt cannot be started for this access."
-      }, 409);
+      return verifiedEntryBlockedResponse(resolution);
     }
 
     if (resolution.status === "AUTHORIZED" && resolution.nextAction === "OPEN_ATTEMPT") {

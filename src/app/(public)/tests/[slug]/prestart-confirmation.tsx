@@ -168,12 +168,12 @@ export function PrestartAccessExpired() {
 
   return (
     <section
-      aria-describedby="prestart-access-expired-description"
       aria-labelledby="prestart-access-expired-title"
       className="panel prestart-surface"
     >
       <div className="stack">
         <h1
+          aria-describedby="prestart-access-expired-description"
           className="page-title prestart-title"
           id="prestart-access-expired-title"
           ref={headingRef}

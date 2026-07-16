@@ -456,6 +456,9 @@ describe("authentic final-start route entry resolution", () => {
     const { dependencies, startAttempt } = routeDependencies(authorizedResolution("OPEN_PRE"));
     const response = await createAttemptStartHandler(dependencies)(routeRequest());
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).toHaveBeenCalledOnce();
     expect(await response.json()).toMatchObject({
       data: {
@@ -475,7 +478,17 @@ describe("authentic final-start route entry resolution", () => {
     });
     const response = await createAttemptStartHandler(dependencies)(routeRequest());
     expect(response.status).toBe(403);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual({
+      success: false,
+      error: {
+        code: "VERIFIED_SCOPE_NOT_ALLOWED",
+        message: "Verified student session scope is not allowed."
+      }
+    });
   });
 
   it("does not call the start service for ACCESS_EXPIRED", async () => {
@@ -487,8 +500,22 @@ describe("authentic final-start route entry resolution", () => {
     });
     const response = await createAttemptStartHandler(dependencies)(routeRequest());
     expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).not.toHaveBeenCalled();
-    expect(await response.json()).toMatchObject({ error: { code: "ACCESS_EXPIRED" } });
+    const body = await response.json();
+    expect(body).toEqual({
+      success: false,
+      error: {
+        code: "ACCESS_EXPIRED",
+        message: "Attempt cannot be started for this access."
+      }
+    });
+    const serialized = JSON.stringify(body);
+    for (const sensitive of [ids.user, ids.product, ids.test, ids.access, ids.attempt]) {
+      expect(serialized).not.toContain(sensitive);
+    }
   });
 
   it("keeps the generic legacy response contract unchanged", async () => {
@@ -499,6 +526,9 @@ describe("authentic final-start route entry resolution", () => {
     });
     const response = await createAttemptStartHandler(dependencies)(routeRequest("student@example.test"));
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBeNull();
+    expect(response.headers.get("referrer-policy")).toBeNull();
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).toHaveBeenCalledOnce();
     expect(await response.json()).toEqual({
       success: true,

@@ -749,7 +749,27 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     expect(renderedComponentNames(page)).not.toContain("CommercialCheckoutForm");
     const rejected = await authenticStart(unstartedSession.rawToken);
     expect(rejected.status).toBe(409);
-    expect((await rejected.json()).error.code).toBe("ACCESS_EXPIRED");
+    expect(rejected.headers.get("cache-control")).toBe("no-store");
+    expect(rejected.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(rejected.headers.get("set-cookie")).toBeNull();
+    const rejectedBody = await rejected.json();
+    expect(rejectedBody).toEqual({
+      success: false,
+      error: {
+        code: "ACCESS_EXPIRED",
+        message: "Attempt cannot be started for this access."
+      }
+    });
+    const serializedRejection = JSON.stringify(rejectedBody);
+    for (const sensitive of [
+      unstarted.user.id,
+      unstarted.access.id,
+      unstarted.productId,
+      unstartedSession.rawToken,
+      testId
+    ]) {
+      expect(serializedRejection).not.toContain(sensitive);
+    }
     expect(await counts()).toEqual(unstartedBefore);
     expect(await prisma.attempt.count({ where: { accessId: unstarted.access.id } })).toBe(0);
     expect((await prisma.access.findUniqueOrThrow({ where: { id: unstarted.access.id } })).attemptsAvailable).toBe(1);
