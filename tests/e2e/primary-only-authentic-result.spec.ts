@@ -23,6 +23,8 @@ let rawToken = "";
 let testId = "";
 let productId = "";
 let userId = "";
+const completedAtIso = "2026-07-16T17:05:00.000Z";
+const completedAtLabel = "Завершено: 16 июля 2026, 20:05 (Минск)";
 
 function assertDedicatedTestSchema() {
   const databaseUrl = process.env.DATABASE_URL;
@@ -49,6 +51,7 @@ async function assertNoHorizontalScroll(page: Page) {
 async function assertAggregateDom(page: Page) {
   await expect(page.getByRole("heading", { level: 1, name: "Результат попытки" })).toHaveCount(1);
   await expect(page.getByText("Статус: завершено вручную", { exact: true })).toBeVisible();
+  await expect(page.getByText(completedAtLabel, { exact: true })).toBeVisible();
   await expect(page.getByRole("group", { name: "Общий первичный результат: 80 из 80" })).toBeVisible();
   await expect(page.getByText("Общий первичный результат", { exact: true })).toBeVisible();
   await expect(page.getByText("80 из 80", { exact: true })).toBeVisible();
@@ -212,7 +215,7 @@ test.beforeAll(async () => {
     };
     })
   };
-  const now = new Date();
+  const now = new Date(completedAtIso);
   const attempt = await prisma.attempt.create({
     data: {
       userId,
@@ -398,13 +401,15 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
       part_a_score: 36,
       part_a_max_score: 36,
       part_b_score: 44,
-      part_b_max_score: 44
+      part_b_max_score: 44,
+      completed_at: completedAtIso
     });
     for (const key of [
       "answer_details", "mistakes", "question_text", "selected_answer",
       "normalized_answer", "correct_answer", "accepted_answers", "explanation",
       "points_earned", "max_points", "scaled_score", "max_scaled_score",
-      "scaled_score_note", "attempt_id", "student_email", "test_id"
+      "scaled_score_note", "attempt_id", "student_email", "test_id",
+      "finished_at", "started_at"
     ]) {
       expect(key in response).toBe(false);
     }
@@ -413,6 +418,81 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
     expect(json).not.toContain("A,C");
     expect(json).not.toContain("token1");
     expect(json).not.toContain("private browser");
+  }
+});
+
+test("authentic completion label is independent of the browser device timezone", async ({ browser }) => {
+  for (const timezoneId of ["America/Los_Angeles", "Asia/Tokyo"]) {
+    const timezoneContext = await browser.newContext({
+      baseURL: "http://localhost:3000",
+      timezoneId
+    });
+    try {
+      await timezoneContext.addCookies([{
+        name: "verified_student_session",
+        value: rawToken,
+        domain: "localhost",
+        path: "/",
+        httpOnly: true,
+        sameSite: "Lax"
+      }]);
+      const page = await timezoneContext.newPage();
+      await page.goto(`/results/${attemptId}`);
+      expect(await page.evaluate(() => Intl.DateTimeFormat().resolvedOptions().timeZone)).toBe(timezoneId);
+      await expect(page.getByText(completedAtLabel, { exact: true })).toBeVisible();
+    } finally {
+      await timezoneContext.close();
+    }
+  }
+});
+
+test("expired authentic Result preserves expiry status and authoritative endsAt", async ({ page, context }) => {
+  await context.addCookies([{
+    name: "verified_student_session",
+    value: rawToken,
+    domain: "localhost",
+    path: "/",
+    httpOnly: true,
+    sameSite: "Lax"
+  }]);
+  const original = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+  const authoritativeEndsAt = new Date(original.startedAt.getTime() + 120 * 60_000);
+  expect(authoritativeEndsAt.toISOString()).toBe("2026-07-16T19:04:00.000Z");
+  await prisma.attempt.update({
+    where: { id: attemptId },
+    data: {
+      status: "EXPIRED",
+      finishedAt: authoritativeEndsAt,
+      durationSeconds: 120 * 60
+    }
+  });
+
+  try {
+    const responsePromise = page.waitForResponse(
+      (response) => response.url().includes(`/api/results/${attemptId}`) && response.request().method() === "GET"
+    );
+    await page.goto(`/results/${attemptId}`);
+    const response = await responsePromise;
+    const payload = (await response.json()).data.result as Record<string, unknown>;
+    await expect(page.getByText("Статус: время истекло", { exact: true })).toBeVisible();
+    await expect(page.getByText("Статус: завершено вручную", { exact: true })).toHaveCount(0);
+    await expect(page.getByText("Завершено: 16 июля 2026, 22:04 (Минск)", { exact: true })).toBeVisible();
+    await expect(page.getByRole("heading", { level: 1, name: "Результат попытки" })).toBeFocused();
+    expect(payload).toMatchObject({
+      status: "expired",
+      completed_at: authoritativeEndsAt.toISOString()
+    });
+    expect("finished_at" in payload).toBe(false);
+    expect("started_at" in payload).toBe(false);
+  } finally {
+    await prisma.attempt.update({
+      where: { id: attemptId },
+      data: {
+        status: original.status,
+        finishedAt: original.finishedAt,
+        durationSeconds: original.durationSeconds
+      }
+    });
   }
 });
 

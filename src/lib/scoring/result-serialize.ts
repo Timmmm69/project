@@ -20,6 +20,7 @@ export type AuthenticStudentResultPayload = Readonly<{
   part_a_max_score: number;
   part_b_score: number;
   part_b_max_score: number;
+  completed_at: string;
 }>;
 
 export class ResultProjectionNotReadyError extends Error {
@@ -106,6 +107,50 @@ function positiveInteger(value: unknown): value is number {
   return typeof value === "number" && Number.isInteger(value) && value > 0;
 }
 
+const canonicalUtcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function authenticCompletionTimestamp(
+  attempt: AttemptResultPayload,
+  snapshot: ReturnType<typeof parseTestSnapshot>
+) {
+  if (!(attempt.startedAt instanceof Date) || !Number.isFinite(attempt.startedAt.getTime())) {
+    projectionNotReady();
+  }
+  if (!(attempt.finishedAt instanceof Date) || !Number.isFinite(attempt.finishedAt.getTime())) {
+    projectionNotReady();
+  }
+  if (!positiveInteger(snapshot.durationMinutes) || !Number.isSafeInteger(snapshot.durationMinutes)) {
+    projectionNotReady();
+  }
+
+  const startedAtMilliseconds = attempt.startedAt.getTime();
+  const finishedAtMilliseconds = attempt.finishedAt.getTime();
+  const endsAtMilliseconds = startedAtMilliseconds + snapshot.durationMinutes * 60_000;
+  if (
+    finishedAtMilliseconds < startedAtMilliseconds
+    || !Number.isFinite(endsAtMilliseconds)
+    || !Number.isFinite(new Date(endsAtMilliseconds).getTime())
+    || (attempt.status === "EXPIRED" && finishedAtMilliseconds !== endsAtMilliseconds)
+    || (attempt.status === "COMPLETED" && finishedAtMilliseconds >= endsAtMilliseconds)
+  ) {
+    projectionNotReady();
+  }
+
+  let completedAt: string;
+  try {
+    completedAt = attempt.finishedAt.toISOString();
+  } catch {
+    projectionNotReady();
+  }
+  if (
+    !canonicalUtcIsoPattern.test(completedAt)
+    || new Date(completedAt).toISOString() !== completedAt
+  ) {
+    projectionNotReady();
+  }
+  return completedAt;
+}
+
 function serializeAuthenticStudentResult(
   attempt: AttemptResultPayload,
   snapshot: ReturnType<typeof parseTestSnapshot>
@@ -114,6 +159,7 @@ function serializeAuthenticStudentResult(
   if (snapshot.mode !== "ce_ct" || snapshot.examMode !== "rikz_russian_2026") projectionNotReady();
   if (snapshot.maxRawScore !== 80) projectionNotReady();
   if (!Array.isArray(snapshot.questions) || snapshot.questions.length !== 40) projectionNotReady();
+  const completedAt = authenticCompletionTimestamp(attempt, snapshot);
   if (
     !finiteNonNegative(attempt.rawScore)
     || !finiteNonNegative(attempt.maxRawScore)
@@ -197,7 +243,8 @@ function serializeAuthenticStudentResult(
     part_a_score: partAScore,
     part_a_max_score: partAMaxScore,
     part_b_score: partBScore,
-    part_b_max_score: partBMaxScore
+    part_b_max_score: partBMaxScore,
+    completed_at: completedAt
   });
 }
 

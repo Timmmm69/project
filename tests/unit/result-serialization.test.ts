@@ -56,8 +56,11 @@ function makeAttempt(input: {
   answerQuestionIds?: string[];
   rawScore?: number | null;
   maxRawScore?: number | null;
+  startedAt?: Date | null;
+  finishedAt?: Date | null;
 }) {
   const snapshot = input.snapshot ?? authenticSnapshot();
+  const status = input.status ?? "COMPLETED";
   const answerQuestionIds = input.answerQuestionIds ?? snapshot.questions.map((question) => question.snapshotQuestionId);
   const questionsById = new Map(snapshot.questions.map((question) => [question.snapshotQuestionId, question]));
   const answers = answerQuestionIds.map((snapshotQuestionId, index) => {
@@ -77,14 +80,20 @@ function makeAttempt(input: {
       updatedAt: now
     };
   });
+  const startedAt = input.startedAt === undefined
+    ? new Date("2026-07-09T10:00:00.000Z")
+    : input.startedAt;
+  const finishedAt = input.finishedAt === undefined
+    ? new Date(status === "EXPIRED" ? "2026-07-09T12:00:00.000Z" : "2026-07-09T11:00:00.000Z")
+    : input.finishedAt;
   return {
     id: "attempt-1",
     userId: "student-1",
     testId: snapshot.testId,
     accessId: "access-1",
-    status: input.status ?? "COMPLETED",
-    startedAt: new Date("2026-07-09T10:00:00.000Z"),
-    finishedAt: now,
+    status,
+    startedAt,
+    finishedAt,
     durationSeconds: 7200,
     rawScore: input.rawScore === undefined ? 80 : input.rawScore,
     maxRawScore: input.maxRawScore === undefined ? 80 : input.maxRawScore,
@@ -131,9 +140,11 @@ describe("result serialization", () => {
       part_a_score: 36,
       part_a_max_score: 36,
       part_b_score: 44,
-      part_b_max_score: 44
+      part_b_max_score: 44,
+      completed_at: "2026-07-09T11:00:00.000Z"
     });
     expect(Object.keys(result).sort()).toEqual([
+      "completed_at",
       "exam_mode",
       "max_raw_score",
       "mode",
@@ -144,6 +155,9 @@ describe("result serialization", () => {
       "raw_score",
       "status"
     ]);
+    expect(Object.keys(result)).toHaveLength(10);
+    expect("finished_at" in result).toBe(false);
+    expect("started_at" in result).toBe(false);
   });
 
   it("physically omits every private, question-level, scaled, identity and time field", () => {
@@ -196,7 +210,73 @@ describe("result serialization", () => {
   });
 
   it("preserves terminal expired status", () => {
-    expect(serializeResult(makeAttempt({ status: "EXPIRED" }))).toMatchObject({ status: "expired" });
+    expect(serializeResult(makeAttempt({ status: "EXPIRED" }))).toMatchObject({
+      status: "expired",
+      completed_at: "2026-07-09T12:00:00.000Z"
+    });
+  });
+
+  it("uses only the stored terminal finishedAt as the completed timestamp", () => {
+    const finishedAt = new Date("2026-07-09T11:34:56.789Z");
+    expect(serializeResult(makeAttempt({ finishedAt }))).toMatchObject({
+      completed_at: finishedAt.toISOString()
+    });
+  });
+
+  it.each([
+    ["missing finishedAt", { finishedAt: null }],
+    ["missing startedAt", { startedAt: null }],
+    ["invalid finishedAt", { finishedAt: new Date(Number.NaN) }],
+    ["invalid startedAt", { startedAt: new Date(Number.NaN) }],
+    ["finished before started", { finishedAt: new Date("2026-07-09T09:59:59.999Z") }]
+  ])("fails closed for corrupt terminal time: %s", (_label, overrides) => {
+    expectProjectionFailure(makeAttempt(overrides));
+  });
+
+  it("fails closed when an expired timestamp differs from authoritative endsAt", () => {
+    expectProjectionFailure(makeAttempt({
+      status: "EXPIRED",
+      finishedAt: new Date("2026-07-09T11:59:59.999Z")
+    }));
+  });
+
+  it("fails closed when finishedAt cannot be serialized with toISOString", () => {
+    const finishedAt = new Date("2026-07-09T11:00:00.000Z");
+    finishedAt.toISOString = () => {
+      throw new RangeError("corrupt date serialization");
+    };
+    expectProjectionFailure(makeAttempt({ finishedAt }));
+  });
+
+  it("fails closed when finishedAt serializes outside the four-digit canonical UTC format", () => {
+    expectProjectionFailure(makeAttempt({
+      startedAt: new Date("+010000-01-01T00:00:00.000Z"),
+      finishedAt: new Date("+010000-01-01T01:00:00.000Z")
+    }));
+  });
+
+  it.each([
+    ["at endsAt", "2026-07-09T12:00:00.000Z"],
+    ["after endsAt", "2026-07-09T12:00:00.001Z"]
+  ])("fails closed when completed finishedAt is %s", (_label, value) => {
+    expectProjectionFailure(makeAttempt({ finishedAt: new Date(value) }));
+  });
+
+  it.each([
+    ["zero", 0, false],
+    ["negative", -1, false],
+    ["fractional", 1.5, false],
+    ["NaN", Number.NaN, false],
+    ["Infinity", Number.POSITIVE_INFINITY, false],
+    ["unsafe integer", Number.MAX_SAFE_INTEGER + 1, false],
+    ["string", "120", false],
+    ["null", null, false],
+    ["missing", undefined, true]
+  ])("fails closed for $label snapshot durationMinutes", (_label, durationMinutes, omit) => {
+    const snapshot = authenticSnapshot();
+    if (omit) delete (snapshot as { durationMinutes?: unknown }).durationMinutes;
+    else (snapshot as { durationMinutes: unknown }).durationMinutes = durationMinutes;
+    expectProjectionFailure(makeAttempt({ snapshot }));
   });
 
   it("fails closed for duplicate Answer mapping", () => {
@@ -287,6 +367,9 @@ describe("result serialization", () => {
       points_earned: 2,
       max_points: 2
     });
+    expect(result.started_at).toEqual(new Date("2026-07-09T10:00:00.000Z"));
+    expect(result.finished_at).toEqual(new Date("2026-07-09T11:00:00.000Z"));
+    expect("completed_at" in result).toBe(false);
   });
 
   it("keeps authentic admin details while suppressing every answer-key field", () => {
@@ -330,6 +413,8 @@ describe("result serialization", () => {
     });
     expect(result.scaled_score).toBe(100);
     expect(result.max_scaled_score).toBe(100);
+    expect(result.finished_at).toEqual(new Date("2026-07-09T11:00:00.000Z"));
+    expect("completed_at" in result).toBe(false);
     const serialized = JSON.stringify(result);
     for (const secret of [
       "A,E",
@@ -350,6 +435,7 @@ describe("result serialization", () => {
     expect(result.scaled_score).toBe(100);
     expect(result.topic_results).toHaveLength(1);
     expect(result.recommendations).toHaveLength(1);
+    expect("completed_at" in result).toBe(false);
     expect(result.answer_details[0]).toMatchObject({
       correct_answer: "A,C",
       explanation: "Private Part A explanation 1"

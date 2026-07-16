@@ -53,6 +53,7 @@ export type PartBreakdown = {
 
 export type AuthenticResultSummary = Readonly<{
   status: "completed" | "expired";
+  completedAt: string;
   primaryScore: number;
   primaryMax: number;
   partA: Readonly<{ score: number; maxScore: number }>;
@@ -82,8 +83,43 @@ const authenticResultKeys = new Set([
   "part_a_score",
   "part_a_max_score",
   "part_b_score",
-  "part_b_max_score"
+  "part_b_max_score",
+  "completed_at"
 ]);
+
+const canonicalUtcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function isCanonicalUtcIso(value: unknown): value is string {
+  if (typeof value !== "string" || !canonicalUtcIsoPattern.test(value)) return false;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
+}
+
+export function formatAuthenticResultCompletedAt(value: string): string | null {
+  if (!isCanonicalUtcIso(value)) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("ru-RU", {
+      timeZone: "Europe/Minsk",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(value));
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((candidate) => candidate.type === type)?.value;
+    const day = part("day");
+    const month = part("month");
+    const year = part("year");
+    const hour = part("hour");
+    const minute = part("minute");
+    if (!day || !month || !year || !hour || !minute) return null;
+    return `${day} ${month} ${year}, ${hour}:${minute} (Минск)`;
+  } catch {
+    return null;
+  }
+}
 
 function hasValidAuthenticAggregates(result: Record<string, unknown>) {
   const values = [
@@ -119,6 +155,7 @@ export function parseAuthenticStudentResultPayload(value: unknown): AuthenticStu
     (value.status !== "completed" && value.status !== "expired")
     || value.mode !== "ce_ct"
     || value.exam_mode !== "rikz_russian_2026"
+    || !isCanonicalUtcIso(value.completed_at)
     || !hasValidAuthenticAggregates(value)
   ) {
     return null;
@@ -139,9 +176,12 @@ export function buildAuthenticResultSummary(
 ): AuthenticResultSummary | null {
   if (result.status !== "completed" && result.status !== "expired") return null;
   if (!hasValidAuthenticAggregates(result as unknown as Record<string, unknown>)) return null;
+  const completedAt = formatAuthenticResultCompletedAt(result.completed_at);
+  if (completedAt === null) return null;
 
   return {
     status: result.status,
+    completedAt,
     primaryScore: result.raw_score,
     primaryMax: result.max_raw_score,
     partA: { score: result.part_a_score, maxScore: result.part_a_max_score },

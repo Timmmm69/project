@@ -283,17 +283,23 @@ async function resultReadCounts() {
   };
 }
 
-function expectPrimaryOnlyResult(result: Record<string, unknown>) {
+function expectPrimaryOnlyResult(
+  result: Record<string, unknown>,
+  completedAt: string,
+  status: "completed" | "expired" = "completed",
+  scores: Readonly<{ raw: number; partA: number; partB: number }> = { raw: 80, partA: 36, partB: 44 }
+) {
   expect(result).toEqual({
-    status: "completed",
+    status,
     mode: "ce_ct",
     exam_mode: "rikz_russian_2026",
-    raw_score: 80,
+    raw_score: scores.raw,
     max_raw_score: 80,
-    part_a_score: 36,
+    part_a_score: scores.partA,
     part_a_max_score: 36,
-    part_b_score: 44,
-    part_b_max_score: 44
+    part_b_score: scores.partB,
+    part_b_max_score: 44,
+    completed_at: completedAt
   });
 }
 
@@ -396,6 +402,8 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
         answers: { orderBy: { createdAt: "asc" } }
       }
     });
+    if (!storedBeforeGet.finishedAt) throw new Error("Expected stored terminal finishedAt");
+    const completedAt = storedBeforeGet.finishedAt.toISOString();
     expect(storedBeforeGet).toMatchObject({ rawScore: 80, maxRawScore: 80, scaledScore: 100, maxScaledScore: 100 });
     const adminResult = serializeResult(storedBeforeGet, { audience: "admin" });
     expect(adminResult.scaled_score).toBe(100);
@@ -420,6 +428,8 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(adminApiResult.student_email).toBe(fixture.user.email);
     expect(adminApiResult.scaled_score).toBe(100);
     expect(adminApiResult.max_scaled_score).toBe(100);
+    expect(adminApiResult.finished_at).toBe(completedAt);
+    expect("completed_at" in adminApiResult).toBe(false);
     expect(adminApiResult.answer_details).toHaveLength(40);
     expect((adminApiResult.answer_details as Array<Record<string, unknown>>)[0]).toMatchObject({
       question_text: "Part A 1",
@@ -460,7 +470,7 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(response.headers.get("set-cookie")).toBeNull();
     const responseText = await response.clone().text();
     const result = (await response.json()).data.result as Record<string, unknown>;
-    expectPrimaryOnlyResult(result);
+    expectPrimaryOnlyResult(result, completedAt);
     for (const key of [
       "attempt_id", "student_email", "test_id", "test_title", "test_slug",
       "started_at", "finished_at", "duration_seconds", "percent", "level",
@@ -649,7 +659,7 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
       attemptContext(started.attemptId)
     );
     expect(recoveryRead.status).toBe(200);
-    expectPrimaryOnlyResult((await recoveryRead.json()).data.result);
+    expectPrimaryOnlyResult((await recoveryRead.json()).data.result, completedAt);
 
     const foreign = await createCommercialFixture();
     const foreignSession = await verifiedSessions.issue({
@@ -702,6 +712,8 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(genericResult.exam_mode).toBe("generic");
     expect(genericResult.scaled_score).toBe(100);
     expect(genericResult.max_scaled_score).toBe(100);
+    expect(genericResult.finished_at).toBe(completedAt);
+    expect("completed_at" in genericResult).toBe(false);
     expect(genericResult.answer_details).toHaveLength(40);
     expect(genericResult.mistakes).toEqual([]);
     await prisma.test.update({
@@ -766,7 +778,54 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
       .toEqual(attemptBefore.updatedAt);
   });
 
-  it("keeps expiry response primary-only", async () => {
+  it("returns safe RESULT_NOT_READY for a terminal attempt without finishedAt and never heals it", async () => {
+    const fixture = await createCommercialFixture();
+    const started = await startFixture(fixture);
+    const completed = await completeAttempt(
+      destinationRequest("POST", `/api/attempts/${started.attemptId}/complete`, started.rawToken),
+      attemptContext(started.attemptId)
+    );
+    expect(completed.status).toBe(200);
+    await prisma.attempt.update({
+      where: { id: started.attemptId },
+      data: { finishedAt: null }
+    });
+    const before = await resultReadCounts();
+    const attemptBefore = await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } });
+    const answersBefore = await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    });
+
+    const response = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`, started.rawToken),
+      attemptContext(started.attemptId)
+    );
+    const responseText = await response.clone().text();
+
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(await response.json()).toEqual({
+      success: false,
+      error: {
+        code: "RESULT_NOT_READY",
+        message: "Result is available after attempt completion"
+      }
+    });
+    expect(responseText).not.toContain(started.attemptId);
+    expect(responseText).not.toContain("completed_at");
+    expect(responseText).not.toContain("finished_at");
+    expect(await resultReadCounts()).toEqual(before);
+    expect(await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } }))
+      .toEqual(attemptBefore);
+    expect(await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    })).toEqual(answersBefore);
+  });
+
+  it("keeps authoritative expiry time primary-only and rejects corrupt expiry without writes", async () => {
     const fixture = await createCommercialFixture();
     const started = await startFixture(fixture);
     await prisma.attempt.update({
@@ -783,6 +842,52 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     expect(text).not.toContain("scaled_score");
     expect(text).not.toContain("max_scaled_score");
     expect(text).not.toContain("scaled_score_note");
-    expect((await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } })).status).toBe("EXPIRED");
+    const storedExpired = await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } });
+    expect(storedExpired.status).toBe("EXPIRED");
+    if (!storedExpired.finishedAt) throw new Error("Expected expiry finishedAt");
+    const authoritativeEndsAt = new Date(storedExpired.startedAt.getTime() + 120 * 60_000);
+    expect(storedExpired.finishedAt).toEqual(authoritativeEndsAt);
+
+    const response = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`, started.rawToken),
+      attemptContext(started.attemptId)
+    );
+    expect(response.status).toBe(200);
+    expectPrimaryOnlyResult(
+      (await response.json()).data.result,
+      authoritativeEndsAt.toISOString(),
+      "expired",
+      { raw: 0, partA: 0, partB: 0 }
+    );
+
+    await prisma.attempt.update({
+      where: { id: started.attemptId },
+      data: { finishedAt: new Date(authoritativeEndsAt.getTime() + 1_000) }
+    });
+    const beforeCorruptRead = await resultReadCounts();
+    const corruptAttemptBefore = await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } });
+    const corruptAnswersBefore = await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    });
+    const corrupt = await readResult(
+      destinationRequest("GET", `/api/results/${started.attemptId}`, started.rawToken),
+      attemptContext(started.attemptId)
+    );
+    const corruptText = await corrupt.clone().text();
+    expect(corrupt.status).toBe(409);
+    expect(corrupt.headers.get("cache-control")).toBe("no-store");
+    expect(corrupt.headers.get("referrer-policy")).toBe("no-referrer");
+    expect((await corrupt.json()).error.code).toBe("RESULT_NOT_READY");
+    expect(corruptText).not.toContain(started.attemptId);
+    expect(corruptText).not.toContain("completed_at");
+    expect(corruptText).not.toContain(authoritativeEndsAt.toISOString());
+    expect(await resultReadCounts()).toEqual(beforeCorruptRead);
+    expect(await prisma.attempt.findUniqueOrThrow({ where: { id: started.attemptId } }))
+      .toEqual(corruptAttemptBefore);
+    expect(await prisma.answer.findMany({
+      where: { attemptId: started.attemptId },
+      orderBy: { createdAt: "asc" }
+    })).toEqual(corruptAnswersBefore);
   });
 });
