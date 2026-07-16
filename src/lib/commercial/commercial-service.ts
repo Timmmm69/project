@@ -263,7 +263,7 @@ async function lockCommercialPaymentAttempt(tx: Tx, attemptId: string) {
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_payment_attempts" WHERE "id" = ${attemptId}::uuid FOR UPDATE`);
 }
 
-export type CommercialNextAction = "START_TEST" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
+export type CommercialNextAction = "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
 
 function addDays(date: Date, days: number) {
   const result = new Date(date);
@@ -310,7 +310,7 @@ async function existingAccessAction(tx: Tx, email: string, testId: string, now: 
     },
     select: { id: true }
   });
-  if (unusedAccess) return "START_TEST" as const;
+  if (unusedAccess) return "OPEN_PRE" as const;
   return null;
 }
 
@@ -988,7 +988,7 @@ export async function commercialOrderStatus(publicId: string) {
       ? "RESUME_TEST"
       : attempt
         ? "VIEW_RESULT"
-        : "START_TEST"
+        : "OPEN_PRE"
     : order.status === "PENDING"
       ? "WAIT_FOR_PAYMENT"
       : "NONE";
@@ -997,7 +997,13 @@ export async function commercialOrderStatus(publicId: string) {
     paymentStatus: payment?.status.toLowerCase() ?? null,
     accessStatus: order.access ? "granted" : "none",
     nextAction,
-    nextUrl: nextAction === "RESUME_TEST" && attempt ? `/attempts/${attempt.id}` : nextAction === "VIEW_RESULT" && attempt ? `/results/${attempt.id}` : null
+    nextUrl: nextAction === "RESUME_TEST" && attempt
+      ? `/attempts/${attempt.id}`
+      : nextAction === "VIEW_RESULT" && attempt
+        ? `/results/${attempt.id}`
+        : nextAction === "OPEN_PRE"
+          ? `/tests/${order.product.test.slug}`
+          : null
   };
 }
 
@@ -1070,7 +1076,7 @@ export async function claimCommercialOrderAccess(publicId: string) {
     ? "RESUME_TEST"
     : attempt && access.attemptsAvailable <= 0
       ? "VIEW_RESULT"
-      : "START_TEST";
+      : "OPEN_PRE";
   return {
     orderId: order.id,
     examMode: order.product.test.examMode,

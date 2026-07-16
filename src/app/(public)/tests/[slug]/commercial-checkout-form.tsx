@@ -19,7 +19,7 @@ type OrderState = {
   orderStatus: string;
   paymentStatus: string | null;
   accessStatus: "granted" | "none";
-  nextAction: "START_TEST" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
+  nextAction: "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
   nextUrl: string | null;
 };
 
@@ -159,7 +159,7 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
     if (!order) return;
     setBusy(true);
     claimKey.current ??= newKey();
-    const response = await fetch(`/api/commercial/orders/${order.publicId}/start-attempt`, {
+    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, {
       method: "POST",
       headers: { "Idempotency-Key": claimKey.current }
     });
@@ -249,7 +249,7 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, ve
         {!order ? <button className="button" type="button" disabled={busy || !email || !adult} onClick={createOrder}>Перейти к оплате {price}</button> : null}
         {existingAccess ? <button className="button" type="button" disabled={busy} onClick={continueExistingAccess}>Продолжить тест</button> : null}
         {order && !paid ? <div className="inline-actions"><button className="button" type="button" disabled={busy} onClick={beginPayment}>Открыть тестовую оплату</button><button className="button secondary" type="button" disabled={busy} onClick={refreshStatus}>Проверить статус</button></div> : null}
-        {paid ? <button className="button" type="button" disabled={busy} onClick={claimAndContinue}>{order?.nextAction === "RESUME_TEST" ? "Продолжить тест" : order?.nextAction === "VIEW_RESULT" ? "Посмотреть результат" : "Начать тест"}</button> : null}
+        {paid ? <button className="button" type="button" disabled={busy} onClick={claimAndContinue}>{order?.nextAction === "RESUME_TEST" ? "Продолжить тест" : order?.nextAction === "VIEW_RESULT" ? "Посмотреть результат" : "Перейти к началу"}</button> : null}
       </section>
       {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
     </>

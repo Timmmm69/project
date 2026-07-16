@@ -3,10 +3,6 @@ import { PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it, vi } from "vitest";
 import { POST as claimCommercialAccess } from "@/app/api/commercial/orders/[publicId]/claim-access/route";
 import { POST as startCommercialAttempt } from "@/app/api/commercial/orders/[publicId]/start-attempt/route";
-import { GET as readAttempt } from "@/app/api/attempts/[attemptId]/route";
-import { POST as saveAnswer } from "@/app/api/attempts/[attemptId]/answers/route";
-import { POST as completeAttempt } from "@/app/api/attempts/[attemptId]/complete/route";
-import { GET as readResult } from "@/app/api/results/[attemptId]/route";
 import { orderTokenCookieName } from "@/lib/commercial/commercial-service";
 import { createLookupToken, hashLookupToken } from "@/lib/commercial/security";
 import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
@@ -186,25 +182,8 @@ function commercialRequest(
   });
 }
 
-function destinationRequest(method: "GET" | "POST", path: string, rawToken: string, body?: unknown) {
-  return new Request(`${origin}${path}`, {
-    method,
-    headers: {
-      origin,
-      host: "commercial-order-issuer.test",
-      cookie: `verified_student_session=${rawToken}`,
-      ...(body === undefined ? {} : { "content-type": "application/json" })
-    },
-    ...(body === undefined ? {} : { body: JSON.stringify(body) })
-  });
-}
-
 function commercialContext(fixture: Fixture) {
   return { params: Promise.resolve({ publicId: fixture.order.publicId }) };
-}
-
-function attemptContext(attemptId: string) {
-  return { params: Promise.resolve({ attemptId }) };
 }
 
 function cookieValue(response: Response, name: string) {
@@ -276,25 +255,35 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     await prisma.$disconnect();
   });
 
-  it("exchanges exact Order proof, guards START/ATT/RES, and rotates a same-operation session", async () => {
+  it("claims paid Access on both surfaces without creating or consuming an Attempt", async () => {
     const fixture = await createCommercialFixture();
     const operationId = randomUUID();
-    const start = await startCommercialAttempt(
-      commercialRequest(fixture, operationId),
+    const before = {
+      attempts: await prisma.attempt.count(),
+      attemptsAvailable: (await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable,
+      attemptStarted: await prisma.eventLog.count({ where: { eventType: "attempt_started" } })
+    };
+    expect(before).toEqual({ attempts: 0, attemptsAvailable: 1, attemptStarted: 0 });
+
+    const claim = await claimCommercialAccess(
+      commercialRequest(fixture, operationId, "claim-access"),
       commercialContext(fixture)
     );
-    expect(start.status).toBe(200);
-    expect(start.headers.get("cache-control")).toBe("no-store");
-    expect(start.headers.get("referrer-policy")).toBe("no-referrer");
-    const firstRawToken = cookieValue(start, "verified_student_session");
+    expect(claim.status).toBe(200);
+    expectPrivateHeaders(claim);
+    const firstRawToken = cookieValue(claim, "verified_student_session");
     expect(firstRawToken).toMatch(/^vs1\.v1\./);
-    const startText = await start.clone().text();
-    expect(startText).not.toContain(firstRawToken!);
-    expect(startText).not.toContain(fixture.order.id);
-    const startBody = JSON.parse(startText);
-    const attemptId = startBody.data.attempt.attemptId as string;
-    expect(startBody.data.nextAction).toBe("START_TEST");
-    expect(await prisma.attempt.count()).toBe(1);
+    const claimText = await claim.clone().text();
+    expect(claimText).not.toContain(firstRawToken!);
+    expect(claimText).not.toContain(fixture.order.id);
+    expect(JSON.parse(claimText).data).toMatchObject({
+      nextAction: "OPEN_PRE",
+      nextUrl: `/tests/${fixture.test.slug}`,
+      testId: fixture.test.id
+    });
+    expect(await prisma.attempt.count()).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
 
     const stored = await prisma.verifiedStudentSession.findFirstOrThrow();
     expect(stored).toMatchObject({
@@ -321,18 +310,19 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
       }
     });
 
-    const retry = await startCommercialAttempt(
-      commercialRequest(fixture, operationId),
+    const retry = await claimCommercialAccess(
+      commercialRequest(fixture, operationId, "claim-access"),
       commercialContext(fixture)
     );
     expect(retry.status).toBe(200);
     expect((await retry.clone().json()).data).toMatchObject({
-      nextAction: "RESUME_TEST",
-      nextUrl: `/attempts/${attemptId}`
+      nextAction: "OPEN_PRE",
+      nextUrl: `/tests/${fixture.test.slug}`
     });
     const currentRawToken = cookieValue(retry, "verified_student_session");
     expect(currentRawToken).toMatch(/^vs1\.v1\./);
     expect(currentRawToken).not.toBe(firstRawToken);
+    expect(await retry.text()).not.toContain(currentRawToken!);
     const rotated = await prisma.verifiedStudentSession.findFirstOrThrow();
     expect(rotated).toMatchObject({
       id: stored.id,
@@ -342,71 +332,32 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     });
     expect(await service.resolve(firstRawToken!)).toMatchObject({ status: "NOT_FOUND" });
     expect(await service.resolve(currentRawToken!)).toMatchObject({ status: "RESOLVED", tokenGeneration: 2 });
-    expect(await prisma.attempt.count()).toBe(1);
+    expect(await prisma.attempt.count()).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
 
-    const staleRead = await readAttempt(
-      destinationRequest("GET", `/api/attempts/${attemptId}`, firstRawToken!),
-      attemptContext(attemptId)
-    );
-    expect(staleRead.status).toBe(401);
-    const currentRead = await readAttempt(
-      destinationRequest("GET", `/api/attempts/${attemptId}`, currentRawToken!),
-      attemptContext(attemptId)
-    );
-    expect(currentRead.status).toBe(200);
-    const currentBody = await currentRead.json();
-    const snapshotQuestionId = currentBody.data.attempt.questions[0].snapshotQuestionId as string;
-    const saved = await saveAnswer(
-      destinationRequest("POST", `/api/attempts/${attemptId}/answers`, currentRawToken!, {
-        snapshotQuestionId,
-        selectedAnswer: "accepted"
-      }),
-      attemptContext(attemptId)
-    );
-    expect(saved.status).toBe(200);
-    expect(await prisma.answer.count()).toBe(1);
-
-    const resumeOperation = randomUUID();
-    const resume = await startCommercialAttempt(
-      commercialRequest(fixture, resumeOperation),
+    const compatibility = await startCommercialAttempt(
+      commercialRequest(fixture, randomUUID(), "start-attempt"),
       commercialContext(fixture)
     );
-    expect(resume.status).toBe(200);
-    expect((await resume.clone().json()).data).toMatchObject({
-      nextAction: "RESUME_TEST",
-      nextUrl: `/attempts/${attemptId}`
+    expect(compatibility.status).toBe(200);
+    expect((await compatibility.clone().json()).data).toMatchObject({
+      nextAction: "OPEN_PRE",
+      nextUrl: `/tests/${fixture.test.slug}`,
+      testId: fixture.test.id
     });
-    const resumeToken = cookieValue(resume, "verified_student_session")!;
-    expect(await prisma.attempt.count()).toBe(1);
-    expect(await prisma.answer.count()).toBe(1);
-
-    const completed = await completeAttempt(
-      destinationRequest("POST", `/api/attempts/${attemptId}/complete`, resumeToken),
-      attemptContext(attemptId)
-    );
-    expect(completed.status).toBe(200);
-    const result = await readResult(
-      destinationRequest("GET", `/api/results/${attemptId}`, resumeToken),
-      attemptContext(attemptId)
-    );
-    expect(result.status).toBe(200);
-
-    const beforeView = await businessCounts();
-    const view = await startCommercialAttempt(
-      commercialRequest(fixture, randomUUID()),
-      commercialContext(fixture)
-    );
-    expect(view.status).toBe(200);
-    expect((await view.clone().json()).data).toMatchObject({
-      nextAction: "VIEW_RESULT",
-      nextUrl: `/results/${attemptId}`
-    });
-    expect(await businessCounts()).toEqual(beforeView);
+    const compatibilityRawToken = cookieValue(compatibility, "verified_student_session");
+    expect(compatibilityRawToken).toMatch(/^vs1\.v1\./);
+    expect((await compatibility.text())).not.toContain(compatibilityRawToken!);
+    expect(await prisma.attempt.count()).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
     const eventTypes = (await prisma.eventLog.findMany({ select: { eventType: true } }))
       .map((event) => event.eventType.toLowerCase());
     expect(eventTypes.some((eventType) =>
       eventType.includes("verified") || eventType.includes("session_issuer")
     )).toBe(false);
+    expect(eventTypes).not.toContain("attempt_started");
     expect(await prisma.analyticsEvent.count()).toBe(0);
   });
 
@@ -532,7 +483,7 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     expectPrivateHeaders(start);
     expect(nextCookieState.values.get("student_session")).toBeDefined();
     expect(await prisma.verifiedStudentSession.count()).toBe(0);
-    expect(await prisma.attempt.count()).toBe(1);
+    expect(await prisma.attempt.count()).toBe(0);
   });
 
   it("preserves shadow and enforce issuance with valid operation UUIDs", async () => {
@@ -546,8 +497,6 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     expect(await prisma.verifiedStudentSession.count()).toBe(1);
 
     await prisma.verifiedStudentSession.deleteMany();
-    await prisma.attempt.deleteMany();
-    await prisma.access.update({ where: { id: fixture.access.id }, data: { attemptsAvailable: 1 } });
     nextCookieState.values.delete("student_session");
     process.env.VERIFIED_COMMERCIAL_SESSION_MODE = "enforce";
     const enforce = await startCommercialAttempt(commercialRequest(fixture), commercialContext(fixture));
@@ -555,6 +504,7 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     expect(cookieValue(enforce, "verified_student_session")).toMatch(/^vs1\.v1\./);
     expect(nextCookieState.values.get("student_session")).toBeUndefined();
     expect(await prisma.verifiedStudentSession.count()).toBe(1);
+    expect(await prisma.attempt.count()).toBe(0);
   });
 
   it("keeps generic enforce Orders compatible without an operation key on both claim surfaces", async () => {
@@ -579,7 +529,7 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     expect(cookieValue(start, "verified_student_session")).toBeNull();
     expect(nextCookieState.values.get("student_session")).toBeDefined();
     expect(await prisma.verifiedStudentSession.count()).toBe(0);
-    expect(await prisma.attempt.count()).toBe(1);
+    expect(await prisma.attempt.count()).toBe(0);
     expectPrivateHeaders(start);
     const body = await start.text();
     expect(body).not.toContain("COMMERCIAL_ORDER_CLAIM");

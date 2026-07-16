@@ -1,3 +1,4 @@
+import { randomUUID } from "node:crypto";
 import { expect, test } from "@playwright/test";
 import { PrismaClient } from "@prisma/client";
 import { lookupTokenMatches } from "@/lib/commercial/security";
@@ -34,6 +35,7 @@ test.afterAll(async () => {
   });
   const paymentAttempts = await prisma.commercialPaymentAttempt.findMany({ where: { commercialOrderId: { in: orders.map((order) => order.id) } }, select: { id: true } });
   await prisma.commercialPaymentEvent.deleteMany({ where: { commercialPaymentAttemptId: { in: paymentAttempts.map((attempt) => attempt.id) } } });
+  if (user) await prisma.verifiedStudentSession.deleteMany({ where: { userId: user.id } });
   await prisma.access.deleteMany({ where: { commercialOrderId: { in: orders.map((order) => order.id) } } });
   await prisma.commercialPaymentAttempt.deleteMany({ where: { id: { in: paymentAttempts.map((attempt) => attempt.id) } } });
   await prisma.commercialOrder.deleteMany({ where: { id: { in: orders.map((order) => order.id) } } });
@@ -143,7 +145,13 @@ test("concurrent order route responses set interchangeable valid cookies", async
   expect(lookupTokenMatches(browserCookie?.value, stored.lookupTokenHash)).toBe(true);
 });
 
-test("commercial checkout returns, claims access, and resumes the existing attempt", async ({ page }) => {
+test("commercial checkout claims Access before the explicit verified Attempt start", async ({ page }) => {
+  const commercialPosts: string[] = [];
+  page.on("request", (request) => {
+    if (request.method() === "POST" && request.url().includes("/api/commercial/orders/")) {
+      commercialPosts.push(new URL(request.url()).pathname);
+    }
+  });
   await page.goto(`/tests/${testSlug}`);
   const checkout = page.locator("section.subpanel").filter({ has: page.getByRole("heading", { name: "Тестовая оплата" }) });
   await expect(checkout).toContainText("10.00 BYN");
@@ -163,17 +171,59 @@ test("commercial checkout returns, claims access, and resumes the existing attem
 
   await expect(page).toHaveURL(/commercialOrder=.*paymentReturn=1/);
   await expect(checkout).toContainText("Оплата подтверждена");
-  await checkout.getByRole("button", { name: "Начать тест" }).click();
+  const paidOrderPublicId = new URL(page.url()).searchParams.get("commercialOrder");
+  expect(paidOrderPublicId).toBeTruthy();
+  const paidUser = await prisma.user.findUniqueOrThrow({ where: { email }, select: { id: true } });
+  const paidAccess = await prisma.access.findFirstOrThrow({ where: { userId: paidUser.id, testId } });
+  await expect(checkout.getByRole("button", { name: "Перейти к началу" })).toBeVisible();
+
+  const claimResponsePromise = page.waitForResponse((response) =>
+    response.url().endsWith(`/api/commercial/orders/${paidOrderPublicId}/claim-access`) &&
+    response.request().method() === "POST"
+  );
+  await checkout.getByRole("button", { name: "Перейти к началу" }).click();
+  const claimResponse = await claimResponsePromise;
+  expect(claimResponse.ok()).toBe(true);
+  await expect(page).toHaveURL(new RegExp(`/tests/${testSlug}$`));
+  expect(commercialPosts.some((path) => path.endsWith("/claim-access"))).toBe(true);
+  expect(commercialPosts.some((path) => path.endsWith("/start-attempt"))).toBe(false);
+
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(0);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(1);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(0);
+
+  const legacy = await page.request.post(`/api/commercial/orders/${paidOrderPublicId}/start-attempt`, {
+    headers: {
+      origin: "http://localhost:3000",
+      "Idempotency-Key": randomUUID()
+    }
+  });
+  expect(legacy.ok()).toBe(true);
+  expect((await legacy.json()).data).toMatchObject({
+    nextAction: "OPEN_PRE",
+    nextUrl: `/tests/${testSlug}`,
+    testId
+  });
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(0);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(1);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(0);
+
+  const verifiedPanel = page.locator("section.subpanel").filter({ has: page.getByRole("button", { name: "Начать или продолжить тест" }) });
+  const explicitStartResponse = page.waitForResponse((response) =>
+    response.url().endsWith("/api/attempts/start") && response.request().method() === "POST"
+  );
+  await verifiedPanel.getByRole("button", { name: "Начать или продолжить тест" }).click();
+  expect((await explicitStartResponse).ok()).toBe(true);
   await expect(page).toHaveURL(/\/attempts\//);
 
   await expect.poll(() => prisma.access.count({ where: { user: { email }, testId } })).toBe(1);
-  await page.goto(`/tests/${testSlug}`);
-  const reopened = page.locator("section.subpanel").filter({ has: page.getByRole("heading", { name: "Тестовая оплата" }) });
-  await reopened.locator('input[type="email"]').fill(email);
-  await reopened.locator('input[type="checkbox"]').check();
-  await reopened.getByRole("button", { name: /Перейти к оплате/ }).click();
-  await expect(reopened.getByRole("button", { name: "Продолжить тест" })).toBeVisible();
-  await reopened.getByRole("button", { name: "Продолжить тест" }).click();
-  await expect(page).toHaveURL(/\/attempts\//);
-  await expect.poll(() => prisma.access.count({ where: { user: { email }, testId } })).toBe(1);
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId, status: "STARTED" } })).toBe(1);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(0);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(1);
+
+  await page.reload();
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(1);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(0);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(1);
+
 });
