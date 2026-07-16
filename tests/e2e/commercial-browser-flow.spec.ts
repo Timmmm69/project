@@ -147,9 +147,13 @@ test("concurrent order route responses set interchangeable valid cookies", async
 
 test("commercial checkout claims Access before the explicit verified Attempt start", async ({ page }) => {
   const commercialPosts: string[] = [];
+  const attemptStartPosts: string[] = [];
   page.on("request", (request) => {
     if (request.method() === "POST" && request.url().includes("/api/commercial/orders/")) {
       commercialPosts.push(new URL(request.url()).pathname);
+    }
+    if (request.method() === "POST" && request.url().endsWith("/api/attempts/start")) {
+      attemptStartPosts.push(new URL(request.url()).pathname);
     }
   });
   await page.goto(`/tests/${testSlug}`);
@@ -192,6 +196,65 @@ test("commercial checkout claims Access before the explicit verified Attempt sta
   expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(1);
   expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(0);
 
+  const prestart = page.locator("section.prestart-surface");
+  const prestartHeading = page.getByRole("heading", { name: "Перед началом попытки" });
+  const startButton = page.getByRole("button", {
+    name: "Начать единственную попытку и запустить непрерывный таймер на 120 минут"
+  });
+  const cancelButton = page.getByRole("button", { name: "Вернуться без старта" });
+  await expect(prestartHeading).toBeFocused();
+  await expect(prestart).toContainText("Это единственная попытка по данной покупке.");
+  await expect(prestart).toContainText("После старта непрерывно идёт 120 минут. Паузы нет.");
+  await expect(prestart).toContainText("Закрытие страницы, вкладки или браузера не останавливает время.");
+  await expect(prestart).toContainText("После завершения показывается первичный результат: общий, Part A и Part B.");
+  await expect(page.getByText("Тестовая оплата")).toHaveCount(0);
+  await expect(page.getByText("Что входит")).toHaveCount(0);
+  await expect(page.getByText("Как проходит тест")).toHaveCount(0);
+  await expect(page.getByText("Начать или продолжить тест")).toHaveCount(0);
+  await expect(page.getByText(/auto|автосохран/i)).toHaveCount(0);
+  await expect(page.getByText(/Осталось|Таймер/i)).toHaveCount(0);
+
+  await page.keyboard.press("Enter");
+  expect(attemptStartPosts).toHaveLength(0);
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(0);
+  await page.keyboard.press("Tab");
+  await expect(startButton).toBeFocused();
+  await page.keyboard.press("Tab");
+  await expect(cancelButton).toBeFocused();
+
+  const surfaceBox = await prestart.boundingBox();
+  expect(surfaceBox).not.toBeNull();
+  expect(surfaceBox!.width).toBeLessThanOrEqual(761);
+  expect(Math.abs(surfaceBox!.x - ((await page.viewportSize())!.width - surfaceBox!.width) / 2)).toBeLessThanOrEqual(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+
+  await cancelButton.click();
+  await expect(page).toHaveURL(new RegExp(`/tests/${testSlug}\\?view=product$`));
+  await expect(page.getByText("Доступ готов. Попытка ещё не начата.")).toBeVisible();
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(0);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(1);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(0);
+  await page.getByRole("link", { name: "Перейти к началу" }).click();
+  await expect(page).toHaveURL(new RegExp(`/tests/${testSlug}$`));
+
+  await page.setViewportSize({ width: 375, height: 812 });
+  const mobileStart = page.getByRole("button", {
+    name: "Начать единственную попытку и запустить непрерывный таймер на 120 минут"
+  });
+  const mobileCancel = page.getByRole("button", { name: "Вернуться без старта" });
+  const mobileStartBox = await mobileStart.boundingBox();
+  const mobileCancelBox = await mobileCancel.boundingBox();
+  expect(mobileStartBox).not.toBeNull();
+  expect(mobileCancelBox).not.toBeNull();
+  expect(mobileStartBox!.y).toBeLessThan(mobileCancelBox!.y);
+  expect(Math.abs(mobileStartBox!.width - mobileCancelBox!.width)).toBeLessThanOrEqual(2);
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await page.setViewportSize({ width: 1280, height: 720 });
+  const cdp = await page.context().newCDPSession(page);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+
   const legacy = await page.request.post(`/api/commercial/orders/${paidOrderPublicId}/start-attempt`, {
     headers: {
       origin: "http://localhost:3000",
@@ -208,11 +271,63 @@ test("commercial checkout claims Access before the explicit verified Attempt sta
   expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(1);
   expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(0);
 
-  const verifiedPanel = page.locator("section.subpanel").filter({ has: page.getByRole("button", { name: "Начать или продолжить тест" }) });
+  const restoredAttemptId = randomUUID();
+  await page.route("**/api/attempts/start", async (route) => {
+    await route.fulfill({
+      contentType: "application/json",
+      json: {
+        success: true,
+        data: {
+          nextAction: "OPEN_ATTEMPT",
+          nextUrl: `/attempts/${restoredAttemptId}`,
+          restored: true
+        }
+      }
+    });
+  });
+  const requestsBeforeRestored = attemptStartPosts.length;
+  await page.getByRole("button", {
+    name: "Начать единственную попытку и запустить непрерывный таймер на 120 минут"
+  }).click();
+  await expect(page.getByRole("heading", { name: "Попытка уже началась" })).toBeVisible();
+  await expect(page.getByText("Новая попытка не создаётся. Время продолжает идти с первоначального старта.")).toBeVisible();
+  await expect(page.getByRole("button", { name: "Продолжить попытку" })).toBeVisible();
+  expect(attemptStartPosts).toHaveLength(requestsBeforeRestored + 1);
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(0);
+  await page.unroute("**/api/attempts/start");
+  await page.reload();
+
+  await page.route("**/api/attempts/start", async (route) => {
+    await new Promise((resolve) => setTimeout(resolve, 250));
+    await route.fulfill({
+      status: 500,
+      contentType: "application/json",
+      json: { success: false, error: "RAW_INTERNAL_FAILURE" }
+    });
+  });
+  const requestsBeforeFailure = attemptStartPosts.length;
+  const failureStart = page.getByRole("button", {
+    name: "Начать единственную попытку и запустить непрерывный таймер на 120 минут"
+  });
+  await failureStart.evaluate((button) => {
+    (button as HTMLButtonElement).click();
+    (button as HTMLButtonElement).click();
+  });
+  await expect(page.getByRole("status")).toHaveText("Запускаем попытку…");
+  await expect(failureStart).toBeDisabled();
+  await expect(page.getByRole("button", { name: "Вернуться без старта" })).toBeDisabled();
+  const startError = page.locator(".prestart-error");
+  await expect(startError).toHaveText("Не удалось запустить попытку. Система проверит, не была ли она уже создана. Повторите действие.");
+  await expect(startError).toBeFocused();
+  await expect(page.getByText("RAW_INTERNAL_FAILURE")).toHaveCount(0);
+  expect(attemptStartPosts).toHaveLength(requestsBeforeFailure + 1);
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(0);
+  await page.unroute("**/api/attempts/start");
+
   const explicitStartResponse = page.waitForResponse((response) =>
     response.url().endsWith("/api/attempts/start") && response.request().method() === "POST"
   );
-  await verifiedPanel.getByRole("button", { name: "Начать или продолжить тест" }).click();
+  await page.getByRole("button", { name: "Проверить и повторить" }).click();
   const explicitStart = await explicitStartResponse;
   expect(explicitStart.ok()).toBe(true);
   await expect(page).toHaveURL(/\/attempts\/[0-9a-f-]{36}$/);
@@ -232,6 +347,10 @@ test("commercial checkout claims Access before the explicit verified Attempt sta
   expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(0);
   expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(1);
   expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } })).toEqual(startedBeforeReentry);
+
+  await page.goBack();
+  await expect(page).toHaveURL(new RegExp(`${attemptUrl}$`));
+  await expect(page.getByRole("heading", { name: "Перед началом попытки" })).toHaveCount(0);
 
   const repeatedStart = await page.request.post("/api/attempts/start", { data: { testId } });
   expect(repeatedStart.ok()).toBe(true);

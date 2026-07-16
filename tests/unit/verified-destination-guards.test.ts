@@ -448,11 +448,23 @@ describe("ACC-01A verified destination guard", () => {
     for (const spy of consoleSpies) spy.mockRestore();
   });
 
-  it("34. public Test page keeps catalog content outside the private authorization branch", () => {
+  it("34. public Test page resolves verified entry after public serialization and gates dedicated PRE", () => {
     const page = readFileSync(join(process.cwd(), "src/app/(public)/tests/[slug]/page.tsx"), "utf8");
-    expect(page).toContain("serializePublicTest(test)");
-    expect(page.indexOf("serializePublicTest(test)")).toBeLessThan(page.indexOf("verifiedPreAuthorized"));
+    const publicSerializationIndex = page.indexOf("serializePublicTest(test)");
+    const entryResolutionIndex = page.indexOf("resolveVerifiedStudentEntryDestination({ testSlug: slug })");
+
+    expect(publicSerializationIndex).not.toBe(-1);
+    expect(entryResolutionIndex).not.toBe(-1);
+    expect(publicSerializationIndex).toBeLessThan(entryResolutionIndex);
+    expect(page).toMatch(/entryResolution\?\.status\s*===\s*"AUTHORIZED"/);
+    expect(page).toMatch(/entryResolution\.nextAction\s*===\s*"OPEN_PRE"/);
+    expect(page).toContain("if (verifiedOpenPre && !verifiedProductView)");
+    expect(page).toContain("<PrestartConfirmation");
     expect(page).toContain("<h1 className=\"page-title\">{publicTest.title}</h1>");
+    expect(page).toContain("Доступ готов. Попытка ещё не начата.");
+    expect(page).toContain("Перейти к началу");
+    expect(page).not.toContain("verifiedPreAuthorized");
+    expect(page).not.toContain("Начать или продолжить тест");
   });
 
   it("35. classifies PRE generic mode without a product as legacy", async () => {
