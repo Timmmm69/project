@@ -1,12 +1,15 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { serializePublicTest } from "@/lib/public-tests/serialize";
 import { commercialLegalConfig, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
 import { CommercialCheckoutForm } from "./commercial-checkout-form";
 import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
 import { parseVerifiedCommercialSessionMode } from "@/server/auth/verified-student-session/config";
-import { authorizeVerifiedStudentDestination } from "@/server/auth/verified-student-session/destination-guard";
+import {
+  resolveVerifiedStudentEntryDestination,
+  type VerifiedStudentEntryResolution
+} from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
 
@@ -67,11 +70,9 @@ export default async function PublicTestPage({ params }: PageProps) {
   isFullCeCt &&= !showCommercialCheckout;
   let verifiedPreAuthorized = false;
   let hideLegacyPrivateControls = false;
+  let entryResolution: VerifiedStudentEntryResolution | null = null;
   try {
-    const authorization = await authorizeVerifiedStudentDestination({ destination: "PRE", testSlug: slug });
-    verifiedPreAuthorized = authorization.status === "AUTHORIZED";
-    hideLegacyPrivateControls = authorization.mode === "enforce" &&
-      authorization.classification === "AUTHENTIC";
+    entryResolution = await resolveVerifiedStudentEntryDestination({ testSlug: slug });
   } catch {
     const authenticTest = isAuthenticRikzRussianExamMode(test.examMode, "CURRENT_TEST");
     try {
@@ -80,6 +81,16 @@ export default async function PublicTestPage({ params }: PageProps) {
     } catch {
       hideLegacyPrivateControls = authenticTest;
     }
+  }
+  if (entryResolution?.status === "AUTHORIZED") {
+    if (entryResolution.nextAction === "OPEN_ATTEMPT" || entryResolution.nextAction === "OPEN_RESULT") {
+      redirect(entryResolution.nextUrl);
+    }
+    verifiedPreAuthorized = true;
+  }
+  if (entryResolution) {
+    hideLegacyPrivateControls = entryResolution.mode === "enforce" &&
+      entryResolution.classification === "AUTHENTIC";
   }
 
   return (

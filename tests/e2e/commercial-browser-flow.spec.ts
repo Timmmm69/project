@@ -213,17 +213,38 @@ test("commercial checkout claims Access before the explicit verified Attempt sta
     response.url().endsWith("/api/attempts/start") && response.request().method() === "POST"
   );
   await verifiedPanel.getByRole("button", { name: "Начать или продолжить тест" }).click();
-  expect((await explicitStartResponse).ok()).toBe(true);
-  await expect(page).toHaveURL(/\/attempts\//);
+  const explicitStart = await explicitStartResponse;
+  expect(explicitStart.ok()).toBe(true);
+  await expect(page).toHaveURL(/\/attempts\/[0-9a-f-]{36}$/);
+  const attemptUrl = new URL(page.url()).pathname;
+  const attemptId = attemptUrl.split("/").at(-1)!;
 
   await expect.poll(() => prisma.access.count({ where: { user: { email }, testId } })).toBe(1);
   expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId, status: "STARTED" } })).toBe(1);
   expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(0);
   expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(1);
 
-  await page.reload();
+  const startedBeforeReentry = await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } });
+
+  await page.goto(`/tests/${testSlug}`);
+  await expect(page).toHaveURL(new RegExp(`${attemptUrl}$`));
   expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(1);
   expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(0);
   expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(1);
+  expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } })).toEqual(startedBeforeReentry);
 
+  const repeatedStart = await page.request.post("/api/attempts/start", { data: { testId } });
+  expect(repeatedStart.ok()).toBe(true);
+  expect(await repeatedStart.json()).toMatchObject({
+    data: {
+      nextAction: "OPEN_ATTEMPT",
+      nextUrl: attemptUrl,
+      attempt: { attemptId },
+      restored: true
+    }
+  });
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(1);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(0);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(1);
+  expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attemptId } })).toEqual(startedBeforeReentry);
 });
