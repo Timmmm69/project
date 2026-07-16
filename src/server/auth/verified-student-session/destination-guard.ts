@@ -12,6 +12,7 @@ import {
 } from "@/server/auth/verified-student-session/config";
 import {
   createVerifiedStudentSessionService,
+  type ResolveVerifiedStudentSessionForEntryResult,
   type ResolveVerifiedStudentSessionResult
 } from "@/server/auth/verified-student-session/service";
 import { VERIFIED_STUDENT_SESSION_COOKIE } from "@/server/auth/verified-student-session/cookies";
@@ -69,7 +70,7 @@ export type VerifiedStudentEntryResolution =
       status: "LEGACY";
       mode: "off" | "shadow" | "enforce";
       classification: DestinationClassification;
-      shadowResult?: "AUTHORIZED" | "VERIFIED_SESSION_REQUIRED" | "VERIFIED_SCOPE_NOT_ALLOWED";
+      shadowResult?: "AUTHORIZED" | "ACCESS_EXPIRED" | "VERIFIED_SESSION_REQUIRED" | "VERIFIED_SCOPE_NOT_ALLOWED";
     }>
   | Readonly<{
       status: "AUTHORIZED";
@@ -78,6 +79,12 @@ export type VerifiedStudentEntryResolution =
       nextAction: VerifiedStudentEntryNextAction;
       nextUrl: string;
       context: VerifiedDestinationAuthorizationContext;
+    }>
+  | Readonly<{
+      status: "BLOCKED";
+      mode: "enforce";
+      classification: "AUTHENTIC";
+      reason: "ACCESS_EXPIRED";
     }>
   | Readonly<{
       status: "REJECTED";
@@ -92,6 +99,10 @@ type DestinationReadClient = Pick<
 >;
 
 type ResolvedSession = Extract<ResolveVerifiedStudentSessionResult, { status: "RESOLVED" }>;
+type EntryResolvedSession = Extract<
+  ResolveVerifiedStudentSessionForEntryResult,
+  { status: "RESOLVED" | "RESOLVED_ACCESS_EXPIRED" }
+>;
 type GuardEvaluation =
   | Readonly<{ status: "AUTHORIZED"; context: VerifiedDestinationAuthorizationContext }>
   | Readonly<{ status: "VERIFIED_SESSION_REQUIRED" | "VERIFIED_SCOPE_NOT_ALLOWED" }>;
@@ -103,6 +114,7 @@ type EntryEvaluation =
       nextUrl: string;
       context: VerifiedDestinationAuthorizationContext;
     }>
+  | Readonly<{ status: "ACCESS_EXPIRED" }>
   | Readonly<{ status: "VERIFIED_SESSION_REQUIRED" | "VERIFIED_SCOPE_NOT_ALLOWED" }>;
 
 type PreTarget = Readonly<{
@@ -191,6 +203,11 @@ export type VerifiedDestinationGuardDependencies = Readonly<{
     rawToken: string,
     transaction?: Prisma.TransactionClient
   ) => Promise<ResolveVerifiedStudentSessionResult>;
+  resolveSessionForEntry?: (
+    rawToken: string,
+    transaction?: Prisma.TransactionClient,
+    now?: Date
+  ) => Promise<ResolveVerifiedStudentSessionForEntryResult>;
   loadTarget?: (
     client: DestinationReadClient,
     target: VerifiedDestinationTarget
@@ -346,7 +363,7 @@ function exactAttemptScopeMatches(
 
 async function recoveryCleanupIsProven(
   client: DestinationReadClient,
-  session: ResolvedSession
+  session: EntryResolvedSession
 ) {
   if (session.source !== "EMAIL_OTP_RECOVERY") return true;
   const recovery = await client.verifiedRecoverySession.findUnique({
@@ -533,7 +550,7 @@ async function loadVerifiedStudentEntryState(
 
 function exactEntryStateMatches(
   target: PreTarget,
-  session: ResolvedSession,
+  session: EntryResolvedSession,
   state: VerifiedStudentEntryState
 ) {
   return target.test.id === session.scope.testId &&
@@ -555,7 +572,7 @@ function exactEntryStateMatches(
 }
 
 function entryContext(
-  session: ResolvedSession,
+  session: EntryResolvedSession,
   state: VerifiedStudentEntryState,
   destination: VerifiedDestination,
   attemptId: string | null
@@ -574,10 +591,10 @@ function entryContext(
 
 function exactEntryDecision(
   target: PreTarget,
-  session: ResolvedSession,
+  session: EntryResolvedSession,
   state: VerifiedStudentEntryState,
   now: Date
-): Extract<EntryEvaluation, { status: "AUTHORIZED" }> | null {
+): Extract<EntryEvaluation, { status: "AUTHORIZED" | "ACCESS_EXPIRED" }> | null {
   if (!exactEntryStateMatches(target, session, state) || state.attempts.length > 1) return null;
 
   const attempt = state.attempts[0] ?? null;
@@ -607,7 +624,8 @@ function exactEntryDecision(
 
   const startWindowOpen = now.getTime() < state.expiresAt.getTime() &&
     (state.startDeadlineAt === null || now.getTime() < state.startDeadlineAt.getTime());
-  if (!startWindowOpen || state.attemptsAvailable !== 1) return null;
+  if (state.attemptsAvailable !== 1) return null;
+  if (!startWindowOpen) return { status: "ACCESS_EXPIRED" };
   return {
     status: "AUTHORIZED",
     nextAction: "OPEN_PRE",
@@ -620,20 +638,23 @@ async function evaluateAuthenticEntry(input: {
   client: DestinationReadClient;
   loadedTarget: LoadedTarget;
   rawToken: string | null;
-  resolveSession: (
+  resolveSessionForEntry: (
     rawToken: string,
-    transaction?: Prisma.TransactionClient
-  ) => Promise<ResolveVerifiedStudentSessionResult>;
+    transaction?: Prisma.TransactionClient,
+    now?: Date
+  ) => Promise<ResolveVerifiedStudentSessionForEntryResult>;
   loadEntryState: (
     client: DestinationReadClient,
-    scope: ResolvedSession["scope"]
+    scope: EntryResolvedSession["scope"]
   ) => Promise<VerifiedStudentEntryState | null>;
   transaction?: Prisma.TransactionClient;
   now: Date;
 }): Promise<EntryEvaluation> {
   if (!input.rawToken) return { status: "VERIFIED_SESSION_REQUIRED" };
-  const resolved = await input.resolveSession(input.rawToken, input.transaction);
-  if (resolved.status !== "RESOLVED") return { status: "VERIFIED_SESSION_REQUIRED" };
+  const resolved = await input.resolveSessionForEntry(input.rawToken, input.transaction, input.now);
+  if (resolved.status !== "RESOLVED" && resolved.status !== "RESOLVED_ACCESS_EXPIRED") {
+    return { status: "VERIFIED_SESSION_REQUIRED" };
+  }
   if (!allowedSources.has(resolved.source)) return { status: "VERIFIED_SCOPE_NOT_ALLOWED" };
   if (!input.loadedTarget || input.loadedTarget.kind !== "PRE") {
     return { status: "VERIFIED_SCOPE_NOT_ALLOWED" };
@@ -677,17 +698,17 @@ export async function resolveVerifiedStudentEntryDestination(
   let evaluation: EntryEvaluation;
   try {
     const config = dependencies.verifiedSessionConfig ?? parseVerifiedStudentSessionConfig(environment);
-    const service = dependencies.resolveSession
+    const service = dependencies.resolveSessionForEntry || dependencies.resolveSession
       ? null
       : createVerifiedStudentSessionService({ client, config });
-    const resolveSession = dependencies.resolveSession ??
-      ((rawToken: string, transaction?: Prisma.TransactionClient) =>
-        service!.resolve(rawToken, transaction));
+    const resolveSessionForEntry = dependencies.resolveSessionForEntry ?? dependencies.resolveSession ??
+      ((rawToken: string, transaction?: Prisma.TransactionClient, now?: Date) =>
+        service!.resolveForEntry(rawToken, transaction, now));
     evaluation = await evaluateAuthenticEntry({
       client: activeClient,
       loadedTarget,
       rawToken: await (dependencies.readCookie ?? readVerifiedCookie)(request),
-      resolveSession,
+      resolveSessionForEntry,
       loadEntryState: dependencies.loadEntryState ?? loadVerifiedStudentEntryState,
       transaction: dependencies.transaction,
       now: (dependencies.clock ?? (() => new Date()))()
@@ -712,6 +733,14 @@ export async function resolveVerifiedStudentEntryDestination(
     };
   }
   if (evaluation.status !== "AUTHORIZED") {
+    if (evaluation.status === "ACCESS_EXPIRED") {
+      return {
+        status: "BLOCKED",
+        mode,
+        classification: "AUTHENTIC",
+        reason: "ACCESS_EXPIRED"
+      };
+    }
     return {
       status: "REJECTED",
       mode,

@@ -718,7 +718,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     }
   );
 
-  it("rejects expired unstarted Access while expired exact active and terminal Attempts remain reachable", async () => {
+  it("presents expired unstarted Access as ACCESS_EXPIRED while exact active and terminal Attempts remain reachable", async () => {
     const unstarted = await createPaidAccess("expired-unstarted@example.test");
     const unstartedSession = await issueSession(unstarted);
     const expiredAt = new Date(now.getTime() - 1);
@@ -727,10 +727,33 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
       data: { expiresAt: expiredAt, startDeadlineAt: expiredAt }
     });
     const unstartedBefore = await counts();
+    const cookie = `verified_student_session=${unstartedSession.rawToken}`;
+    expect(await createVerifiedStudentSessionService({
+      client: prisma,
+      config: verifiedConfig,
+      clock: () => new Date(now)
+    }).resolve(unstartedSession.rawToken)).toEqual({ status: "ACCESS_EXPIRED" });
+    expect(await resolveVerifiedStudentEntryDestination(
+      { testId },
+      request("GET", `/tests/${testSlug}`, { cookie })
+    )).toEqual({
+      status: "BLOCKED",
+      mode: "enforce",
+      classification: "AUTHENTIC",
+      reason: "ACCESS_EXPIRED"
+    });
+    nextCookieState.values.set("verified_student_session", unstartedSession.rawToken);
+    const page = await PublicTestPage({ params: Promise.resolve({ slug: testSlug }) });
+    expect(renderedComponentNames(page)).toContain("PrestartAccessExpired");
+    expect(renderedComponentNames(page)).not.toContain("PrestartConfirmation");
+    expect(renderedComponentNames(page)).not.toContain("CommercialCheckoutForm");
     const rejected = await authenticStart(unstartedSession.rawToken);
-    expect(rejected.status).toBe(401);
-    expect((await rejected.json()).error.code).toBe("VERIFIED_SESSION_REQUIRED");
+    expect(rejected.status).toBe(409);
+    expect((await rejected.json()).error.code).toBe("ACCESS_EXPIRED");
     expect(await counts()).toEqual(unstartedBefore);
+    expect(await prisma.attempt.count({ where: { accessId: unstarted.access.id } })).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: unstarted.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
     expect((await prisma.access.findUniqueOrThrow({ where: { id: unstarted.access.id } })).expiresAt).toEqual(expiredAt);
 
     for (const status of ["STARTED", "COMPLETED", "EXPIRED"] as const) {
@@ -757,6 +780,33 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
       expect(persistedAccess.expiresAt).toEqual(expiredAt);
       expect(persistedAccess.startDeadlineAt).toEqual(expiredAt);
     }
+  });
+
+  it("presents an exact past start deadline as ACCESS_EXPIRED without writes", async () => {
+    const fixture = await createPaidAccess("expired-start-deadline@example.test");
+    const issued = await issueSession(fixture);
+    const pastDeadline = new Date(now.getTime() - 1);
+    await prisma.access.update({
+      where: { id: fixture.access.id },
+      data: { startDeadlineAt: pastDeadline }
+    });
+    const before = await counts();
+    const decision = await resolveVerifiedStudentEntryDestination(
+      { testId },
+      request("GET", `/tests/${testSlug}`, {
+        cookie: `verified_student_session=${issued.rawToken}`
+      })
+    );
+    expect(decision).toEqual({
+      status: "BLOCKED",
+      mode: "enforce",
+      classification: "AUTHENTIC",
+      reason: "ACCESS_EXPIRED"
+    });
+    expect(await counts()).toEqual(before);
+    expect(await prisma.attempt.count({ where: { accessId: fixture.access.id } })).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
   });
 
   it.each(["STARTED", "COMPLETED", "EXPIRED"] as const)(
