@@ -6,6 +6,7 @@ import { requireStudent } from "@/server/auth/student-session";
 import { resolveVerifiedStudentEntryDestination } from "@/server/auth/verified-student-session/destination-guard";
 import {
   finalizeVerifiedDestinationResponse,
+  verifiedEntryBlockedResponse,
   verifiedDestinationRejection,
   verifiedDestinationUnavailable
 } from "@/server/auth/verified-student-session/destination-response";
@@ -44,6 +45,9 @@ export function createAttemptStartHandler(
     }
     if (resolution.status === "REJECTED") {
       return verifiedDestinationRejection(resolution);
+    }
+    if (resolution.status === "BLOCKED") {
+      return verifiedEntryBlockedResponse(resolution);
     }
 
     if (resolution.status === "AUTHORIZED" && resolution.nextAction === "OPEN_ATTEMPT") {
@@ -102,7 +106,7 @@ export function createAttemptStartHandler(
           : {})
       });
 
-      return finalizeVerifiedDestinationResponse(apiSuccess({
+      const response = apiSuccess({
         ...(resolution.status === "AUTHORIZED"
           ? {
               nextAction: "OPEN_ATTEMPT" as const,
@@ -111,7 +115,10 @@ export function createAttemptStartHandler(
           : {}),
         attempt: dependencies.serializeAttempt(result.attempt),
         restored: result.restored
-      }), resolution);
+      });
+      return resolution.status === "AUTHORIZED"
+        ? finalizeVerifiedDestinationResponse(response, resolution)
+        : response;
     } catch (error) {
       const code = error instanceof Error ? error.message : "ATTEMPT_START_FAILED";
       const messages: Record<string, string> = {

@@ -12,7 +12,7 @@ import {
 } from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
-import { PrestartConfirmation } from "./prestart-confirmation";
+import { PrestartAccessExpired, PrestartConfirmation } from "./prestart-confirmation";
 
 export const dynamic = "force-dynamic";
 
@@ -98,6 +98,24 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
   const verifiedOpenPre = entryResolution?.status === "AUTHORIZED" &&
     entryResolution.nextAction === "OPEN_PRE";
   const verifiedProductView = verifiedOpenPre && view === "product";
+  const verifiedAccessExpired = entryResolution?.status === "BLOCKED" &&
+    entryResolution.mode === "enforce" &&
+    entryResolution.classification === "AUTHENTIC" &&
+    entryResolution.reason === "ACCESS_EXPIRED";
+
+  if (verifiedAccessExpired) {
+    return (
+      <main className="page-shell prestart-page stack">
+        <header className="topbar">
+          <Link className="text-link" href="/">
+            Назад к каталогу
+          </Link>
+          <span className="badge accent">{publicTest.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</span>
+        </header>
+        <PrestartAccessExpired />
+      </main>
+    );
+  }
 
   if (verifiedOpenPre && !verifiedProductView) {
     return (

@@ -10,6 +10,7 @@ import {
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import {
   finalizeVerifiedDestinationResponse,
+  verifiedEntryBlockedResponse,
   verifiedDestinationRejection
 } from "@/server/auth/verified-student-session/destination-response";
 import type {
@@ -424,6 +425,26 @@ describe("ACC-01A verified destination guard", () => {
     expect(verifiedDestinationRejection(decision).headers.get("set-cookie")).toBeNull();
   });
 
+  it("returns a fixed private response for an exact blocked entry decision", async () => {
+    const response = verifiedEntryBlockedResponse({
+      status: "BLOCKED",
+      mode: "enforce",
+      classification: "AUTHENTIC",
+      reason: "ACCESS_EXPIRED"
+    });
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(await response.json()).toEqual({
+      success: false,
+      error: {
+        code: "ACCESS_EXPIRED",
+        message: "Attempt cannot be started for this access."
+      }
+    });
+  });
+
   it("31. guard resolves once and never invokes an issuer or rotation path", async () => {
     const resolveSession = vi.fn(async () => resolved());
     await authorizePre({ resolveSession });
@@ -465,6 +486,26 @@ describe("ACC-01A verified destination guard", () => {
     expect(page).toContain("Перейти к началу");
     expect(page).not.toContain("verifiedPreAuthorized");
     expect(page).not.toContain("Начать или продолжить тест");
+  });
+
+  it("associates the focused expired heading with its description without live announcements", () => {
+    const component = readFileSync(
+      join(process.cwd(), "src/app/(public)/tests/[slug]/prestart-confirmation.tsx"),
+      "utf8"
+    );
+    const expiredState = component.slice(component.indexOf("export function PrestartAccessExpired"));
+    const sectionOpeningTag = expiredState.match(/<section[\s\S]*?>/)?.[0] ?? "";
+    const headingOpeningTag = expiredState.match(/<h1[\s\S]*?>/)?.[0] ?? "";
+
+    expect(sectionOpeningTag).toContain('aria-labelledby="prestart-access-expired-title"');
+    expect(sectionOpeningTag).not.toContain("aria-describedby");
+    expect(headingOpeningTag).toContain('id="prestart-access-expired-title"');
+    expect(headingOpeningTag).toContain('aria-describedby="prestart-access-expired-description"');
+    expect(headingOpeningTag).toContain("tabIndex={-1}");
+    expect(expiredState).toContain('id="prestart-access-expired-description"');
+    expect(expiredState).not.toContain('role="alert"');
+    expect(expiredState).not.toContain("aria-live");
+    expect(expiredState.match(/headingRef\.current\?\.focus\(\)/g)).toHaveLength(1);
   });
 
   it("35. classifies PRE generic mode without a product as legacy", async () => {

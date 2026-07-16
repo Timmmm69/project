@@ -316,9 +316,38 @@ describeWithDatabase("verified student session service integration", () => {
     });
   });
 
+  it("keeps common ACCESS_EXPIRED opaque while narrow entry resolution preserves only exact unused scope", async () => {
+    const issued = await service.issue(issueInput);
+    const expiredAt = new Date(now.getTime() - 1);
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { expiresAt: expiredAt, startDeadlineAt: expiredAt }
+    });
+
+    expect(await service.resolve(issued.rawToken)).toEqual({ status: "ACCESS_EXPIRED" });
+    expect(await service.resolveForEntry(issued.rawToken)).toMatchObject({
+      status: "RESOLVED_ACCESS_EXPIRED",
+      sessionId: issued.sessionId,
+      scope: {
+        userId: issueInput.userId,
+        commercialProductId: issueInput.commercialProductId,
+        testId: issueInput.testId,
+        accessId: issueInput.accessId
+      }
+    });
+
+    await prisma.access.update({
+      where: { id: issueInput.accessId },
+      data: { attemptsAvailable: 2 }
+    });
+    expect(await service.resolveForEntry(issued.rawToken)).toEqual({ status: "ACCESS_EXPIRED" });
+  });
+
   it("does not resolve a wrong token", async () => {
     await service.issue(issueInput);
-    expect(await service.resolve(createVerifiedStudentSessionToken("v1"))).toEqual({ status: "NOT_FOUND" });
+    const wrongToken = createVerifiedStudentSessionToken("v1");
+    expect(await service.resolve(wrongToken)).toEqual({ status: "NOT_FOUND" });
+    expect(await service.resolveForEntry(wrongToken)).toEqual({ status: "NOT_FOUND" });
   });
 
   it("same logical retry keeps one business row", async () => {
@@ -420,6 +449,7 @@ describeWithDatabase("verified student session service integration", () => {
     const issued = await service.issue(issueInput);
     await prisma.access.update({ where: { id: issueInput.accessId }, data: { revokedAt: now } });
     expect(await service.resolve(issued.rawToken)).toEqual({ status: "ACCESS_REVOKED" });
+    expect(await service.resolveForEntry(issued.rawToken)).toEqual({ status: "ACCESS_REVOKED" });
   });
 
   it("makes a session unusable for deleted and non-STUDENT users", async () => {
@@ -517,6 +547,7 @@ describeWithDatabase("verified student session service integration", () => {
     expect(row.tokenGeneration).toBe(1);
     expect(row.expiresAt).toEqual(issued.expiresAt);
     expect(await service.resolve(issued.rawToken)).toEqual({ status: "EXPIRED" });
+    expect(await service.resolveForEntry(issued.rawToken)).toEqual({ status: "EXPIRED" });
   });
 
   it("does not extend TTL or mutate the row on read", async () => {

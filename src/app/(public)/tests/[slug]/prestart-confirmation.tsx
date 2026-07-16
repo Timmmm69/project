@@ -158,3 +158,33 @@ export function PrestartConfirmation({ testId, cancelHref }: Readonly<{
     </section>
   );
 }
+
+export function PrestartAccessExpired() {
+  const headingRef = useRef<HTMLHeadingElement>(null);
+
+  useEffect(() => {
+    headingRef.current?.focus();
+  }, []);
+
+  return (
+    <section
+      aria-labelledby="prestart-access-expired-title"
+      className="panel prestart-surface"
+    >
+      <div className="stack">
+        <h1
+          aria-describedby="prestart-access-expired-description"
+          className="page-title prestart-title"
+          id="prestart-access-expired-title"
+          ref={headingRef}
+          tabIndex={-1}
+        >
+          Срок начала попытки истёк
+        </h1>
+        <p className="prestart-error" id="prestart-access-expired-description">
+          Начать попытку по этому доступу нельзя. Обратитесь в поддержку для проверки ситуации.
+        </p>
+      </div>
+    </section>
+  );
+}

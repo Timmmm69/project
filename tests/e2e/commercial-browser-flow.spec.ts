@@ -255,6 +255,81 @@ test("commercial checkout claims Access before the explicit verified Attempt sta
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
   await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
 
+  await page.addInitScript(() => {
+    document.addEventListener("focusin", (event) => {
+      if (!(event.target instanceof HTMLElement) || event.target.id !== "prestart-access-expired-title") return;
+      const root = document.documentElement;
+      const current = Number(root.dataset.expiredHeadingFocusTransfers ?? "0");
+      root.dataset.expiredHeadingFocusTransfers = String(current + 1);
+    }, true);
+  });
+  const expiredAt = new Date(Date.now() - 1_000);
+  await prisma.access.update({
+    where: { id: paidAccess.id },
+    data: { expiresAt: expiredAt, startDeadlineAt: expiredAt }
+  });
+  const attemptsBeforeExpiredPresentation = await prisma.attempt.count({ where: { userId: paidUser.id, testId } });
+  const startPostsBeforeExpiredPresentation = attemptStartPosts.length;
+  await page.reload();
+  const expiredHeading = page.getByRole("heading", { name: "Срок начала попытки истёк" });
+  const expiredDescription = page.locator("#prestart-access-expired-description");
+  const expiredSurface = page.locator('section[aria-labelledby="prestart-access-expired-title"]');
+  await expect(expiredHeading).toBeFocused();
+  await expect(expiredHeading).toHaveAttribute("tabindex", "-1");
+  await expect(expiredHeading).toHaveAttribute(
+    "aria-describedby",
+    "prestart-access-expired-description"
+  );
+  await expect(expiredDescription).toHaveText(
+    "Начать попытку по этому доступу нельзя. Обратитесь в поддержку для проверки ситуации."
+  );
+  await expect(expiredSurface).toHaveAttribute("aria-labelledby", "prestart-access-expired-title");
+  await expect(expiredSurface).not.toHaveAttribute("role", "alert");
+  await expect(expiredSurface).not.toHaveAttribute("aria-live", /.+/);
+  await expect(expiredSurface.locator('[role="alert"], [aria-live]')).toHaveCount(0);
+  await expect(page.locator("html")).toHaveAttribute("data-expired-heading-focus-transfers", "1");
+  await expect(page.getByRole("button", { name: /Начать попытку|Проверить и повторить/ })).toHaveCount(0);
+  await expect(page.getByRole("link", { name: "Обратиться в поддержку" })).toHaveCount(0);
+  await expect(page.getByText("Тестовая оплата")).toHaveCount(0);
+  await expect(page.getByText("RAW_INTERNAL_FAILURE")).toHaveCount(0);
+  const expiredHtml = await page.content();
+  for (const sensitive of [paidUser.id, paidAccess.id, paidOrderPublicId!, testId, "support@example.test"]) {
+    expect(expiredHtml).not.toContain(sensitive);
+  }
+  await page.keyboard.press("Enter");
+  expect(attemptStartPosts).toHaveLength(startPostsBeforeExpiredPresentation);
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(attemptsBeforeExpiredPresentation);
+  await page.reload();
+  await expect(expiredHeading).toBeFocused();
+  await expect(page.locator("html")).toHaveAttribute("data-expired-heading-focus-transfers", "1");
+  expect(await prisma.attempt.count({ where: { userId: paidUser.id, testId } })).toBe(attemptsBeforeExpiredPresentation);
+  expect((await prisma.access.findUniqueOrThrow({ where: { id: paidAccess.id } })).attemptsAvailable).toBe(1);
+  expect(await prisma.eventLog.count({ where: { actorUserId: paidUser.id, eventType: "attempt_started" } })).toBe(0);
+
+  for (const viewport of [
+    { width: 390, height: 844 },
+    { width: 320, height: 568 }
+  ]) {
+    await page.setViewportSize(viewport);
+    await expect(expiredHeading).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  }
+  await page.setViewportSize({ width: 640, height: 720 });
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 2 });
+  expect(await page.evaluate(() => document.documentElement.scrollWidth <= document.documentElement.clientWidth)).toBe(true);
+  await cdp.send("Emulation.setPageScaleFactor", { pageScaleFactor: 1 });
+
+  await prisma.access.update({
+    where: { id: paidAccess.id },
+    data: {
+      expiresAt: paidAccess.expiresAt,
+      startDeadlineAt: paidAccess.startDeadlineAt
+    }
+  });
+  await page.setViewportSize({ width: 1280, height: 720 });
+  await page.reload();
+  await expect(page.getByRole("heading", { name: "Перед началом попытки" })).toBeFocused();
+
   const legacy = await page.request.post(`/api/commercial/orders/${paidOrderPublicId}/start-attempt`, {
     headers: {
       origin: "http://localhost:3000",

@@ -11,7 +11,10 @@ import {
   type VerifiedStudentEntryResolution,
   type VerifiedStudentEntryState
 } from "@/server/auth/verified-student-session/destination-guard";
-import type { ResolveVerifiedStudentSessionResult } from "@/server/auth/verified-student-session/service";
+import type {
+  ResolveVerifiedStudentSessionForEntryResult,
+  ResolveVerifiedStudentSessionResult
+} from "@/server/auth/verified-student-session/service";
 
 const ids = {
   session: "11111111-1111-4111-8111-111111111111",
@@ -142,7 +145,7 @@ function authenticAttemptTarget(status: "STARTED" | "COMPLETED" | "EXPIRED", att
 function resolverDependencies(input: {
   mode?: "off" | "shadow" | "enforce";
   cookie?: string | null;
-  resolution?: ResolveVerifiedStudentSessionResult;
+  resolution?: ResolveVerifiedStudentSessionForEntryResult;
   state?: VerifiedStudentEntryState | null;
   target?: ReturnType<typeof authenticTarget> & { classification: "AUTHENTIC" | "GENERIC" };
 } = {}): VerifiedDestinationGuardDependencies {
@@ -155,7 +158,13 @@ function resolverDependencies(input: {
     },
     clock: () => now,
     readCookie: vi.fn(async () => input.cookie === undefined ? "verified-token" : input.cookie),
-    resolveSession: vi.fn(async () => input.resolution ?? resolved()),
+    resolveSession: vi.fn(async () => {
+      const resolution = input.resolution ?? resolved();
+      return resolution.status === "RESOLVED_ACCESS_EXPIRED"
+        ? { status: "ACCESS_EXPIRED" } as const
+        : resolution;
+    }),
+    resolveSessionForEntry: vi.fn(async () => input.resolution ?? resolved()),
     loadTarget: vi.fn(async () => (input.target ?? authenticTarget()) as never),
     loadEntryState: vi.fn(async () => input.state === undefined ? entryState() : input.state)
   };
@@ -177,6 +186,16 @@ describe("verified PRE entry destination resolver", () => {
       nextUrl: "/tests/canonical-test",
       context: { destination: "PRE", attemptId: null }
     });
+  });
+
+  it("passes one captured server time through session and entry-state evaluation", async () => {
+    const dependencies = resolverDependencies();
+    expect(await resolveVerifiedStudentEntryDestination(
+      { testId: ids.test },
+      undefined,
+      dependencies
+    )).toMatchObject({ status: "AUTHORIZED", nextAction: "OPEN_PRE" });
+    expect(dependencies.resolveSessionForEntry).toHaveBeenCalledWith("verified-token", undefined, now);
   });
 
   it.each([
@@ -215,13 +234,46 @@ describe("verified PRE entry destination resolver", () => {
     });
   });
 
-  it("rejects expired unstarted Access", async () => {
-    expect(await resolveEntry({
+  it.each([
+    ["Access expiry", {
+      expiresAt: new Date("2026-07-16T09:59:59.000Z"),
+      startDeadlineAt: new Date("2026-08-16T10:00:00.000Z")
+    }],
+    ["start deadline", {
+      expiresAt: new Date("2026-08-16T10:00:00.000Z"),
+      startDeadlineAt: new Date("2026-07-16T09:59:59.000Z")
+    }]
+  ] as const)("returns the non-authorizing ACCESS_EXPIRED block for exact %s", async (_label, dates) => {
+    const decision = await resolveEntry({
       state: entryState({
-        expiresAt: new Date("2026-07-16T09:59:59.000Z"),
-        startDeadlineAt: new Date("2026-07-16T09:59:59.000Z")
+        expiresAt: dates.expiresAt,
+        startDeadlineAt: dates.startDeadlineAt
       })
-    })).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+    });
+    expect(decision).toEqual({
+      status: "BLOCKED",
+      mode: "enforce",
+      classification: "AUTHENTIC",
+      reason: "ACCESS_EXPIRED"
+    });
+    expect(JSON.stringify(decision)).not.toMatch(new RegExp(Object.values(ids).join("|")));
+  });
+
+  it("uses the narrow session result for an exact expired Access while the common resolver stays opaque", async () => {
+    const expiredResolution: ResolveVerifiedStudentSessionForEntryResult = {
+      ...resolved(),
+      status: "RESOLVED_ACCESS_EXPIRED"
+    };
+    const dependencies = resolverDependencies({
+      resolution: expiredResolution,
+      state: entryState({ expiresAt: new Date("2026-07-16T09:59:59.000Z") })
+    });
+    expect(await resolveVerifiedStudentEntryDestination(
+      { testId: ids.test },
+      undefined,
+      dependencies
+    )).toMatchObject({ status: "BLOCKED", reason: "ACCESS_EXPIRED" });
+    expect(await dependencies.resolveSession?.("verified-token")).toEqual({ status: "ACCESS_EXPIRED" });
   });
 
   it.each([
@@ -307,7 +359,10 @@ describe("verified PRE entry destination resolver", () => {
 
   it.each([
     ["missing", null, resolved()],
-    ["invalid", "invalid-token", { status: "INVALID_TOKEN" } as const]
+    ["invalid", "invalid-token", { status: "INVALID_TOKEN" } as const],
+    ["expired verified session", "expired-session", { status: "EXPIRED" } as const],
+    ["revoked Access", "revoked-access", { status: "ACCESS_REVOKED" } as const],
+    ["scope mismatch", "scope-mismatch", { status: "SCOPE_MISMATCH" } as const]
   ])("rejects a %s verified cookie in enforce", async (_label, cookie, resolution) => {
     expect(await resolveEntry({ cookie, resolution })).toMatchObject({
       status: "REJECTED",
@@ -401,6 +456,9 @@ describe("authentic final-start route entry resolution", () => {
     const { dependencies, startAttempt } = routeDependencies(authorizedResolution("OPEN_PRE"));
     const response = await createAttemptStartHandler(dependencies)(routeRequest());
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).toHaveBeenCalledOnce();
     expect(await response.json()).toMatchObject({
       data: {
@@ -420,7 +478,44 @@ describe("authentic final-start route entry resolution", () => {
     });
     const response = await createAttemptStartHandler(dependencies)(routeRequest());
     expect(response.status).toBe(403);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).not.toHaveBeenCalled();
+    expect(await response.json()).toEqual({
+      success: false,
+      error: {
+        code: "VERIFIED_SCOPE_NOT_ALLOWED",
+        message: "Verified student session scope is not allowed."
+      }
+    });
+  });
+
+  it("does not call the start service for ACCESS_EXPIRED", async () => {
+    const { dependencies, startAttempt } = routeDependencies({
+      status: "BLOCKED",
+      mode: "enforce",
+      classification: "AUTHENTIC",
+      reason: "ACCESS_EXPIRED"
+    });
+    const response = await createAttemptStartHandler(dependencies)(routeRequest());
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(startAttempt).not.toHaveBeenCalled();
+    const body = await response.json();
+    expect(body).toEqual({
+      success: false,
+      error: {
+        code: "ACCESS_EXPIRED",
+        message: "Attempt cannot be started for this access."
+      }
+    });
+    const serialized = JSON.stringify(body);
+    for (const sensitive of [ids.user, ids.product, ids.test, ids.access, ids.attempt]) {
+      expect(serialized).not.toContain(sensitive);
+    }
   });
 
   it("keeps the generic legacy response contract unchanged", async () => {
@@ -431,6 +526,9 @@ describe("authentic final-start route entry resolution", () => {
     });
     const response = await createAttemptStartHandler(dependencies)(routeRequest("student@example.test"));
     expect(response.status).toBe(200);
+    expect(response.headers.get("cache-control")).toBeNull();
+    expect(response.headers.get("referrer-policy")).toBeNull();
+    expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).toHaveBeenCalledOnce();
     expect(await response.json()).toEqual({
       success: true,
