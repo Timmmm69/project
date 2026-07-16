@@ -609,6 +609,97 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     }
   );
 
+  it("rejects an unstarted Access with an excess counter without writes or disclosure", async () => {
+    const fixture = await createPaidAccess("counter-two-unstarted@example.test");
+    await prisma.access.update({
+      where: { id: fixture.access.id },
+      data: { attemptsAvailable: 2 }
+    });
+    const issued = await issueSession(fixture);
+    const before = await counts();
+    const cookie = `verified_student_session=${issued.rawToken}`;
+
+    expect(await resolveVerifiedStudentEntryDestination(
+      { testId },
+      request("GET", `/tests/${testSlug}`, { cookie })
+    )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+    const response = await authenticStart(issued.rawToken);
+    expect(response.status).toBe(403);
+    const bodyText = await response.text();
+    expect(bodyText).toContain("VERIFIED_SCOPE_NOT_ALLOWED");
+    for (const sensitive of [issued.rawToken, fixture.user.email, fixture.order.id, fixture.access.id, productId]) {
+      expect(bodyText).not.toContain(sensitive);
+    }
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(await counts()).toEqual(before);
+    expect(await prisma.attempt.count({ where: { accessId: fixture.access.id } })).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(2);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
+  });
+
+  it("rejects an exact active Attempt with an unconsumed counter on every authentic entry surface", async () => {
+    const fixture = await createPaidAccess("counter-one-active@example.test");
+    const attempt = await createAuthenticAttempt(fixture, "STARTED");
+    const issued = await issueSession(fixture);
+    const cookie = `verified_student_session=${issued.rawToken}`;
+    const beforeAttempt = await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
+    const before = await counts();
+
+    expect(await resolveVerifiedStudentEntryDestination(
+      { testId },
+      request("GET", `/tests/${testSlug}`, { cookie })
+    )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+    expect(await authorizeVerifiedStudentDestination(
+      { destination: "ATT", attemptId: attempt.id },
+      request("GET", `/attempts/${attempt.id}`, { cookie })
+    )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+    const response = await authenticStart(issued.rawToken);
+    expect(response.status).toBe(403);
+    expect(response.headers.get("set-cookie")).toBeNull();
+    const bodyText = await response.text();
+    for (const sensitive of [issued.rawToken, fixture.user.email, fixture.order.id, fixture.access.id, productId]) {
+      expect(bodyText).not.toContain(sensitive);
+    }
+
+    expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(beforeAttempt);
+    expect(await counts()).toEqual(before);
+    expect(await prisma.answer.count({ where: { attemptId: attempt.id } })).toBe(0);
+    expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    expect(await prisma.eventLog.count({ where: { eventType: "attempt_started" } })).toBe(0);
+  });
+
+  it.each(["COMPLETED", "EXPIRED"] as const)(
+    "rejects an exact %s Attempt with an unconsumed counter without changing Result state",
+    async (status) => {
+      const fixture = await createPaidAccess(`counter-one-${status.toLowerCase()}@example.test`);
+      const attempt = await createAuthenticAttempt(fixture, status);
+      const issued = await issueSession(fixture);
+      const cookie = `verified_student_session=${issued.rawToken}`;
+      const beforeAttempt = await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
+      const before = await counts();
+
+      expect(await resolveVerifiedStudentEntryDestination(
+        { testId },
+        request("GET", `/tests/${testSlug}`, { cookie })
+      )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+      expect(await authorizeVerifiedStudentDestination(
+        { destination: "RES", attemptId: attempt.id },
+        request("GET", `/results/${attempt.id}`, { cookie })
+      )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+      const response = await authenticStart(issued.rawToken);
+      expect(response.status).toBe(403);
+      expect(response.headers.get("set-cookie")).toBeNull();
+      const bodyText = await response.text();
+      for (const sensitive of [issued.rawToken, fixture.user.email, fixture.order.id, fixture.access.id, productId]) {
+        expect(bodyText).not.toContain(sensitive);
+      }
+
+      expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(beforeAttempt);
+      expect(await counts()).toEqual(before);
+      expect((await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } })).attemptsAvailable).toBe(1);
+    }
+  );
+
   it("rejects expired unstarted Access while expired exact active and terminal Attempts remain reachable", async () => {
     const unstarted = await createPaidAccess("expired-unstarted@example.test");
     const unstartedSession = await issueSession(unstarted);
@@ -649,6 +740,49 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
       expect(persistedAccess.startDeadlineAt).toEqual(expiredAt);
     }
   });
+
+  it.each(["STARTED", "COMPLETED", "EXPIRED"] as const)(
+    "rejects expired exact %s scope when the Access counter remains unconsumed",
+    async (status) => {
+      const fixture = await createPaidAccess(`expired-counter-one-${status.toLowerCase()}@example.test`);
+      const attempt = await createAuthenticAttempt(fixture, status);
+      const issued = await issueSession(fixture);
+      const expiredAt = new Date(now.getTime() - 1);
+      await prisma.access.update({
+        where: { id: fixture.access.id },
+        data: { expiresAt: expiredAt, startDeadlineAt: expiredAt }
+      });
+      const cookie = `verified_student_session=${issued.rawToken}`;
+      const destination = status === "STARTED" ? "ATT" : "RES";
+      const path = status === "STARTED" ? `/attempts/${attempt.id}` : `/results/${attempt.id}`;
+      const beforeAttempt = await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } });
+      const before = await counts();
+
+      expect(await createVerifiedStudentSessionService({
+        client: prisma,
+        config: verifiedConfig,
+        clock: () => new Date(now)
+      }).resolve(issued.rawToken)).toEqual({ status: "ACCESS_EXPIRED" });
+      expect(await resolveVerifiedStudentEntryDestination(
+        { testId },
+        request("GET", `/tests/${testSlug}`, { cookie })
+      )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SESSION_REQUIRED" });
+      expect(await authorizeVerifiedStudentDestination(
+        { destination, attemptId: attempt.id },
+        request("GET", path, { cookie })
+      )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SESSION_REQUIRED" });
+      const response = await authenticStart(issued.rawToken);
+      expect(response.status).toBe(401);
+      expect(response.headers.get("set-cookie")).toBeNull();
+
+      expect(await prisma.attempt.findUniqueOrThrow({ where: { id: attempt.id } })).toEqual(beforeAttempt);
+      expect(await counts()).toEqual(before);
+      const persistedAccess = await prisma.access.findUniqueOrThrow({ where: { id: fixture.access.id } });
+      expect(persistedAccess.attemptsAvailable).toBe(1);
+      expect(persistedAccess.expiresAt).toEqual(expiredAt);
+      expect(persistedAccess.startDeadlineAt).toEqual(expiredAt);
+    }
+  );
 
   it.each(["two attempts", "different access", "zero availability", "unsupported status"] as const)(
     "fails closed for ambiguous entry state: %s",
@@ -822,6 +956,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
   it("denies stale, revoked and expired sessions plus revoked Access; current generation works", async () => {
     const fixture = await createPaidAccess("credential-state@example.test");
     const attempt = await createAuthenticAttempt(fixture);
+    await setConsumed(fixture);
     const logical = { sourceReferenceId: randomUUID(), issuanceOperationId: randomUUID() };
     const stale = await issueSession(fixture, "COMMERCIAL_ORDER_CLAIM", logical);
     const current = await issueSession(fixture, "COMMERCIAL_ORDER_CLAIM", logical);
@@ -854,6 +989,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
     for (const source of ["COMMERCIAL_ORDER_CLAIM", "ACCESS_CODE"] as const) {
       const fixture = await createPaidAccess(`${source.toLowerCase()}@example.test`);
       const attempt = await createAuthenticAttempt(fixture);
+      await setConsumed(fixture);
       const issued = await issueSession(fixture, source);
       const response = await readAttemptRoute(
         request("GET", `/api/attempts/${attempt.id}`, {
@@ -999,6 +1135,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
   it("rejected writes have no effects and the guard itself creates no EventLog or analytics rows", async () => {
     const fixture = await createPaidAccess("no-writes@example.test");
     const attempt = await createAuthenticAttempt(fixture);
+    await setConsumed(fixture);
     const beforeRejected = await counts();
     const rejected = await saveAnswerRoute(
       request("POST", `/api/attempts/${attempt.id}/answers`, {

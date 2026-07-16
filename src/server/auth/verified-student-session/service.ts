@@ -109,9 +109,10 @@ function exactAttemptPreservesExpiredAccess(
     accessId: string;
     status: string;
   }>[],
-  scope: VerifiedStudentSessionScope
+  scope: VerifiedStudentSessionScope,
+  attemptsAvailable: number
 ) {
-  if (attempts.length !== 1) return false;
+  if (attemptsAvailable !== 0 || attempts.length !== 1) return false;
   const attempt = attempts[0];
   const status = attempt.status.toUpperCase();
   return attempt.userId === scope.userId &&
@@ -152,6 +153,7 @@ async function validateVerifiedStudentSessionScope(
     userId: string;
     testId: string;
     commercialProductId: string | null;
+    attemptsAvailable: number;
     revokedAt: Date | null;
     expiresAt: Date;
   }>>`
@@ -159,6 +161,7 @@ async function validateVerifiedStudentSessionScope(
       "user_id" AS "userId",
       "test_id" AS "testId",
       "commercial_product_id" AS "commercialProductId",
+      "attempts_available" AS "attemptsAvailable",
       "revoked_at" AS "revokedAt",
       "expires_at" AS "expiresAt"
     FROM "accesses"
@@ -196,7 +199,7 @@ async function validateVerifiedStudentSessionScope(
       WHERE "access_id" = ${scope.accessId}::uuid
       FOR SHARE
     `;
-    if (!exactAttemptPreservesExpiredAccess(attempts, scope)) {
+    if (!exactAttemptPreservesExpiredAccess(attempts, scope, access.attemptsAvailable)) {
       throw new VerifiedStudentSessionServiceError("ACCESS_EXPIRED");
     }
   }
@@ -337,6 +340,7 @@ export function createVerifiedStudentSessionService(input: {
               userId: true,
               testId: true,
               commercialProductId: true,
+              attemptsAvailable: true,
               revokedAt: true,
               expiresAt: true,
               attempts: {
@@ -385,7 +389,11 @@ export function createVerifiedStudentSessionService(input: {
         return { status: "SCOPE_MISMATCH" };
       }
       if (clock().getTime() >= session.access.expiresAt.getTime() &&
-        !exactAttemptPreservesExpiredAccess(session.access.attempts, scope)) {
+        !exactAttemptPreservesExpiredAccess(
+          session.access.attempts,
+          scope,
+          session.access.attemptsAvailable
+        )) {
         return { status: "ACCESS_EXPIRED" };
       }
 

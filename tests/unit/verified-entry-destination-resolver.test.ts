@@ -5,6 +5,7 @@ import {
   type AttemptStartRouteDependencies
 } from "@/app/api/attempts/start/route";
 import {
+  authorizeVerifiedStudentDestination,
   resolveVerifiedStudentEntryDestination,
   type VerifiedDestinationGuardDependencies,
   type VerifiedStudentEntryResolution,
@@ -103,6 +104,41 @@ function authenticTarget(): {
   };
 }
 
+function authenticAttemptTarget(status: "STARTED" | "COMPLETED" | "EXPIRED", attemptsAvailable: number) {
+  return {
+    kind: "ATTEMPT",
+    classification: "AUTHENTIC",
+    attempt: {
+      ...attempt(status),
+      testSnapshot: { examMode: "rikz_russian_2026" },
+      test: {
+        id: ids.test,
+        examMode: "RIKZ_RUSSIAN_2026",
+        commercialProducts: [{ id: ids.product, testId: ids.test }]
+      },
+      access: {
+        id: ids.access,
+        userId: ids.user,
+        testId: ids.test,
+        source: "COMMERCIAL",
+        commercialProductId: ids.product,
+        commercialOrderId: ids.operation,
+        commercialPaymentAttemptId: ids.operation,
+        attemptsAvailable,
+        revokedAt: null,
+        expiresAt: new Date("2026-08-16T10:00:00.000Z"),
+        user: {
+          id: ids.user,
+          email: "student@example.test",
+          role: "STUDENT",
+          deletedAt: null
+        },
+        commercialProduct: { id: ids.product, testId: ids.test }
+      }
+    }
+  };
+}
+
 function resolverDependencies(input: {
   mode?: "off" | "shadow" | "enforce";
   cookie?: string | null;
@@ -160,8 +196,11 @@ describe("verified PRE entry destination resolver", () => {
 
   it.each([
     ["no Attempt with zero availability", entryState({ attemptsAvailable: 0 })],
+    ["no Attempt with excess availability", entryState({ attemptsAvailable: 2 })],
+    ["no Attempt with negative availability", entryState({ attemptsAvailable: -1 })],
     ["STARTED with remaining availability", entryState({ attemptsAvailable: 1, attempts: [attempt()] })],
-    ["terminal with remaining availability", entryState({ attemptsAvailable: 1, attempts: [attempt("COMPLETED")] })],
+    ["COMPLETED with remaining availability", entryState({ attemptsAvailable: 1, attempts: [attempt("COMPLETED")] })],
+    ["EXPIRED with remaining availability", entryState({ attemptsAvailable: 1, attempts: [attempt("EXPIRED")] })],
     ["two Attempts", entryState({ attemptsAvailable: 0, attempts: [attempt(), attempt("COMPLETED", { id: ids.secondAttempt })] })],
     ["wrong User", entryState({ attemptsAvailable: 0, attempts: [attempt("STARTED", { userId: "wrong-user" })] })],
     ["wrong Test", entryState({ attemptsAvailable: 0, attempts: [attempt("STARTED", { testId: "wrong-test" })] })],
@@ -187,7 +226,8 @@ describe("verified PRE entry destination resolver", () => {
 
   it.each([
     ["STARTED", "OPEN_ATTEMPT"],
-    ["COMPLETED", "OPEN_RESULT"]
+    ["COMPLETED", "OPEN_RESULT"],
+    ["EXPIRED", "OPEN_RESULT"]
   ] as const)("lets exact %s outrank Access expiry", async (status, nextAction) => {
     expect(await resolveEntry({
       state: entryState({
@@ -197,6 +237,42 @@ describe("verified PRE entry destination resolver", () => {
         attempts: [attempt(status)]
       })
     })).toMatchObject({ status: "AUTHORIZED", nextAction });
+  });
+
+  it("requires exactly one remaining attempt for direct PRE authorization", async () => {
+    const dependencies = {
+      ...resolverDependencies({ state: entryState({ attemptsAvailable: 2 }) }),
+      client: {
+        access: { findUnique: vi.fn(async () => entryState({ attemptsAvailable: 2 })) }
+      } as unknown as PrismaClient
+    };
+    expect(await authorizeVerifiedStudentDestination(
+      { destination: "PRE", testId: ids.test },
+      undefined,
+      dependencies
+    )).toMatchObject({ status: "REJECTED", code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+  });
+
+  it.each([
+    ["ATT", "STARTED"],
+    ["RES", "COMPLETED"],
+    ["RES", "EXPIRED"]
+  ] as const)("requires a consumed counter for direct %s %s authorization", async (destination, status) => {
+    for (const [attemptsAvailable, expectedStatus] of [[0, "AUTHORIZED"], [1, "REJECTED"]] as const) {
+      const dependencies = {
+        ...resolverDependencies(),
+        loadTarget: vi.fn(async () => authenticAttemptTarget(status, attemptsAvailable) as never)
+      };
+      const decision = await authorizeVerifiedStudentDestination(
+        { destination, attemptId: ids.attempt },
+        undefined,
+        dependencies
+      );
+      expect(decision.status).toBe(expectedStatus);
+      if (expectedStatus === "REJECTED") {
+        expect(decision).toMatchObject({ code: "VERIFIED_SCOPE_NOT_ALLOWED" });
+      }
+    }
   });
 
   it("keeps a generic Test on legacy authority", async () => {

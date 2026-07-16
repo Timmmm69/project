@@ -139,6 +139,7 @@ type AttemptTarget = Readonly<{
       commercialProductId: string | null;
       commercialOrderId: string | null;
       commercialPaymentAttemptId: string | null;
+      attemptsAvailable: number;
       revokedAt: Date | null;
       expiresAt: Date;
       user: {
@@ -294,6 +295,7 @@ async function loadDestinationTarget(
           commercialProductId: true,
           commercialOrderId: true,
           commercialPaymentAttemptId: true,
+          attemptsAvailable: true,
           revokedAt: true,
           expiresAt: true,
           user: { select: { id: true, email: true, role: true, deletedAt: true } },
@@ -317,6 +319,7 @@ function exactAttemptScopeMatches(
 ) {
   const { attempt } = target;
   const { access, test } = attempt;
+  const attemptsAvailable = access.attemptsAvailable ?? 0;
   return attempt.id.length > 0 &&
     attempt.userId === session.scope.userId &&
     attempt.testId === session.scope.testId &&
@@ -332,6 +335,7 @@ function exactAttemptScopeMatches(
     access.testId === session.scope.testId &&
     access.source === "COMMERCIAL" &&
     access.commercialProductId === session.scope.commercialProductId &&
+    attemptsAvailable === 0 &&
     access.revokedAt === null &&
     access.user.id === session.scope.userId &&
     access.user.role === "STUDENT" &&
@@ -408,7 +412,7 @@ async function exactPreContext(
     access.revokedAt === null &&
     now.getTime() < access.expiresAt.getTime() &&
     (startDeadlineAt === null || now.getTime() < startDeadlineAt.getTime()) &&
-    attemptsAvailable > 0 &&
+    attemptsAvailable === 1 &&
     attempts.length === 0 &&
     access.user.id === session.scope.userId &&
     access.user.role === "STUDENT" &&
@@ -603,7 +607,7 @@ function exactEntryDecision(
 
   const startWindowOpen = now.getTime() < state.expiresAt.getTime() &&
     (state.startDeadlineAt === null || now.getTime() < state.startDeadlineAt.getTime());
-  if (!startWindowOpen || state.attemptsAvailable <= 0) return null;
+  if (!startWindowOpen || state.attemptsAvailable !== 1) return null;
   return {
     status: "AUTHORIZED",
     nextAction: "OPEN_PRE",
