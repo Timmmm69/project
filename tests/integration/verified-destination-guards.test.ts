@@ -105,24 +105,58 @@ function authenticSnapshot(testId: string) {
     mode: "ce_ct",
     examMode: "rikz_russian_2026",
     durationMinutes: 120,
-    maxRawScore: 2,
-    questions: [{
-      snapshotQuestionId: "q_1",
-      orderIndex: 1,
-      questionText: "Sensitive prompt",
-      questionType: "short_answer_token",
-      options: {},
-      points: 2,
-      correctAnswer: "SECRET_CORRECT",
-      acceptedAnswers: ["SECRET_ACCEPTED"],
-      explanation: "SECRET_EXPLANATION",
-      topic: "Sensitive topic",
-      subtopic: null,
-      scoringRule: "full_match",
-      officialPart: "B",
-      officialNumber: 1,
-      responseSubtype: "word"
-    }]
+    maxRawScore: 80,
+    questions: [
+      {
+        snapshotQuestionId: "q_1",
+        orderIndex: 1,
+        questionText: "Sensitive prompt",
+        questionType: "short_answer_token",
+        options: {},
+        points: 2,
+        correctAnswer: "SECRET_CORRECT",
+        acceptedAnswers: ["SECRET_ACCEPTED"],
+        explanation: "SECRET_EXPLANATION",
+        topic: "Sensitive topic",
+        subtopic: null,
+        scoringRule: "exact_text",
+        officialPart: "B",
+        officialNumber: 1,
+        responseSubtype: "word"
+      },
+      ...Array.from({ length: 18 }, (_, index) => ({
+        snapshotQuestionId: `q_${index + 2}`,
+        orderIndex: index + 2,
+        questionText: `Part A ${index + 1}`,
+        questionType: "multi_select_five",
+        options: { A: "A", B: "B", C: "C", D: "D", E: "E" },
+        points: 2,
+        correctAnswer: "A,C",
+        explanation: null,
+        topic: "Part A",
+        subtopic: null,
+        scoringRule: "full_match",
+        officialPart: "A",
+        officialNumber: index + 1
+      })),
+      ...Array.from({ length: 21 }, (_, index) => ({
+        snapshotQuestionId: `q_${index + 20}`,
+        orderIndex: index + 20,
+        questionText: `Part B ${index + 2}`,
+        questionType: "short_answer_token",
+        options: {},
+        points: 2,
+        correctAnswer: `token${index + 2}`,
+        acceptedAnswers: [`token${index + 2}`],
+        explanation: null,
+        topic: "Part B",
+        subtopic: null,
+        scoringRule: "exact_text",
+        officialPart: "B",
+        officialNumber: index + 2,
+        responseSubtype: "alnum"
+      }))
+    ]
   };
 }
 
@@ -289,7 +323,7 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
         finishedAt,
         durationSeconds: finishedAt ? 59 : null,
         rawScore: finishedAt ? 0 : null,
-        maxRawScore: finishedAt ? 2 : null,
+        maxRawScore: finishedAt ? 80 : null,
         percent: finishedAt ? new Prisma.Decimal(0) : null,
         testSnapshot: authenticSnapshot(fixture.testId)
       }
@@ -405,27 +439,58 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
         mode: "CE_CT",
         examMode: "RIKZ_RUSSIAN_2026",
         status: "PUBLISHED",
-        questionsCount: 1,
-        maxRawScore: 2,
+        questionsCount: 40,
+        maxRawScore: 80,
         showCorrectAnswers: true
       }
     });
     testId = test.id;
-    await prisma.question.create({
-      data: {
+    await prisma.question.createMany({
+      data: [
+        {
         testId,
         questionText: "Sensitive prompt",
-        questionType: "SHORT_ANSWER_TOKEN",
+        questionType: "SHORT_ANSWER_TOKEN" as const,
         correctAnswer: "SECRET_CORRECT",
         acceptedAnswers: ["SECRET_ACCEPTED"],
         explanation: "SECRET_EXPLANATION",
         topic: "Sensitive topic",
         points: 2,
-        officialPart: "B",
+        officialPart: "B" as const,
         officialNumber: 1,
-        responseSubtype: "WORD",
+        responseSubtype: "WORD" as const,
         orderIndex: 1
-      }
+        },
+        ...Array.from({ length: 18 }, (_, index) => ({
+          testId,
+          questionText: `Part A ${index + 1}`,
+          questionType: "MULTI_SELECT_FIVE" as const,
+          optionA: "A",
+          optionB: "B",
+          optionC: "C",
+          optionD: "D",
+          optionE: "E",
+          correctAnswer: "A,C",
+          topic: "Part A",
+          points: 2,
+          officialPart: "A" as const,
+          officialNumber: index + 1,
+          orderIndex: index + 2
+        })),
+        ...Array.from({ length: 21 }, (_, index) => ({
+          testId,
+          questionText: `Part B ${index + 2}`,
+          questionType: "SHORT_ANSWER_TOKEN" as const,
+          correctAnswer: `token${index + 2}`,
+          acceptedAnswers: [`token${index + 2}`],
+          topic: "Part B",
+          points: 2,
+          officialPart: "B" as const,
+          officialNumber: index + 2,
+          responseSubtype: "ALNUM" as const,
+          orderIndex: index + 20
+        }))
+      ]
     });
     const product = await prisma.commercialProduct.create({
       data: {

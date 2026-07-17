@@ -27,6 +27,7 @@ export function AuthenticResultSurface({ summary }: Readonly<{ summary: Authenti
         Результат попытки
       </h1>
       <p className={styles.status}>{status}</p>
+      <p className={styles.status}>Завершено: {summary.completedAt}</p>
 
       <div
         aria-label={`Общий первичный результат: ${summary.primaryScore} из ${summary.primaryMax}`}
