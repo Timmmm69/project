@@ -92,6 +92,42 @@ function capturingEmitter(results: CanonicalOrderCreatedEmissionResult[]): Canon
   };
 }
 
+const runtimeEnvironmentNames = [
+  "NODE_ENV",
+  "APP_ENV",
+  "DEPLOYMENT_ENV",
+  "VERCEL_ENV"
+] as const;
+
+async function withRuntimeEnvironment<T>(
+  labels: Readonly<Partial<Record<(typeof runtimeEnvironmentNames)[number], string>>>,
+  operation: () => Promise<T>
+) {
+  const mutableEnvironment = process.env as unknown as Record<string, string | undefined>;
+  const original = new Map(runtimeEnvironmentNames.map((name) => [name, mutableEnvironment[name]]));
+  for (const name of runtimeEnvironmentNames) {
+    const value = labels[name];
+    if (value === undefined) {
+      delete mutableEnvironment[name];
+    } else {
+      mutableEnvironment[name] = value;
+    }
+  }
+
+  try {
+    return await operation();
+  } finally {
+    for (const name of runtimeEnvironmentNames) {
+      const value = original.get(name);
+      if (value === undefined) {
+        delete mutableEnvironment[name];
+      } else {
+        mutableEnvironment[name] = value;
+      }
+    }
+  }
+}
+
 async function canonicalRows(checkoutFlowId: string) {
   return prisma.analyticsEvent.findMany({
     where: {
@@ -299,6 +335,50 @@ describeWithDatabase("ANA-02A commercial Order canonical analytics integration",
     expect(created.order.checkoutFlowId).toBe(flow.id);
     expect(await prisma.commercialOrder.count({ where: { id: created.order.id } })).toBe(1);
     expect(await canonicalRows(flow.id)).toHaveLength(0);
+  });
+
+  it("persists staging deployment analytics as one sandbox external-user row on retry", async () => {
+    const flow = await createCommercialCheckoutFlow({ productCode });
+    const emissions: CanonicalOrderCreatedEmissionResult[] = [];
+    const input = orderInput(flow.id, "staging-sandbox", capturingEmitter(emissions));
+    const { created, retried, rows } = await withRuntimeEnvironment(
+      { NODE_ENV: "production", APP_ENV: "staging" },
+      async () => {
+        const created = await createCommercialOrder(input);
+        const retried = await createCommercialOrder(input);
+        return { created, retried, rows: await canonicalRows(flow.id) };
+      }
+    );
+
+    expect(retried.order.id).toBe(created.order.id);
+    expect(retried.order.checkoutFlowId).toBe(flow.id);
+    expect(retried.idempotent).toBe(true);
+    expect(emissions).toEqual([
+      { enabled: true, accepted: true, inserted: true },
+      { enabled: true, accepted: true, inserted: false }
+    ]);
+    expect(rows).toHaveLength(1);
+    const row = rows[0]!;
+    const properties = row.properties as Record<string, unknown>;
+    expect(row).toMatchObject({
+      eventId: uuidV5ForCheckoutFlow(flow.id),
+      transitionKey: `order_created:${flow.id}`,
+      eventName: "order_created",
+      environment: "sandbox",
+      trafficClass: "external_user",
+      trafficClassAssignmentSource: "default_external_user"
+    });
+    expect(row.environment).not.toBe("production");
+    expect(Object.keys(properties).sort()).toEqual(propertyAllowlist);
+    expect(properties).toEqual({
+      checkout_flow_id: flow.id,
+      order_public_id_hash: expect.stringMatching(/^aid1\.[A-Za-z0-9_-]{43}$/),
+      product_id: productCode,
+      test_id: testSlug,
+      exam_mode: "rikz_russian_2026",
+      order_status: "created",
+      access_source: "paid"
+    });
   });
 
   it("re-emits an exact retry and reports the canonical duplicate path", async () => {

@@ -9,6 +9,10 @@ import {
   createAnalyticsEntityId,
   type AnalyticsEntityIdKeyRing
 } from "@/lib/analytics/entity-id";
+import {
+  classifyRuntimeEnvironment,
+  type RuntimeEnvironment
+} from "@/server/runtime-config/runtime-environment";
 
 export type CanonicalOrderCreatedFacts = Readonly<{
   checkoutFlowId: string;
@@ -90,11 +94,12 @@ function normalizeExamMode(value: CanonicalOrderCreatedFacts["examMode"]) {
   throw new Error("ANALYTICS_ORDER_CREATED_EXAM_MODE_REJECTED");
 }
 
-function analyticsEnvironment(nodeEnvironment: string | undefined) {
-  if (nodeEnvironment === "test") return "test" as const;
-  if (nodeEnvironment === "production") return "production" as const;
-  return "development" as const;
-}
+const analyticsEnvironmentByRuntime = Object.freeze({
+  development: "development",
+  test: "test",
+  staging: "sandbox",
+  production: "production"
+} satisfies Readonly<Record<RuntimeEnvironment, "development" | "test" | "sandbox" | "production">>);
 
 function uuidV5(name: string) {
   const bytes = createHash("sha1")
@@ -122,6 +127,11 @@ export async function emitCanonicalOrderCreated(
       return rejectedResult;
     }
 
+    const runtimeEnvironment = classifyRuntimeEnvironment(environment);
+    if (runtimeEnvironment.status === "INVALID") {
+      return rejectedResult;
+    }
+
     const keyMaterial = environment.ANALYTICS_ID_HMAC_KEY?.trim();
     const keyVersion = environment.ANALYTICS_ID_KEY_VERSION?.trim();
     if (
@@ -145,9 +155,9 @@ export async function emitCanonicalOrderCreated(
     });
     const transitionKey = `order_created:${facts.checkoutFlowId}`;
     const receiverContext = {
-      environment: analyticsEnvironment(environment.NODE_ENV),
+      environment: analyticsEnvironmentByRuntime[runtimeEnvironment.environment],
       receivedAt: (dependencies.receiverClock ?? (() => new Date()))().toISOString(),
-      ...(environment.NODE_ENV === "test"
+      ...(runtimeEnvironment.environment === "test"
         ? {
             trustedTrafficContext: {
               kind: "test_fixture" as const,

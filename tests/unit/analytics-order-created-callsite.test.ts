@@ -203,13 +203,53 @@ describe("canonical order_created producer composition", () => {
   });
 
   it.each([
-    ["test", "test", { kind: "test_fixture", trafficClass: "synthetic" }],
-    ["production", "production", undefined],
-    ["development", "development", undefined],
-    ["staging", "development", undefined],
-    [undefined, "development", undefined]
-  ] as const)("maps NODE_ENV=%s using receiver-owned authority", async (NODE_ENV, expected, trusted) => {
-    const environment = { ...enabledEnvironment, NODE_ENV };
+    [
+      "development without deployment labels",
+      { NODE_ENV: "development" },
+      "development",
+      undefined
+    ],
+    [
+      "test without deployment labels",
+      { NODE_ENV: "test" },
+      "test",
+      { kind: "test_fixture", trafficClass: "synthetic" }
+    ],
+    [
+      "test with a matching deployment label",
+      { NODE_ENV: "test", APP_ENV: "test" },
+      "test",
+      { kind: "test_fixture", trafficClass: "synthetic" }
+    ],
+    [
+      "staging from APP_ENV",
+      { NODE_ENV: "production", APP_ENV: "staging" },
+      "sandbox",
+      undefined
+    ],
+    [
+      "staging from VERCEL_ENV=preview",
+      { NODE_ENV: "production", VERCEL_ENV: "preview" },
+      "sandbox",
+      undefined
+    ],
+    [
+      "production with a matching deployment label",
+      { NODE_ENV: "production", APP_ENV: "production" },
+      "production",
+      undefined
+    ],
+    [
+      "production without deployment labels",
+      { NODE_ENV: "production" },
+      "production",
+      undefined
+    ]
+  ] as const)("maps valid runtime environment: %s", async (_label, labels, expected, trusted) => {
+    const environment: Readonly<Record<string, string | undefined>> = {
+      ...enabledEnvironment,
+      ...labels
+    };
     const { calls, dependencies } = captureRuntime({ accepted: true, inserted: true }, environment);
     await emitCanonicalOrderCreated(facts(), dependencies);
 
@@ -236,6 +276,57 @@ describe("canonical order_created producer composition", () => {
 });
 
 describe("canonical order_created fail-closed validation", () => {
+  it.each([
+    ["missing NODE_ENV", { NODE_ENV: undefined }],
+    ["NODE_ENV=staging", { NODE_ENV: "staging" }],
+    ["unknown NODE_ENV", { NODE_ENV: "unknown" }],
+    ["test execution with staging deployment", { NODE_ENV: "test", APP_ENV: "staging" }],
+    [
+      "conflicting staging and production deployments",
+      { NODE_ENV: "production", APP_ENV: "staging", VERCEL_ENV: "production" }
+    ],
+    ["unknown deployment label", { NODE_ENV: "production", DEPLOYMENT_ENV: "unknown" }]
+  ] as const)("rejects invalid runtime environment safely: %s", async (_label, labels) => {
+    let entityCalls = 0;
+    let runtimeCalls = 0;
+    const environment: Readonly<Record<string, string | undefined>> = {
+      ...enabledEnvironment,
+      ...labels
+    };
+    const resultPromise = emitCanonicalOrderCreated(facts(), {
+      environment,
+      entityId: (() => {
+        entityCalls += 1;
+        throw new Error("RAW_RUNTIME_ENVIRONMENT_MUST_NOT_ESCAPE");
+      }) as CanonicalOrderCreatedDependencies["entityId"],
+      canonicalRuntime: async () => {
+        runtimeCalls += 1;
+        throw new Error("RAW_RUNTIME_ENVIRONMENT_MUST_NOT_ESCAPE");
+      }
+    });
+
+    await expect(resultPromise).resolves.toEqual({
+      enabled: true,
+      accepted: false,
+      inserted: false
+    });
+    const result = await resultPromise;
+    const serialized = JSON.stringify(result);
+    const rawLabels = [
+      environment.NODE_ENV,
+      environment.APP_ENV,
+      environment.DEPLOYMENT_ENV,
+      environment.VERCEL_ENV
+    ].filter((value): value is string => value !== undefined);
+
+    expect(entityCalls).toBe(0);
+    expect(runtimeCalls).toBe(0);
+    expect(serialized).not.toContain("RAW_RUNTIME_ENVIRONMENT_MUST_NOT_ESCAPE");
+    for (const rawLabel of rawLabels) {
+      expect(serialized).not.toContain(rawLabel);
+    }
+  });
+
   it.each([
     ["invalid exam mode", { ...facts(), examMode: "training" }],
     ["invalid checkout flow", { ...facts(), checkoutFlowId: "not-a-uuid" }],
@@ -346,7 +437,7 @@ describe("canonical order_created runtime and isolation semantics", () => {
     expect(Object.isFrozen(input.occurredAt)).toBe(true);
   });
 
-  it("imports only crypto and canonical analytics boundaries", () => {
+  it("imports only crypto, canonical analytics boundaries, and the runtime classifier", () => {
     const sourcePath = fileURLToPath(new URL(
       "../../src/lib/analytics/order-created-callsite.ts",
       import.meta.url
@@ -358,7 +449,8 @@ describe("canonical order_created runtime and isolation semantics", () => {
     expect(importSpecifiers).toEqual([
       "node:crypto",
       "@/lib/analytics/canonical-runtime",
-      "@/lib/analytics/entity-id"
+      "@/lib/analytics/entity-id",
+      "@/server/runtime-config/runtime-environment"
     ]);
     expect(source).not.toMatch(/analytics-service|analytics-id|\/schemas|@prisma|@\/server\/db|\bprisma\b/i);
     expect(source).not.toMatch(/\bRequest\b|cookies\(|headers\(|user-agent|x-forwarded-for/i);
