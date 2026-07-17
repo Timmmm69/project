@@ -1,7 +1,8 @@
 import { expect, test } from "@playwright/test";
-import { randomUUID } from "node:crypto";
+import { createHash, randomUUID } from "node:crypto";
 import { PrismaClient } from "@prisma/client";
 import { POST as webPayNotify } from "@/app/api/payments/webpay/notify/route";
+import type { CanonicalOrderCreatedEmitter } from "@/lib/analytics/order-created-callsite";
 import { createCommercialCheckoutFlow, createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification, recordCommercialPaymentValidationFailure } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider } from "@/lib/commercial/providers";
 import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
@@ -32,10 +33,25 @@ const linkageFailureEmail = `commercial-linkage-failure-${suffix}@example.test`;
 const tokenConflictEmail = `commercial-token-conflict-${suffix}@example.test`;
 const tokenIntegrityEmail = `commercial-token-integrity-${suffix}@example.test`;
 let productId = "";
+let testId = "";
+let authenticTestSlug = "";
 
 async function createCheckoutOrder(input: Omit<Parameters<typeof createCommercialOrder>[0], "checkoutFlowId">) {
-  const flow = await createCommercialCheckoutFlow({ productCode: input.productCode, analyticsWriter: input.analyticsWriter });
+  const flow = await createCommercialCheckoutFlow({ productCode: input.productCode });
   return createCommercialOrder({ ...input, checkoutFlowId: flow.id });
+}
+
+function orderCreatedEventId(checkoutFlowId: string) {
+  const namespace = Buffer.from("6ba7b8119dad11d180b400c04fd430c8", "hex");
+  const bytes = createHash("sha1")
+    .update(namespace)
+    .update(`order_created:${checkoutFlowId}`, "utf8")
+    .digest()
+    .subarray(0, 16);
+  bytes[6] = (bytes[6]! & 0x0f) | 0x50;
+  bytes[8] = (bytes[8]! & 0x3f) | 0x80;
+  const hex = bytes.toString("hex");
+  return `${hex.slice(0, 8)}-${hex.slice(8, 12)}-${hex.slice(12, 16)}-${hex.slice(16, 20)}-${hex.slice(20)}`;
 }
 
 async function createPendingFixture(fixtureEmail: string, key: string) {
@@ -96,9 +112,11 @@ test.beforeAll(async () => {
   process.env.ANALYTICS_ID_KEY_VERSION = "e2e-v1";
   const testRecord = await prisma.test.findFirst({
     where: { examMode: "RIKZ_RUSSIAN_2026", status: "PUBLISHED", deletedAt: null },
-    select: { id: true }
+    select: { id: true, slug: true }
   });
   if (!testRecord) throw new Error("A published authentic test is required for commercial e2e.");
+  testId = testRecord.id;
+  authenticTestSlug = testRecord.slug;
   const product = await prisma.commercialProduct.create({
     data: {
       code: productCode,
@@ -164,20 +182,45 @@ test("checkout flow links exactly one checkout_started to exactly one order_crea
   expect(JSON.stringify(created.order)).not.toContain(created.lookupToken);
   expect(await prisma.commercialOrder.count({ where: { checkoutFlowId: flow.id } })).toBe(1);
   const events = await prisma.analyticsEvent.findMany({
-    where: { transitionKey: { in: [`commercial-checkout-started:${flow.id}`, `commercial-order-created:${created.order.id}`] } },
+    where: { transitionKey: { in: [`commercial-checkout-started:${flow.id}`, `order_created:${flow.id}`] } },
     orderBy: { occurredAt: "asc" }
   });
   expect(events).toHaveLength(2);
   expect(events.map((event) => event.eventName)).toEqual(["checkout_started", "order_created"]);
   expect(events.map((event) => (event.properties as Record<string, unknown>).checkout_flow_id)).toEqual([flow.id, flow.id]);
-  events.forEach((event) => expect(() => assertNoForbiddenAnalyticsPayload(event.properties)).not.toThrow());
   expect(JSON.stringify(events)).not.toContain(created.lookupToken);
   expect(JSON.stringify(await prisma.eventLog.findMany({ where: { entityId: created.order.id } }))).not.toContain(created.lookupToken);
-  expect(events.find((event) => event.eventName === "order_created")?.properties).toMatchObject({
-    product_id: productCode,
-    amount: 1000,
-    currency: "BYN"
+  const orderEvent = events.find((event) => event.eventName === "order_created");
+  expect(orderEvent).toMatchObject({
+    eventId: orderCreatedEventId(flow.id),
+    transitionKey: `order_created:${flow.id}`,
+    eventVersion: 1,
+    occurredAt: created.order.createdAt,
+    environment: "development",
+    trafficClass: "external_user",
+    trafficClassAssignmentSource: "default_external_user",
+    emittingLayer: "backend",
+    analyticsIdKeyVersion: "e2e-v1"
   });
+  expect(orderEvent?.properties).toEqual({
+    checkout_flow_id: flow.id,
+    order_public_id_hash: expect.stringMatching(/^aid1\.[A-Za-z0-9_-]{43}$/),
+    product_id: productCode,
+    test_id: authenticTestSlug,
+    exam_mode: "rikz_russian_2026",
+    order_status: "created",
+    access_source: "paid"
+  });
+  expect(Object.keys(orderEvent?.properties as Record<string, unknown>).sort()).toEqual([
+    "access_source", "checkout_flow_id", "exam_mode", "order_public_id_hash", "order_status", "product_id", "test_id"
+  ]);
+  expect(orderEvent?.properties).not.toHaveProperty("amount");
+  expect(orderEvent?.properties).not.toHaveProperty("currency");
+  const serializedOrderEvent = JSON.stringify(orderEvent);
+  for (const forbidden of [linkageEmail, created.lookupToken, created.order.id, created.order.publicId, productId, testId, input.idempotencyKey]) {
+    expect(serializedOrderEvent).not.toContain(forbidden);
+  }
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `order_created:${flow.id}` } })).toBe(1);
 });
 
 test("lookup token conflicts do not rotate the stored authorization hash", async () => {
@@ -307,12 +350,12 @@ test("concurrent retries create one order and one order_created event", async ()
   const stored = await prisma.commercialOrder.findUniqueOrThrow({ where: { checkoutFlowId: flow.id } });
   expect(lookupTokenMatches(results[0].lookupToken, stored.lookupTokenHash)).toBe(true);
   expect(lookupTokenMatches(results[1].lookupToken, stored.lookupTokenHash)).toBe(true);
-  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `commercial-order-created:${results[0].order.id}` } })).toBe(1);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `order_created:${flow.id}` } })).toBe(1);
 });
 
 test("analytics failure does not roll back a checkout flow or create a second order", async () => {
-  const failingWriter: AnalyticsWriter = async () => { throw new Error("synthetic analytics persistence failure"); };
-  const flow = await createCommercialCheckoutFlow({ productCode, analyticsWriter: failingWriter });
+  const failingEmitter: CanonicalOrderCreatedEmitter = async () => { throw new Error("synthetic analytics persistence failure"); };
+  const flow = await createCommercialCheckoutFlow({ productCode });
   const input = {
     productCode,
     checkoutFlowId: flow.id,
@@ -320,7 +363,7 @@ test("analytics failure does not roll back a checkout flow or create a second or
     adultBuyerConfirmed: true,
     legalBundleVersion: "e2e-v1",
     idempotencyKey: `linkage-failure-${suffix}`,
-    analyticsWriter: failingWriter
+    orderCreatedAnalyticsEmitter: failingEmitter
   };
   const created = await createCommercialOrder(input);
   const originalHash = (await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash;
@@ -330,6 +373,7 @@ test("analytics failure does not roll back a checkout flow or create a second or
   expect(await prisma.commercialCheckoutFlow.count({ where: { id: flow.id } })).toBe(1);
   expect(await prisma.commercialOrder.count({ where: { checkoutFlowId: flow.id } })).toBe(1);
   expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: created.order.id } })).lookupTokenHash).toBe(originalHash);
+  expect(await prisma.analyticsEvent.count({ where: { transitionKey: `order_created:${flow.id}` } })).toBe(0);
 });
 
 test("fake provider grants one access and replay is a no-op", async () => {
