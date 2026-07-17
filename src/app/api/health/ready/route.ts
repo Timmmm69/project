@@ -5,6 +5,10 @@ import {
   type DatabaseReadinessProbe,
   type ReadinessEnvironment
 } from "@/server/runtime-readiness/runtime-readiness";
+import {
+  probeMigrationCompatibility,
+  type MigrationCompatibilityProbe
+} from "@/server/runtime-readiness/migration-compatibility";
 
 const readinessResponseHeaders = Object.freeze({
   "Cache-Control": "no-store",
@@ -14,6 +18,7 @@ const readinessResponseHeaders = Object.freeze({
 type ReadinessHandlerDependencies = Readonly<{
   getEnvironment: () => ReadinessEnvironment;
   databaseProbe: DatabaseReadinessProbe;
+  migrationProbe: MigrationCompatibilityProbe;
 }>;
 
 function notReadyResponse() {
@@ -31,7 +36,8 @@ export function createReadinessHandler(dependencies: ReadinessHandlerDependencie
   return async function GET() {
     const result = await evaluateRuntimeReadiness(
       dependencies.getEnvironment(),
-      dependencies.databaseProbe
+      dependencies.databaseProbe,
+      dependencies.migrationProbe
     );
 
     if (result.status !== "READY") {
@@ -50,5 +56,6 @@ export function createReadinessHandler(dependencies: ReadinessHandlerDependencie
 
 export const GET = createReadinessHandler({
   getEnvironment: () => process.env,
-  databaseProbe: probePostgresReadiness
+  databaseProbe: probePostgresReadiness,
+  migrationProbe: probeMigrationCompatibility
 });

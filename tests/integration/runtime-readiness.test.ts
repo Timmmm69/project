@@ -37,7 +37,8 @@ describeIntegration("INF-01B runtime readiness PostgreSQL integration", () => {
 
     await expect(evaluateRuntimeReadiness(
       syntheticEnvironment(),
-      databaseProbe
+      databaseProbe,
+      async () => true
     )).resolves.toEqual({ status: "READY" });
 
     const after = await prisma.test.count();
@@ -50,7 +51,8 @@ describeIntegration("INF-01B runtime readiness PostgreSQL integration", () => {
       syntheticEnvironment(),
       async () => {
         throw new Error("synthetic database rejection");
-      }
+      },
+      async () => true
     )).resolves.toEqual({
       status: "NOT_READY",
       reason: "DATABASE_UNAVAILABLE"
