@@ -121,6 +121,7 @@ describe("launch readiness safeguards", () => {
     } as Parameters<typeof serializeResult>[0];
 
     const studentResult = serializeResult(attempt);
+    if (!("mistakes" in studentResult)) throw new Error("Expected generic detailed Result payload");
     expect(studentResult.percent).toBeNull();
     expect(studentResult.topic_results).toEqual([]);
     expect(studentResult.recommendations).toEqual([]);

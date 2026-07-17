@@ -1,5 +1,8 @@
 import { apiFailure, apiSuccess } from "@/lib/api-response";
-import { serializeResult } from "@/lib/scoring/result-serialize";
+import {
+  ResultProjectionNotReadyError,
+  serializeResult
+} from "@/lib/scoring/result-serialize";
 import { uuidSchema } from "@/lib/validation/schemas";
 import { requireStudent } from "@/server/auth/student-session";
 import { prisma } from "@/server/db/client";
@@ -15,6 +18,13 @@ type RouteContext = {
     attemptId: string;
   }>;
 };
+
+function resultNotReady() {
+  return apiFailure({
+    code: "RESULT_NOT_READY",
+    message: "Result is available after attempt completion"
+  }, 409);
+}
 
 export async function GET(request: Request, context: RouteContext) {
   const { attemptId } = await context.params;
@@ -66,11 +76,18 @@ export async function GET(request: Request, context: RouteContext) {
     return apiFailure({ code: "NOT_FOUND", message: "Attempt not found" }, 404);
   }
   if (attempt.status === "STARTED") {
-    return apiFailure({ code: "RESULT_NOT_READY", message: "Result is available after attempt completion" }, 409);
+    return finalizeVerifiedDestinationResponse(resultNotReady(), authorization);
   }
 
-  return finalizeVerifiedDestinationResponse(
-    apiSuccess({ result: serializeResult(attempt) }),
-    authorization
-  );
+  try {
+    return finalizeVerifiedDestinationResponse(
+      apiSuccess({ result: serializeResult(attempt) }),
+      authorization
+    );
+  } catch (error) {
+    if (error instanceof ResultProjectionNotReadyError) {
+      return finalizeVerifiedDestinationResponse(resultNotReady(), authorization);
+    }
+    throw error;
+  }
 }
