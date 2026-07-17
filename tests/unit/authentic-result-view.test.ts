@@ -11,6 +11,7 @@ import type { AuthenticResultSummary } from "../../src/app/(public)/results/[att
 
 const completedSummary: AuthenticResultSummary = {
   status: "completed",
+  completedAt: "16 июля 2026, 20:05 (Минск)",
   primaryScore: 80,
   primaryMax: 80,
   partA: { score: 36, maxScore: 36 },
@@ -28,6 +29,7 @@ describe("authentic Result presentation", () => {
     expect(html.match(/<h1/g)).toHaveLength(1);
     expect(html).toContain("Результат попытки");
     expect(html).toContain("Статус: завершено вручную");
+    expect(html).toContain("Завершено: 16 июля 2026, 20:05 (Минск)");
     expect(html).toContain('aria-label="Общий первичный результат: 80 из 80"');
     expect(html).toContain('aria-hidden="true" class="');
     expect(html).toContain('data-result-value="total">80 из 80</p>');

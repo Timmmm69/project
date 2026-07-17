@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import {
   buildAuthenticResultSummary,
   buildPartBreakdown,
+  formatAuthenticResultCompletedAt,
   formatResultQuestionLabel,
   getScaledScoreDisplay,
   isAuthenticRikzRussianResult,
@@ -21,7 +22,8 @@ const authenticPayload: AuthenticStudentResultPayload = {
   part_a_score: 36,
   part_a_max_score: 36,
   part_b_score: 44,
-  part_b_max_score: 44
+  part_b_max_score: 44,
+  completed_at: "2026-07-16T17:05:00.000Z"
 };
 
 const partADetail: ResultAnswerDetail = {
@@ -87,10 +89,33 @@ describe("authentic Result runtime contract", () => {
     ["question field", { ...authenticPayload, question_text: "private" }],
     ["scaled score", { ...authenticPayload, scaled_score: 100 }],
     ["attempt id", { ...authenticPayload, attempt_id: "private" }],
+    ["finished_at", { ...authenticPayload, finished_at: authenticPayload.completed_at }],
+    ["started_at", { ...authenticPayload, started_at: "2026-07-16T15:05:00.000Z" }],
+    ["missing completed_at", Object.fromEntries(Object.entries(authenticPayload).filter(([key]) => key !== "completed_at"))],
     ["missing field", Object.fromEntries(Object.entries(authenticPayload).filter(([key]) => key !== "part_b_score"))]
   ])("rejects authentic payload with %s", (_label, payload) => {
     expect(parseAuthenticStudentResultPayload(payload)).toBeNull();
     expect(parseResultPayload(payload)).toBeNull();
+  });
+
+  it.each([
+    ["null", null],
+    ["number", 1_752_685_500_000],
+    ["local date", "16 июля 2026, 20:05"],
+    ["without timezone", "2026-07-16T17:05:00.000"],
+    ["with offset", "2026-07-16T20:05:00.000+03:00"],
+    ["without milliseconds", "2026-07-16T17:05:00Z"],
+    ["invalid calendar date", "2026-02-30T17:05:00.000Z"]
+  ])("rejects non-canonical completed_at: %s", (_label, completedAt) => {
+    expect(parseAuthenticStudentResultPayload({
+      ...authenticPayload,
+      completed_at: completedAt
+    })).toBeNull();
+  });
+
+  it("accepts canonical UTC ISO with milliseconds and Z", () => {
+    expect(parseAuthenticStudentResultPayload(authenticPayload)?.completed_at)
+      .toBe("2026-07-16T17:05:00.000Z");
   });
 
   it.each([
@@ -110,6 +135,7 @@ describe("authentic Result runtime contract", () => {
   it("builds completed and expired summaries without question-level data", () => {
     expect(buildAuthenticResultSummary(authenticPayload)).toEqual({
       status: "completed",
+      completedAt: "16 июля 2026, 20:05 (Минск)",
       primaryScore: 80,
       primaryMax: 80,
       partA: { score: 36, maxScore: 36 },
@@ -117,11 +143,43 @@ describe("authentic Result runtime contract", () => {
     });
     expect(buildAuthenticResultSummary({ ...authenticPayload, status: "expired" })).toEqual({
       status: "expired",
+      completedAt: "16 июля 2026, 20:05 (Минск)",
       primaryScore: 80,
       primaryMax: 80,
       partA: { score: 36, maxScore: 36 },
       partB: { score: 44, maxScore: 44 }
     });
+  });
+
+  it("formats summer and winter timestamps deterministically in Europe/Minsk", () => {
+    expect(formatAuthenticResultCompletedAt("2026-07-16T17:05:00.000Z"))
+      .toBe("16 июля 2026, 20:05 (Минск)");
+    expect(formatAuthenticResultCompletedAt("2026-01-05T01:02:00.000Z"))
+      .toBe("5 января 2026, 04:02 (Минск)");
+  });
+
+  it("does not depend on the host timezone", () => {
+    const previousTimezone = process.env.TZ;
+    try {
+      process.env.TZ = "America/Los_Angeles";
+      const losAngeles = formatAuthenticResultCompletedAt(authenticPayload.completed_at);
+      process.env.TZ = "Asia/Tokyo";
+      const tokyo = formatAuthenticResultCompletedAt(authenticPayload.completed_at);
+      expect(losAngeles).toBe("16 июля 2026, 20:05 (Минск)");
+      expect(tokyo).toBe(losAngeles);
+    } finally {
+      if (previousTimezone === undefined) delete process.env.TZ;
+      else process.env.TZ = previousTimezone;
+    }
+  });
+
+  it("does not create a formatter or success summary from an invalid timestamp", () => {
+    expect(formatAuthenticResultCompletedAt("2026-07-16T20:05:00.000+03:00")).toBeNull();
+    const malformed = {
+      ...authenticPayload,
+      completed_at: "2026-07-16T20:05:00.000+03:00"
+    } as AuthenticStudentResultPayload;
+    expect(buildAuthenticResultSummary(malformed)).toBeNull();
   });
 
   it("returns not ready for a malformed summary object and never mutates it", () => {
