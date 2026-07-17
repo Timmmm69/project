@@ -57,11 +57,13 @@ The production probe uses the existing Prisma client for one logical, read-only 
 not write, open a transaction, retry, or access product tables or records. It does not check payment,
 email, recovery, analytics, authentic-test, or provider state. The probe catches database failures,
 does not log them in readiness code, and returns only a boolean. The shared Prisma client retains
-warning output but does not install Prisma's automatic database-error output sink, so a caught
-readiness failure cannot print connection diagnostics before it is mapped to the closed result.
-Callers still receive thrown Prisma failures normally. The primitive accepts an injected probe for
-tests; the production route is statically wired to the canonical Prisma probe and exposes no
-request-controlled override.
+warning output. Raw Prisma error stdout is disabled; Prisma errors are emitted as events and mapped
+to the single fixed operational signal `Database operation failed.`. The handler never logs or
+serializes the raw event payload. It is installed only when a new singleton client is created, so
+development reuse does not add duplicate listeners. Production and development use the same safe
+redaction policy, and callers still receive thrown Prisma failures normally. The primitive accepts
+an injected probe for tests; the production route is statically wired to the canonical Prisma probe
+and exposes no request-controlled override.
 
 ## Security and privacy boundary
 
