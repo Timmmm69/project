@@ -54,6 +54,13 @@ jobs:
       - run: pnpm lint
       - name: Run unit tests
         run: pnpm test
+      - name: Run INF-01B runtime readiness PostgreSQL integration tests
+        env:
+          RUN_INF01B_READINESS_INTEGRATION: "true"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=inf01b_readiness_ci
+        run: |
+          pnpm prisma migrate deploy
+          pnpm exec vitest run tests/integration/runtime-readiness.test.ts
       - name: Run verified student session PostgreSQL integration tests
         env:
           RUN_ACC01A_INTEGRATION: "true"
