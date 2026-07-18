@@ -1324,5 +1324,3 @@ Production activation = NO-GO
 # Final status
 
 `PAYMENT UX CONTRACT V1 — READY FOR PRODUCT OWNER REVIEW`
-
-

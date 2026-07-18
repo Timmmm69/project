@@ -38,20 +38,20 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | `BACKLOG` | 11 |
 | `READY` | 0 |
 | `IN_PROGRESS` | 0 |
-| `IN_REVIEW` | 0 |
-| `CHANGES_REQUIRED` | 1 |
+| `IN_REVIEW` | 1 |
+| `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 9 |
 | `DONE` | 0 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: implementation pass по обязательному finding независимого ревью `A-01`; `A-02` остаётся `BACKLOG`. Feature-карточки не начинаются до принятия `A-01`, source reconciliation и актуализации audit findings.
+Текущий gate: новый независимый review pass исправления `A-01`; `A-02` остаётся `BACKLOG`. Feature-карточки не начинаются до принятия `A-01`, source reconciliation и актуализации audit findings.
 
 ## 4. Реестр задач
 
 | ID | Поток | Название | Статус | Риск | Зависимости |
 |---|---|---|---|---|---|
-| [A-01](tasks/A-01.md) | A — Управление и документация | Создать переносимую доску и review protocol | `CHANGES_REQUIRED` | `HIGH` | — |
+| [A-01](tasks/A-01.md) | A — Управление и документация | Создать переносимую доску и review protocol | `IN_REVIEW` | `HIGH` | — |
 | [A-02](tasks/A-02.md) | A — Управление и документация | Закрепить источники и их иерархию | `BACKLOG` | `CRITICAL` | `A-01` |
 | [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `BACKLOG` | `CRITICAL` | `A-02` |
 | [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `BACKLOG` | `CRITICAL` | `A-02` |
