@@ -7,6 +7,7 @@ import {
   type DatabaseReadinessProbe,
   type ReadinessEnvironment
 } from "@/server/runtime-readiness/runtime-readiness";
+import type { MigrationCompatibilityProbe } from "@/server/runtime-readiness/migration-compatibility";
 
 function encodedBytes(seed: number) {
   return Buffer.from(Array.from({ length: 32 }, (_, index) => (
@@ -30,11 +31,13 @@ function validEnvironment(
 
 function readinessHandler(
   environment: ReadinessEnvironment,
-  databaseProbe: DatabaseReadinessProbe
+  databaseProbe: DatabaseReadinessProbe,
+  migrationProbe: MigrationCompatibilityProbe = async () => true
 ) {
   return createReadinessHandler({
     getEnvironment: () => environment,
-    databaseProbe
+    databaseProbe,
+    migrationProbe
   });
 }
 
@@ -47,69 +50,132 @@ const notReadyBody = {
 };
 
 describe("runtime readiness primitive", () => {
-  it("returns READY for valid configuration and one successful database probe", async () => {
+  it("returns READY for valid configuration, database, and migrations", async () => {
     const databaseProbe = vi.fn().mockResolvedValue(true);
+    const migrationProbe = vi.fn().mockResolvedValue(true);
 
-    await expect(evaluateRuntimeReadiness(validEnvironment(), databaseProbe)).resolves.toEqual({
-      status: "READY"
-    });
+    await expect(evaluateRuntimeReadiness(
+      validEnvironment(),
+      databaseProbe,
+      migrationProbe
+    )).resolves.toEqual({ status: "READY" });
     expect(databaseProbe).toHaveBeenCalledTimes(1);
+    expect(migrationProbe).toHaveBeenCalledTimes(1);
   });
 
   it("fails closed for invalid configuration without calling the database", async () => {
     const databaseProbe = vi.fn().mockResolvedValue(true);
+    const migrationProbe = vi.fn().mockResolvedValue(true);
 
     await expect(evaluateRuntimeReadiness(
       validEnvironment({ APP_URL: "http://readiness.invalid" }),
-      databaseProbe
+      databaseProbe,
+      migrationProbe
     )).resolves.toEqual({
       status: "NOT_READY",
       reason: "CONFIGURATION_INVALID"
     });
     expect(databaseProbe).not.toHaveBeenCalled();
+    expect(migrationProbe).not.toHaveBeenCalled();
   });
 
   it("maps a false database probe to DATABASE_UNAVAILABLE", async () => {
     const databaseProbe = vi.fn().mockResolvedValue(false);
+    const migrationProbe = vi.fn().mockResolvedValue(true);
 
-    await expect(evaluateRuntimeReadiness(validEnvironment(), databaseProbe)).resolves.toEqual({
-      status: "NOT_READY",
-      reason: "DATABASE_UNAVAILABLE"
-    });
+    await expect(evaluateRuntimeReadiness(
+      validEnvironment(),
+      databaseProbe,
+      migrationProbe
+    )).resolves.toEqual({ status: "NOT_READY", reason: "DATABASE_UNAVAILABLE" });
     expect(databaseProbe).toHaveBeenCalledTimes(1);
+    expect(migrationProbe).not.toHaveBeenCalled();
   });
 
   it("maps a rejected database probe to DATABASE_UNAVAILABLE without retry", async () => {
     const databaseProbe = vi.fn().mockRejectedValue(new Error("private database diagnostic"));
+    const migrationProbe = vi.fn().mockResolvedValue(true);
 
-    await expect(evaluateRuntimeReadiness(validEnvironment(), databaseProbe)).resolves.toEqual({
-      status: "NOT_READY",
-      reason: "DATABASE_UNAVAILABLE"
-    });
+    await expect(evaluateRuntimeReadiness(
+      validEnvironment(),
+      databaseProbe,
+      migrationProbe
+    )).resolves.toEqual({ status: "NOT_READY", reason: "DATABASE_UNAVAILABLE" });
     expect(databaseProbe).toHaveBeenCalledTimes(1);
+    expect(migrationProbe).not.toHaveBeenCalled();
   });
 
   it("maps a synchronously thrown database probe to DATABASE_UNAVAILABLE without retry", async () => {
     const databaseProbe = vi.fn(() => {
       throw new Error("private synchronous database diagnostic");
     });
+    const migrationProbe = vi.fn().mockResolvedValue(true);
 
-    await expect(evaluateRuntimeReadiness(validEnvironment(), databaseProbe)).resolves.toEqual({
-      status: "NOT_READY",
-      reason: "DATABASE_UNAVAILABLE"
-    });
+    await expect(evaluateRuntimeReadiness(
+      validEnvironment(),
+      databaseProbe,
+      migrationProbe
+    )).resolves.toEqual({ status: "NOT_READY", reason: "DATABASE_UNAVAILABLE" });
     expect(databaseProbe).toHaveBeenCalledTimes(1);
+    expect(migrationProbe).not.toHaveBeenCalled();
+  });
+
+  it("maps a false migration probe to MIGRATION_INCOMPATIBLE", async () => {
+    const databaseProbe = vi.fn().mockResolvedValue(true);
+    const migrationProbe = vi.fn().mockResolvedValue(false);
+
+    await expect(evaluateRuntimeReadiness(
+      validEnvironment(),
+      databaseProbe,
+      migrationProbe
+    )).resolves.toEqual({ status: "NOT_READY", reason: "MIGRATION_INCOMPATIBLE" });
+    expect(databaseProbe).toHaveBeenCalledTimes(1);
+    expect(migrationProbe).toHaveBeenCalledTimes(1);
+  });
+
+  it("maps a rejected migration probe to MIGRATION_INCOMPATIBLE without retry", async () => {
+    const databaseProbe = vi.fn().mockResolvedValue(true);
+    const migrationProbe = vi.fn().mockRejectedValue(
+      new Error("private migration diagnostic")
+    );
+
+    await expect(evaluateRuntimeReadiness(
+      validEnvironment(),
+      databaseProbe,
+      migrationProbe
+    )).resolves.toEqual({ status: "NOT_READY", reason: "MIGRATION_INCOMPATIBLE" });
+    expect(databaseProbe).toHaveBeenCalledTimes(1);
+    expect(migrationProbe).toHaveBeenCalledTimes(1);
   });
 
   it("returns immutable closed results", async () => {
-    const ready = await evaluateRuntimeReadiness(validEnvironment(), async () => true);
-    const configurationInvalid = await evaluateRuntimeReadiness({}, async () => true);
+    const ready = await evaluateRuntimeReadiness(
+      validEnvironment(),
+      async () => true,
+      async () => true
+    );
+    const configurationInvalid = await evaluateRuntimeReadiness(
+      {},
+      async () => true,
+      async () => true
+    );
     const databaseUnavailable = await evaluateRuntimeReadiness(
       validEnvironment(),
+      async () => false,
+      async () => true
+    );
+    const migrationIncompatible = await evaluateRuntimeReadiness(
+      validEnvironment(),
+      async () => true,
       async () => false
     );
 
-    for (const result of [ready, configurationInvalid, databaseUnavailable]) {
+    for (const result of [
+      ready,
+      configurationInvalid,
+      databaseUnavailable,
+      migrationIncompatible
+    ]) {
       expect(Object.isFrozen(result)).toBe(true);
     }
   });
@@ -160,6 +226,33 @@ describe("readiness HTTP boundary", () => {
       "CORE_APP_ORIGIN_INVALID",
       "private database diagnostic",
       "private synchronous database diagnostic",
+      "Prisma"
+    ]) {
+      expect(serialized).not.toContain(forbidden);
+    }
+  });
+
+  it("returns the same exact safe 503 without migration diagnostics", async () => {
+    const migrationProbe = vi.fn().mockRejectedValue(
+      new Error("20260701163000_init checksum=synthetic-secret-checksum")
+    );
+    const response = await readinessHandler(
+      validEnvironment(),
+      async () => true,
+      migrationProbe
+    )();
+    const serialized = await response.text();
+
+    expect(response.status).toBe(503);
+    expect(JSON.parse(serialized)).toEqual(notReadyBody);
+    expect(response.headers.get("Cache-Control")).toBe("no-store");
+    expect(response.headers.get("Referrer-Policy")).toBe("no-referrer");
+    expect(migrationProbe).toHaveBeenCalledTimes(1);
+    for (const forbidden of [
+      "MIGRATION_INCOMPATIBLE",
+      "20260701163000_init",
+      "synthetic-secret-checksum",
+      "checksum",
       "Prisma"
     ]) {
       expect(serialized).not.toContain(forbidden);

@@ -140,8 +140,9 @@ change.
 
 ## Known exclusions
 
-INF-01B does not inspect `_prisma_migrations`, migration names or checksums, table or column
+INF-01B itself does not inspect `_prisma_migrations`, migration names or checksums, table or column
 presence, or startup state. It does not run migrations at application startup, add startup
 enforcement, check external providers, or activate production analytics or any other production
-feature. Migration proof and schema compatibility are explicitly **not proved** by this boundary;
-they remain a separate dependent infrastructure scope.
+feature. Its dependent migration proof is defined by the
+[INF-01C runtime migration compatibility boundary](./runtime-migration-compatibility-v1.md), which
+extends readiness after the connectivity step without changing this INF-01B contract.
