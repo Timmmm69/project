@@ -6,7 +6,7 @@ Stabilization pass before Phase 5 is complete. Report: `docs/15-stabilization-pa
 
 Phase 5 Public Student Flow is complete. Report: `docs/16-phase-5-public-flow-report.md`.
 
-Phase 6 Payments, Accesses And Access Codes is complete with mock payments. Report: `docs/17-phase-6-payments-access-report.md`.
+Phase 6 legacy payment/access mechanics were completed with mock payments. Canonical payment launch status is tracked in `docs/payment-program/stage-7-launch-control-v1.md`; production remains `NO-GO`.
 
 Phase 7 Attempt Runtime is complete. Report: `docs/18-phase-7-attempt-runtime-report.md`.
 
@@ -48,7 +48,7 @@ Demo content seed добавлен: `pnpm seed:demo`. Он создает дем
 - exceljs + csv-parse: импорт XLSX/CSV.
 - Vitest + Playwright: unit и e2e тесты.
 - SMTP-compatible email adapter: отправка email без жесткой привязки к одному сервису.
-- PaymentProvider adapter: Беларусь-first оплата через выбранного провайдера.
+- PaymentProvider adapter: target v1 — WEBPAY hosted internet acquiring; ЕРИП deferred; production `NO-GO`.
 
 ## MVP scope
 
@@ -106,7 +106,11 @@ Supporting docs уже добавлены в `docs/supporting/`:
 - название проекта, цвета, логотип;
 - реальная таблица ЦЭ/ЦТ 0-100;
 - тестовые данные для первых 1-3 тестов;
-- финальный платежный провайдер и его документация.
+- merchant agreement/eligibility, merchant-specific WEBPAY documentation and credentials;
+- real WEBPAY sandbox evidence;
+- seller/legal/support/receipt/hosting and production-email approvals.
+
+Единый payment gate register: `docs/payment-program/stage-7-launch-control-v1.md`.
 
 ## Локальный запуск
 

@@ -2,6 +2,8 @@
 
 Дата: 2026-07-06
 
+> Исторический отчёт. Он не описывает текущий payment launch verdict. Канонический target — WEBPAY hosted same-tab checkout, ЕРИП deferred; production `NO-GO`. См. `docs/payment-program/stage-7-launch-control-v1.md`.
+
 ## Что сделано
 
 - Усилена серверная логика завершения попытки:
@@ -53,7 +55,7 @@ $env:RUN_E2E_WITH_DB='true'; pnpm test:e2e
 
 ## Оставшиеся риски
 
-- Реальный платежный провайдер еще не подключен; сейчас рабочий flow использует mock payments.
+- Production WEBPAY ещё не подключён; local fake и assumed WEBPAY sandbox flow разрешены только для dev/test и не являются merchant evidence.
 - Email ученика пока не подтверждается magic link/code; для платных продаж это остается security/product решением.
 - Admin UI остается большим монолитным компонентом и требует будущего разделения по модулям.
 - Публичная часть пока не является полноценной продающей страницей.
@@ -62,4 +64,4 @@ $env:RUN_E2E_WITH_DB='true'; pnpm test:e2e
 ## Следующие решения
 
 - Утвердить следующий этап: product/UX redesign публичного каталога, страницы теста, попытки, результата и admin dashboard.
-- До реальных продаж выбрать платежного провайдера и подготовить production payment checklist.
+- До реальных продаж закрыть WEBPAY merchant agreement/protocol/credentials, real sandbox, legal/operations и QA gates из canonical launch-control.

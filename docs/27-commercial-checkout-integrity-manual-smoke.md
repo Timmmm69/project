@@ -1,5 +1,7 @@
 # Commercial Checkout Integrity Manual Smoke
 
+> `LOCAL REGRESSION ONLY`. Этот документ проверяет внутренние invariants с local fake/assumed WEBPAY sandbox. Он не подтверждает merchant protocol и не разрешает production. Canonical gates: `docs/payment-program/stage-7-launch-control-v1.md`; real sandbox matrix: `docs/payment-program/webpay-sandbox-evidence-plan-v1.md`.
+
 ## Preconditions
 
 - Use local PostgreSQL only and apply migrations with `pnpm prisma migrate deploy`.
@@ -23,8 +25,10 @@
 2. Submit a different order idempotency key for the same email while an order is pending. Confirm `ORDER_ALREADY_PENDING` and no token rotation.
 3. Submit a second payment-session key while an active payment attempt exists. Confirm that the existing session is reused or a typed active-session response is returned.
 4. Send a notification with another provider, invalid signature, wrong amount, or wrong currency. Confirm no payment state change and no access.
-5. Confirm WebPay sandbox refresh returns `PROVIDER_STATUS_REFRESH_UNAVAILABLE` until documented signed status semantics are available.
+5. Confirm the adapter does not claim authoritative refresh until merchant-documented authentication/signature semantics are implemented. Any assumed status response remains dev/test evidence only.
 
 ## Rollback
 
 Set `COMMERCIAL_CHECKOUT_ENABLED=false`. Existing commercial orders, payment events, accesses, generic access codes, and manual access records remain intact.
+
+Rollback must not re-enable legacy ExpressPay/E-POS/ЕРИП UI as a production fallback.

@@ -39,6 +39,14 @@
 | `acc-01a-recovery-spec-v1.md` | Предоставленный проектный source в корне рабочей копии | `CAA70E5929A39EA4BED164C0C3573FA31474AC411B96F4FEE6810BBB25689090` | Принимается в репозиторий A-02 без изменения текста |
 | Внешний WEBPAY PDF | `C:\Users\novik\Downloads\требования к сайту (87).pdf` | `6AF4699F0681EAFE1B7B2AA7C17DDC4560DE9A0422A4E0296727A616810292C7` | Оригинал остаётся внешним evidence; обязательные требования трассируются в A-05/E/O-задачах |
 
+## Канонические производные артефакты
+
+| Артефакт | Владелец | Версия | Статус | Назначение |
+|---|---|---|---|---|
+| `docs/payment-program/stage-7-launch-control-v1.md` | Product Owner / Payments Program | v1.0 | `CANONICAL / NO-GO` | Единый production gate register, activation rule и rollback |
+| `docs/payment-program/webpay-onboarding-dossier-v1.md` | Merchant onboarding owner | v1.0 | `BLOCKED_EXTERNAL` | Реестр merchant/legal/protocol/credential inputs |
+| `docs/payment-program/webpay-sandbox-evidence-plan-v1.md` | Payments QA / Merchant integration owner | v1.0 | `BLOCKED_EXTERNAL` | Настоящая sandbox matrix и правила evidence |
+
 ## Baselines
 
 - Expected main, указанный аудитом: `bf5972a12c85f63893da36fea485d6a2ac36f2a4`.
