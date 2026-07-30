@@ -4,36 +4,50 @@
 
 ## Активная карточка
 
-- Следующий приоритет: `A-04`
-- Статус: `READY`
-- Параллельно доступна: `A-03 = READY`
+- ID: `A-04`
+- Статус: `IN_REVIEW`
+- Implementer: текущая goal-сессия, 2026-07-30
+- Base SHA: `b40eb78`
+- Final SHA: атомарный A-04 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
+- Next owner: отдельный независимый reviewer
 - Production verdict: `NO-GO`
 
-## Последний завершённый шаг
+## Выполнено
 
-- A-02 source hierarchy/reconciliation implementation: `13cccb4`.
-- Независимый review: `CHANGES_REQUIRED` только по `LOW A02-DOC-HYGIENE-01`.
-- Correction implementation: `2a54a09`.
-- Correction re-review: `DONE`; оба `git diff --check` прошли, новых findings нет.
-- A-02 переведена в `DONE`; A-03 и A-04 открыты как `READY`.
+- Final MVP Spec и approved decisions выбирают WEBPAY hosted same-tab checkout как target v1.
+- ЕРИП зафиксирован как отложенная capability и запрещён в first-launch UI.
+- `PAY-01A = READY`; `PAY-01B = BLOCKED`.
+- Browser return не подтверждает оплату и не создаёт Access.
+- Backend/provider verification остаётся единственным источником истины.
+- Card inputs, PAN/CVV и embedded bank form запрещены.
+- Production и реальные платежи остаются `NO-GO` до внешних и технических gates.
+- Legacy E-POS/ЕРИП scaffold не является canonical checkout и должен оставаться отключённым/изолированным.
+- Runtime/schema/API не менялись.
 
-## Точное продолжение A-04
+## Проверки
 
-1. Записать claim и base SHA.
-2. Точечно обновить Final MVP Spec и approved decisions:
-   - WEBPAY hosted same-tab redirect — target checkout v1;
-   - ЕРИП — отложенная capability, отсутствует в first-launch UI;
-   - backend/provider verification — единственный источник истины;
-   - card inputs/PAN/CVV/embedded form запрещены;
-   - `PAY-01A = READY`, `PAY-01B = BLOCKED`;
-   - production и реальные платежи остаются `NO-GO`.
-3. Не активировать provider и не менять runtime-код.
-4. Обновить conflict register, board, A-04 evidence и handoff.
-5. Передать отдельному reviewer.
+- В canonical docs отсутствуют утверждения, что provider не выбран.
+- WEBPAY/ЕРИП/PAY-01A/PAY-01B/NO-GO assertions согласованы между Final MVP Spec и approved decisions.
+- `SRC-PAY-01` отражает A-04 implementation pending review; `SRC-PAY-03` остаётся маршрутизирован A-05.
+- Запрещённые MVP-функции не добавлены.
+- `git diff --check` повторяется на final commit.
 
-## Параллельный следующий шаг A-03
+## Точное продолжение
 
-Повторно проверить все 35 audit findings на актуальном HEAD и записать evidence/status без предположения, что historical audit остаётся текущим.
+Reviewer:
+
+1. Читает `AGENTS.md`, Final MVP Spec, approved decisions, board, A-04, source register, reconciliation и этот handoff.
+2. Проверяет diff от `b40eb78` до текущего HEAD.
+3. Повторяет canonical contradiction scan и `git diff --check`.
+4. Проверяет, что provider/runtime не активирован и production остался `NO-GO`.
+5. Не исправляет implementation.
+6. Создаёт `docs/payment-program/reviews/A-04.md` с `DONE` либо `CHANGES_REQUIRED`.
+
+После `A-04 = DONE` приоритет — A-03 revalidation всех 35 audit findings. A-05 остаётся заблокирована до A-03.
+
+## Правило передачи при заполнении контекста
+
+Если контекст текущего агента приближается к 90%, он создаёт нумерованный `handoff-1.md` с активной целью, полным планом goal mode, текущими SHA/status/evidence, рабочей копией и точным продолжением. Следующий агент обязан продолжить ту же цель и при своём пороге около 90% создать следующий нумерованный handoff, передав это правило дальше.
 
 ## Состояние рабочей копии
 
@@ -47,7 +61,8 @@ Unrelated modified/untracked файлы, не принадлежащие payment
 
 ## Незакрытые решения и блокеры
 
-- A-04 ещё не разнёс WEBPAY/ЕРИП/NO-GO decision по каноническим payment-разделам.
+- A-04 требует независимого verdict.
 - A-03 ещё не перепроверил 35 findings на текущем HEAD.
+- A-05 должен согласовать README, E-POS report и WebPay sandbox docs с launch-control.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются внешними gates.
 - Production остаётся `NO-GO`.

@@ -57,14 +57,21 @@ Production values must be replaced. `SESSION_SECRET` in production must be rando
 
 ## Payments
 
-- Real provider is not selected.
-- Implement `PaymentProvider` abstraction.
-- Use `MockPaymentProvider` for development.
-- Current goal: working payment/access business logic through mock provider.
-- Do not implement bePaid/WebPay/ERIP integration until sandbox credentials and docs are available.
-- Backend is source of truth for amount/currency.
-- Mock webhook must be idempotent.
+- Target checkout v1: WEBPAY internet acquiring through hosted checkout.
+- Redirect to WEBPAY uses a server-built POST form in the same browser tab.
+- ЕРИП is deferred and must not appear in the first-launch checkout UI.
+- `PAY-01A = READY` as the approved product/UX target.
+- `PAY-01B = BLOCKED`; real payments and production activation remain `NO-GO`.
+- Keep the `PaymentProvider` abstraction.
+- Local fake and WEBPAY sandbox modes are allowed only in dev/test; they do not prove the merchant-approved protocol.
+- Do not activate or claim production WEBPAY support until merchant agreement, eligibility, exact docs, credentials, real sandbox evidence, legal/operations gates and final security/QA review exist.
+- Backend/provider verification is the source of truth for amount, currency and payment status.
+- Browser return alone must never mark a payment paid or create Access.
+- Card inputs, PAN/CVV and embedded bank forms are prohibited.
+- ЕРИП/ExpressPay E-POS scaffolds are not canonical checkout and must remain disabled/isolated until removed or separately approved.
+- Provider callbacks and status refresh must be idempotent.
 - One successful payment must not create two accesses.
+- Raw provider payload, signatures, secrets and raw payment URLs must not be persisted; only allowlisted metadata is permitted.
 - Payment errors must be logged.
 
 ## Email
@@ -177,7 +184,7 @@ Add basic architecture for:
 - Continue Phase 3: Questions Builder.
 - UI remains neutral.
 - Local verification uses PostgreSQL through Docker.
-- Payments use `MockPaymentProvider` until real provider is selected.
+- Payments follow the approved WEBPAY target contract in documentation; only local fake/WEBPAY sandbox are allowed in dev/test, and production remains `NO-GO`.
 - Email uses mock/log email until provider is selected.
 - CE/CT scale uses dev-only scale.
 - Tests use demo content until real content is provided and expert-checked.
