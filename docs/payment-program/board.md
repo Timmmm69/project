@@ -38,14 +38,14 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | `BACKLOG` | 8 |
 | `READY` | 1 |
 | `IN_PROGRESS` | 0 |
-| `IN_REVIEW` | 1 |
+| `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 9 |
-| `DONE` | 2 |
+| `DONE` | 3 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: A-04 согласовала канонические WEBPAY/ЕРИП/NO-GO решения и находится `IN_REVIEW`; A-03 остаётся `READY`. Feature-карточки не начинаются до принятия A-04 и актуализации audit findings.
+Текущий gate: A-04 принята независимым reviewer; A-03 остаётся `READY`. Feature-карточки не начинаются до актуализации всех 35 audit findings.
 
 ## 4. Реестр задач
 
@@ -54,7 +54,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [A-01](tasks/A-01.md) | A — Управление и документация | Создать переносимую доску и review protocol | `DONE` | `HIGH` | — |
 | [A-02](tasks/A-02.md) | A — Управление и документация | Закрепить источники и их иерархию | `DONE` | `CRITICAL` | `A-01` |
 | [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `READY` | `CRITICAL` | `A-02` |
-| [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `IN_REVIEW` | `CRITICAL` | `A-02` |
+| [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `DONE` | `CRITICAL` | `A-02` |
 | [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `BACKLOG` | `HIGH` | `A-03`, `A-04` |
 | [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `BACKLOG` | `HIGH` | `A-03`, `A-04` |
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `BACKLOG` | `HIGH` | `A-03` |
