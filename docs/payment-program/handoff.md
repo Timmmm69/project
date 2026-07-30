@@ -4,28 +4,48 @@
 
 ## Активная карточка
 
-- Следующий приоритет: `A-03`
-- Статус: `READY`
+- ID: `A-03`
+- Статус: `IN_REVIEW`
+- Implementer: текущая goal-сессия, 2026-07-30
+- Base SHA: `b172f70`
+- Final SHA: атомарный A-03 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
+- Next owner: отдельный независимый reviewer
 - Production verdict: `NO-GO`
 
-## Последний завершённый шаг
+## Выполнено
 
-- A-04 implementation commit: `2435e8b`.
-- Независимый reviewer повторил canonical contradiction scan, gates и diff hygiene.
-- Findings отсутствуют; A-04 получила `DONE`.
-- WEBPAY hosted same-tab acquiring закреплён как target v1.
-- ЕРИП отложен и отсутствует в first-launch target.
-- Provider/runtime не активирован; production `NO-GO`.
+- Создана `docs/payment-program/audit-revalidation-2026-07-30.md`.
+- Перепроверены ровно 35/35 historical audit IDs на текущем рабочем дереве.
+- Выявлено критическое baseline-различие: audited `adf2355` — sibling history, не предок current main; merge base `01eb2d3`.
+- Статусы: 11 implemented, 11 partial, 9 missing, 2 contradicted, 2 merchant-blocked.
+- 11 implemented требований сохранены как QA regression invariants.
+- Все 24 `NEEDS_REVALIDATION` карточки получили следующий статус:
+  - 23 — `BACKLOG` до review A-03;
+  - `B2-04` — `BLOCKED_EXTERNAL` из-за merchant dependency `E-02`.
+- Mock/sandbox assumptions не использованы для закрытия merchant-blocked требований.
+- Runtime/schema/API/tests не менялись.
 
-## Точное продолжение A-03
+## Точное продолжение
 
-1. Записать claim и base SHA.
-2. Проверить каждую из 35 строк audit gap matrix на актуальном HEAD.
-3. Для каждого ID записать текущий статус, файлы/символы/тесты и evidence strength.
-4. Сохранить реализованные требования как regression invariants.
-5. Не закрывать merchant-blocked пункты mock/sandbox assumptions.
-6. Обновить board и все затронутые карточки из `NEEDS_REVALIDATION` в evidence-backed status.
-7. Передать отдельному reviewer.
+Reviewer:
+
+1. Читает source register, historical audit, revalidation matrix, board, A-03 и этот handoff.
+2. Проверяет diff от `b172f70` до final A-03 HEAD.
+3. Повторяет ancestry/merge-base evidence.
+4. Проверяет 35 unique IDs и status totals `11/11/9/2/2`.
+5. Выборочно повторяет code/test/absence evidence, особенно verified session/recovery, merchant authority, ACC-01, SEC-01/02, DOC-02.
+6. Сверяет board/card statuses и отсутствие orphan task references.
+7. Не исправляет implementation.
+8. Создаёт `docs/payment-program/reviews/A-03.md`.
+
+При `DONE` reviewer переводит в `READY`:
+
+- `A-05`, `A-06`, `A-07`;
+- `B1-01`;
+- `B2-01`, `B2-02`, `B2-05`, `B2-06`;
+- `B3-01`, `B3-02`, `B3-03`, `B3-04`.
+
+Остальные B/C карточки остаются `BACKLOG`; `B2-04` остаётся `BLOCKED_EXTERNAL`.
 
 ## Правило передачи при заполнении контекста
 
@@ -43,7 +63,7 @@ Unrelated modified/untracked файлы:
 
 ## Незакрытые решения и блокеры
 
-- A-03 ещё не перепроверил 35 findings.
-- A-05 заблокирована до A-03.
+- A-03 требует независимого verdict.
+- A-05/A-06/A-07 закрыты до A-03.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются внешними gates.
 - Production остаётся `NO-GO`.
