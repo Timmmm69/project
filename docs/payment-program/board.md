@@ -38,21 +38,21 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | `BACKLOG` | 10 |
 | `READY` | 0 |
 | `IN_PROGRESS` | 0 |
-| `IN_REVIEW` | 1 |
-| `CHANGES_REQUIRED` | 0 |
+| `IN_REVIEW` | 0 |
+| `CHANGES_REQUIRED` | 1 |
 | `BLOCKED_EXTERNAL` | 9 |
 | `DONE` | 1 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: `A-02` завершила source hierarchy/reconciliation pass и передана в независимое ревью. Feature-карточки не начинаются до принятия A-02/A-04 и актуализации audit findings.
+Текущий gate: review A-02 вернул `CHANGES_REQUIRED` только по finding `A02-DOC-HYGIENE-01`; требуется отдельный correction pass. Feature-карточки не начинаются до принятия A-02/A-04 и актуализации audit findings.
 
 ## 4. Реестр задач
 
 | ID | Поток | Название | Статус | Риск | Зависимости |
 |---|---|---|---|---|---|
 | [A-01](tasks/A-01.md) | A — Управление и документация | Создать переносимую доску и review protocol | `DONE` | `HIGH` | — |
-| [A-02](tasks/A-02.md) | A — Управление и документация | Закрепить источники и их иерархию | `IN_REVIEW` | `CRITICAL` | `A-01` |
+| [A-02](tasks/A-02.md) | A — Управление и документация | Закрепить источники и их иерархию | `CHANGES_REQUIRED` | `CRITICAL` | `A-01` |
 | [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `BACKLOG` | `CRITICAL` | `A-02` |
 | [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `BACKLOG` | `CRITICAL` | `A-02` |
 | [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `BACKLOG` | `HIGH` | `A-03`, `A-04` |

@@ -5,11 +5,11 @@
 ## Активная карточка
 
 - ID: `A-02`
-- Статус: `IN_REVIEW`
+- Статус: `CHANGES_REQUIRED`
 - Implementer: текущая goal-сессия, 2026-07-30
 - Base SHA: `1a07bb898556a511197541934f04b6790f7aaff1`
 - Final SHA: атомарный A-02 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
-- Next owner: отдельный независимый reviewer
+- Next owner: отдельный implementation correction pass
 - Production verdict: `NO-GO`
 
 ## Выполнено
@@ -35,14 +35,10 @@
 
 ## Точное продолжение
 
-Reviewer:
-
-1. Читает `AGENTS.md`, Final MVP Spec, board, A-02, source register, reconciliation и этот handoff.
-2. Проверяет diff от `1a07bb898556a511197541934f04b6790f7aaff1` до текущего HEAD.
-3. Повторяет path/hash/orphan/duplicate checks и проверяет, что противоречия не разрешены молча.
-4. Не исправляет implementation.
-5. Создаёт `docs/payment-program/reviews/A-02.md` с `DONE` либо `CHANGES_REQUIRED`.
-6. При `DONE` открывает A-03 и A-04 согласно dependency graph.
+1. Удалить только trailing spaces на строках 3–4 `docs/payment-program/source-reconciliation.md`.
+2. Повторить `git diff --check`.
+3. Записать correction evidence, перевести A-02 в `IN_REVIEW` и создать отдельный correction commit.
+4. Передать новый SHA тому же независимому reviewer для проверки только finding `A02-DOC-HYGIENE-01`.
 
 ## Состояние рабочей копии
 
