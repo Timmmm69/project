@@ -760,27 +760,27 @@ CSV \- дополнительный.
 
 В MVP нужны способы получения доступа:
 
-1. банковская карта через выбранный провайдер;  
-2. ЕРИП через выбранный провайдер;  
-3. ручная выдача доступа;  
-4. одноразовый код доступа.
+1. банковская карта через WEBPAY hosted checkout;
+2. ручная выдача доступа;
+3. одноразовый код доступа.
 
-Платёжный провайдер пока не выбран.
+Целевой checkout первого запуска — интернет-эквайринг WEBPAY. Передача пользователя выполняется POST redirect в hosted checkout WEBPAY в той же вкладке. Карточные поля, PAN/CVV и embedded bank form на сайте запрещены.
 
-Нужно заложить абстракцию:
+ЕРИП является отложенной capability и не показывается в first-launch checkout. Его последующее добавление требует отдельного утверждения, provider evidence, UX и regression review.
+
+Сохраняется абстракция:
 
 `PaymentProvider`
 
-Возможные значения:
+Целевые значения для первого запуска:
 
 1. `manual`;  
-2. `bepaid`;  
-3. `webpay`;  
-4. `erip`;  
-5. `stripe`;  
-6. `other`.
+2. `webpay`;
+3. `mock` / `local_fake` — только для dev/test.
 
-Финальный список зависит от выбранного провайдера.
+`PAY-01A = READY` как продуктовый/UX target. `PAY-01B = BLOCKED`: реальные платежи и production activation остаются `NO-GO` до merchant agreement, eligibility, merchant-specific документации, credentials, настоящей sandbox matrix, legal/operations gates и финального security/QA review.
+
+Backend и подтверждённый provider status являются единственным источником истины по сумме, валюте и факту оплаты. Browser return сам по себе не подтверждает оплату и не создаёт Access.
 
 ---
 
@@ -798,7 +798,7 @@ Payment хранит платёж.
 6. status;  
 7. provider;  
 8. provider\_payment\_id;  
-9. provider\_payload\_json;  
+9. allowlisted provider metadata без raw payload, secrets, подписей и платёжных URL;
 10. created\_at;  
 11. updated\_at;  
 12. paid\_at;  
@@ -812,6 +812,8 @@ Payment хранит платёж.
 3. `failed`;  
 4. `cancelled`;  
 5. `refunded`.
+
+Для canonical checkout платёжная попытка и коммерческие условия фиксируются immutable snapshot. Повторное provider-событие не создаёт второй Access; критические переходы выполняются в transaction. Legacy raw provider payload не является допустимым целевым контрактом и удаляется/санитизируется отдельной security-карточкой.
 
 ---
 
@@ -1778,9 +1780,9 @@ MVP готов, если:
 
 Перед финальной реализацией нужно утвердить:
 
-1. платёжный провайдер;  
-2. страна и валюта платежей;  
-3. нужна ли шкала ЦЭ/ЦТ 0-100 прямо в MVP или сразу после;  
+1. merchant agreement, eligibility, credentials и merchant-specific WEBPAY protocol;
+2. production acquiring, settlement, secrets/configuration и rollback;
+3. seller/legal/support/refund/receipt данные и production email delivery;
 4. точный срок доступа, если 7 дней не подходит;  
 5. финальные тексты email;  
 6. название проекта;  
@@ -1800,7 +1802,7 @@ MVP готов, если:
 1. Next.js для frontend и backend API;  
 2. PostgreSQL как база данных;  
 3. Prisma как ORM;  
-4. готовый платёжный провайдер после выбора;  
+4. WEBPAY adapter после merchant approval и подтверждённого provider contract;
 5. библиотека для XLSX/CSV импорта;  
 6. email-сервис для отправки писем;  
 7. хостинг с поддержкой backend и PostgreSQL.
