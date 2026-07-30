@@ -4,45 +4,40 @@
 
 ## Активная карточка
 
-- ID: `A-02`
-- Статус: `IN_REVIEW`
-- Implementer: текущая goal-сессия, 2026-07-30
-- Base SHA: `1a07bb898556a511197541934f04b6790f7aaff1`
-- Final SHA: атомарный A-02 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
-- Next owner: независимый correction reviewer
+- Следующий приоритет: `A-04`
+- Статус: `READY`
+- Параллельно доступна: `A-03 = READY`
 - Production verdict: `NO-GO`
 
-## Выполнено
+## Последний завершённый шаг
 
-- В `docs/payment-program/sources/README.md` закреплена полная source hierarchy.
-- Каждый источник получил владельца, версию/дату, статус и bounded-область авторитетности.
-- Исторический аудит явно привязан к `adf23554a1bac5a6f751fa4fc9a80f2bf64371f2` и не считается текущей истиной.
-- Оба утверждённых ACC-01A документа приняты как versioned repository sources без изменения текста.
-- WEBPAY PDF зарегистрирован как external legal/merchant evidence с SHA-256; он не подменяет merchant API/signature contract.
-- Создан `docs/payment-program/source-reconciliation.md` с 7 конфликтами, владельцами, маршрутами и gates.
-- Final MVP Spec и approved decisions ссылаются на source hierarchy и запрещают молчаливое разрешение конфликтов.
-- Feature implementation не начиналась.
+- A-02 source hierarchy/reconciliation implementation: `13cccb4`.
+- Независимый review: `CHANGES_REQUIRED` только по `LOW A02-DOC-HYGIENE-01`.
+- Correction implementation: `2a54a09`.
+- Correction re-review: `DONE`; оба `git diff --check` прошли, новых findings нет.
+- A-02 переведена в `DONE`; A-03 и A-04 открыты как `READY`.
 
-## Проверки
+## Точное продолжение A-04
 
-- Repository source paths: `7/7` существуют.
-- ACC bridge SHA-256: `33A4B2FD5395C6A1DA316F1423F78B056BB08F302E85FCA84E44712915B4ABC7`.
-- ACC recovery SHA-256: `CAA70E5929A39EA4BED164C0C3573FA31474AC411B96F4FEE6810BBB25689090`.
-- Conflict IDs: `7`, unique `7`.
-- Task registry: 45 IDs; missing references из conflict register — `0`.
-- `git diff --check`: должен быть повторён на final commit.
-- Runtime checks не запускались, потому что код/schema/API не менялись.
+1. Записать claim и base SHA.
+2. Точечно обновить Final MVP Spec и approved decisions:
+   - WEBPAY hosted same-tab redirect — target checkout v1;
+   - ЕРИП — отложенная capability, отсутствует в first-launch UI;
+   - backend/provider verification — единственный источник истины;
+   - card inputs/PAN/CVV/embedded form запрещены;
+   - `PAY-01A = READY`, `PAY-01B = BLOCKED`;
+   - production и реальные платежи остаются `NO-GO`.
+3. Не активировать provider и не менять runtime-код.
+4. Обновить conflict register, board, A-04 evidence и handoff.
+5. Передать отдельному reviewer.
 
-## Точное продолжение
+## Параллельный следующий шаг A-03
 
-1. Проверить correction commit относительно review commit `7fe25ba`.
-2. Подтвердить, что удалены только trailing spaces finding `A02-DOC-HYGIENE-01`.
-3. Повторить `git diff --check 1a07bb8..HEAD`.
-4. При отсутствии новых findings обновить `reviews/A-02.md`, board, карточку и handoff с verdict `DONE`.
+Повторно проверить все 35 audit findings на актуальном HEAD и записать evidence/status без предположения, что historical audit остаётся текущим.
 
 ## Состояние рабочей копии
 
-До A-02 существовали unrelated modified/untracked файлы; они не должны попасть в A-02 commit:
+Unrelated modified/untracked файлы, не принадлежащие payment-program commits:
 
 - `next-env.d.ts`;
 - `pnpm-workspace.yaml`;
@@ -50,12 +45,9 @@
 - `.serena/`;
 - `tmp/`.
 
-Файлы `acc-01a-recovery-spec-v1.md` и `acc-01a-session-bridge-decision-v1.md` были pre-existing untracked sources, напрямую требуемые A-02; они включаются в A-02 commit без изменения содержимого.
-
 ## Незакрытые решения и блокеры
 
-- A-04 должен согласовать канонические payment-разделы с WEBPAY hosted same-tab checkout и отложенным ЕРИП.
-- A-03 должен повторно проверить все 35 audit findings на новом HEAD.
-- A-05 должен создать launch-control и согласовать legacy E-POS/WebPay документы.
+- A-04 ещё не разнёс WEBPAY/ЕРИП/NO-GO decision по каноническим payment-разделам.
+- A-03 ещё не перепроверил 35 findings на текущем HEAD.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются внешними gates.
 - Production остаётся `NO-GO`.
