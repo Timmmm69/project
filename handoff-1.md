@@ -1,9 +1,9 @@
 # Payment Program Goal Handoff 1
 
-Создан: 2026-07-30  
-Причина: контекст текущего агента приблизился к 90%  
-Ветка: `main`  
-Payment-program implementation HEAD at handoff creation: `36abf30`  
+Создан: 2026-07-30
+Причина: контекст текущего агента приблизился к 90%
+Ветка: `main`
+Payment-program implementation HEAD at handoff creation: `36abf30`
 Production verdict: `NO-GO`
 
 ## Постоянная цель
@@ -82,7 +82,7 @@ Evidence: `docs/payment-program/audit-revalidation-2026-07-30.md`.
 
 Статус на board: `IN_REVIEW` перед полученным verdict.
 
-Implementation commit: `36abf30`  
+Implementation commit: `36abf30`
 Base SHA: `7dee3b0`
 
 Созданы:
