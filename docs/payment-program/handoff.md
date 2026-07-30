@@ -5,11 +5,11 @@
 ## Активная карточка
 
 - ID: `A-03`
-- Статус: `IN_REVIEW`
+- Статус: `CHANGES_REQUIRED`
 - Implementer: текущая goal-сессия, 2026-07-30
 - Base SHA: `b172f70`
 - Final SHA: атомарный A-03 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
-- Next owner: отдельный независимый reviewer
+- Next owner: отдельный implementation correction pass
 - Production verdict: `NO-GO`
 
 ## Выполнено
@@ -27,16 +27,12 @@
 
 ## Точное продолжение
 
-Reviewer:
-
-1. Читает source register, historical audit, revalidation matrix, board, A-03 и этот handoff.
-2. Проверяет diff от `b172f70` до final A-03 HEAD.
-3. Повторяет ancestry/merge-base evidence.
-4. Проверяет 35 unique IDs и status totals `11/11/9/2/2`.
-5. Выборочно повторяет code/test/absence evidence, особенно verified session/recovery, merchant authority, ACC-01, SEC-01/02, DOC-02.
-6. Сверяет board/card statuses и отсутствие orphan task references.
-7. Не исправляет implementation.
-8. Создаёт `docs/payment-program/reviews/A-03.md`.
+1. Изменить только `ANA-01` с `PARTIAL` на `IMPLEMENTED`.
+2. Добавить `ANA-01` в regression invariants.
+3. Обновить totals на `12/10/9/2/2`.
+4. Синхронизировать A-03 evidence и handoff.
+5. Повторить matrix/status/card/diff checks.
+6. Вернуть A-03 в `IN_REVIEW` отдельным correction commit.
 
 При `DONE` reviewer переводит в `READY`:
 
