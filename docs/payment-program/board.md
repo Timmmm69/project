@@ -35,17 +35,17 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | Статус | Количество |
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 31 |
-| `READY` | 0 |
+| `BACKLOG` | 19 |
+| `READY` | 12 |
 | `IN_PROGRESS` | 0 |
-| `IN_REVIEW` | 1 |
+| `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 3 |
+| `DONE` | 4 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: finding `A03-ANA-01-STATUS-01` исправлен; A-03 повторно находится `IN_REVIEW`. Feature-карточки не начинаются до независимого принятия A-03.
+Текущий gate: A-03 принята независимым reviewer; 12 dependency-ready карточек открыты. Production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -53,27 +53,27 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 |---|---|---|---|---|---|
 | [A-01](tasks/A-01.md) | A — Управление и документация | Создать переносимую доску и review protocol | `DONE` | `HIGH` | — |
 | [A-02](tasks/A-02.md) | A — Управление и документация | Закрепить источники и их иерархию | `DONE` | `CRITICAL` | `A-01` |
-| [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `IN_REVIEW` | `CRITICAL` | `A-02` |
+| [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `DONE` | `CRITICAL` | `A-02` |
 | [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `DONE` | `CRITICAL` | `A-02` |
-| [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `BACKLOG` | `HIGH` | `A-03`, `A-04` |
-| [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `BACKLOG` | `HIGH` | `A-03`, `A-04` |
-| [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `BACKLOG` | `HIGH` | `A-03` |
-| [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `BACKLOG` | `CRITICAL` | `A-03`, `A-04` |
+| [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `READY` | `HIGH` | `A-03`, `A-04` |
+| [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `READY` | `HIGH` | `A-03`, `A-04` |
+| [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `READY` | `HIGH` | `A-03` |
+| [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `READY` | `CRITICAL` | `A-03`, `A-04` |
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `BACKLOG` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `BACKLOG` | `CRITICAL` | `B1-03`, `B1-04` |
-| [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `BACKLOG` | `HIGH` | `A-03`, `A-04` |
-| [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `BACKLOG` | `HIGH` | `A-03` |
+| [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `READY` | `HIGH` | `A-03`, `A-04` |
+| [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `READY` | `HIGH` | `A-03` |
 | [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `BACKLOG` | `CRITICAL` | `B2-02`, `B2-06` |
 | [B2-04](tasks/B2-04.md) | B2 — Payment state и восстановление | Восстанавливать provider session после crash | `BLOCKED_EXTERNAL` | `HIGH` | `A-03`, `E-02` |
-| [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `BACKLOG` | `HIGH` | `A-03` |
-| [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `BACKLOG` | `HIGH` | `A-03` |
+| [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `READY` | `HIGH` | `A-03` |
+| [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `READY` | `HIGH` | `A-03` |
 | [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `BACKLOG` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
-| [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `BACKLOG` | `CRITICAL` | `A-03` |
-| [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `BACKLOG` | `HIGH` | `A-03` |
-| [B3-03](tasks/B3-03.md) | B3 — Security и analytics | Добавить private cache/referrer policy | `BACKLOG` | `HIGH` | `A-03` |
-| [B3-04](tasks/B3-04.md) | B3 — Security и analytics | Удалить raw provider payload persistence | `BACKLOG` | `CRITICAL` | `A-03` |
+| [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `READY` | `CRITICAL` | `A-03` |
+| [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `READY` | `HIGH` | `A-03` |
+| [B3-03](tasks/B3-03.md) | B3 — Security и analytics | Добавить private cache/referrer policy | `READY` | `HIGH` | `A-03` |
+| [B3-04](tasks/B3-04.md) | B3 — Security и analytics | Удалить raw provider payload persistence | `READY` | `CRITICAL` | `A-03` |
 | [B3-05](tasks/B3-05.md) | B3 — Security и analytics | Добавить authoritative analytics producers | `BACKLOG` | `HIGH` | `A-06` |
 | [D-01](tasks/D-01.md) | D — UX и Figma | Обновить payment UX documents | `BACKLOG` | `HIGH` | `A-04`, `A-05`, `A-06` |
 | [D-02](tasks/D-02.md) | D — UX и Figma | Создать payment-only Figma package | `BACKLOG` | `HIGH` | `D-01` |
