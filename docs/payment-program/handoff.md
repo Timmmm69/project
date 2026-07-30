@@ -5,11 +5,11 @@
 ## Активная карточка
 
 - ID: `A-03`
-- Статус: `CHANGES_REQUIRED`
+- Статус: `IN_REVIEW`
 - Implementer: текущая goal-сессия, 2026-07-30
 - Base SHA: `b172f70`
 - Final SHA: атомарный A-03 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
-- Next owner: отдельный implementation correction pass
+- Next owner: независимый correction reviewer
 - Production verdict: `NO-GO`
 
 ## Выполнено
@@ -17,8 +17,8 @@
 - Создана `docs/payment-program/audit-revalidation-2026-07-30.md`.
 - Перепроверены ровно 35/35 historical audit IDs на текущем рабочем дереве.
 - Выявлено критическое baseline-различие: audited `adf2355` — sibling history, не предок current main; merge base `01eb2d3`.
-- Статусы: 11 implemented, 11 partial, 9 missing, 2 contradicted, 2 merchant-blocked.
-- 11 implemented требований сохранены как QA regression invariants.
+- Статусы после correction: 12 implemented, 10 partial, 9 missing, 2 contradicted, 2 merchant-blocked.
+- 12 implemented требований сохранены как QA regression invariants.
 - Все 24 `NEEDS_REVALIDATION` карточки получили следующий статус:
   - 23 — `BACKLOG` до review A-03;
   - `B2-04` — `BLOCKED_EXTERNAL` из-за merchant dependency `E-02`.
@@ -27,12 +27,11 @@
 
 ## Точное продолжение
 
-1. Изменить только `ANA-01` с `PARTIAL` на `IMPLEMENTED`.
-2. Добавить `ANA-01` в regression invariants.
-3. Обновить totals на `12/10/9/2/2`.
-4. Синхронизировать A-03 evidence и handoff.
-5. Повторить matrix/status/card/diff checks.
-6. Вернуть A-03 в `IN_REVIEW` отдельным correction commit.
+1. Проверить correction относительно review commit `d1c495c`.
+2. Подтвердить `ANA-01 = IMPLEMENTED` по schemas/privacy/persistence/tests.
+3. Проверить 35 IDs и totals `12/10/9/2/2`.
+4. Повторить card/status/diff checks.
+5. При отсутствии findings обновить review report и перевести A-03 в `DONE`.
 
 При `DONE` reviewer переводит в `READY`:
 

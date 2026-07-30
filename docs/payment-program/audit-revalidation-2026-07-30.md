@@ -59,7 +59,7 @@ Historical audited SHA не является предком текущего `ma
 | `SEC-03` | `MISSING` | Commercial payment pages/API не задают системно `no-store`/`no-referrer`; public order ref остаётся в return URL | Header/route scan | `B3-03` |
 | `CARD-01` | `IMPLEMENTED` | PAN/CVV/cardholder inputs и DB columns отсутствуют; hosted-page boundary закреплён в canonical docs | Code/schema scan + docs | `QA-01` regression |
 | `CARD-02` | `PARTIAL` | Commercial event path хранит hash/allowlist, но legacy Payment продолжает raw create/webhook payload persistence; providerFields требуют sanitizer review | Code + schema | `B3-04` |
-| `ANA-01` | `PARTIAL` | Текущий branch имеет payment-only schemas/privacy guard, но canonical taxonomy/runtime/persistence из audited branch отсутствуют | Code + branch divergence | `A-06`, `B3-05` |
+| `ANA-01` | `IMPLEMENTED` | Строгий реестр event schemas, privacy denylist, safe persistence/deduplication и unit tests полностью покрывают bounded canonical schema/privacy criterion | Code + test | `QA-01` regression |
 | `ANA-02` | `PARTIAL` | `order_created`, `payment_confirmed`, `access_granted`, validation/backend failure producers есть; session/return/pending/terminal/unknown/PWA producers отсутствуют | Callsite scan + tests | `B3-05` |
 | `DOC-01` | `PARTIAL` | Board/source register/reconciliation/ACC sources созданы, но девять launch/analytics/UX package documents и legal public-copy package ещё не готовы | Repository inventory | `A-05`, `A-06`, `D-01`, `O-01` |
 | `DOC-02` | `IMPLEMENTED` | Final MVP Spec, approved decisions и board явно фиксируют `PAY-01A`, `PAY-01B`, WEBPAY target, deferred ЕРИП и production `NO-GO` | Docs + independent A-04 review | `QA-02` regression |
@@ -69,8 +69,8 @@ Historical audited SHA не является предком текущего `ma
 
 | Статус | Количество |
 |---|---:|
-| `IMPLEMENTED` | 11 |
-| `PARTIAL` | 11 |
+| `IMPLEMENTED` | 12 |
+| `PARTIAL` | 10 |
 | `MISSING` | 9 |
 | `CONTRADICTED` | 2 |
 | `MERCHANT_BLOCKED` | 2 |
@@ -80,7 +80,7 @@ Historical audited SHA не является предком текущего `ma
 
 Следующие implemented IDs не удаляются из программы и остаются обязательными для `QA-01/QA-02`:
 
-`ORD-01`, `ORD-04`, `PAY-01`, `PAY-02`, `PAY-04`, `PAY-06`, `ACC-01`, `STA-01`, `STA-06`, `CARD-01`, `DOC-02`.
+`ORD-01`, `ORD-04`, `PAY-01`, `PAY-02`, `PAY-04`, `PAY-06`, `ACC-01`, `STA-01`, `STA-06`, `CARD-01`, `ANA-01`, `DOC-02`.
 
 ## Card status routing
 
