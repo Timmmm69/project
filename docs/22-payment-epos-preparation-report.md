@@ -2,7 +2,9 @@
 
 Дата: 2026-07-09
 
-## Что сделано
+> `SUPERSEDED FOR CANONICAL FIRST-LAUNCH CHECKOUT`. Этот документ сохраняется как историческое evidence legacy ExpressPay/E-POS/ЕРИП scaffold. Целевой checkout v1 — WEBPAY hosted same-tab internet acquiring; ЕРИП отложен и не показывается. Legacy account/QR/instructions/raw payload flow нельзя включать как production fallback. Актуальный gate: `docs/payment-program/stage-7-launch-control-v1.md`.
+
+## Что было сделано в legacy scaffold
 
 - Расширена модель `Payment` под Express Pay / E-POS / ЕРИП:
   - provider invoice id;
@@ -72,7 +74,7 @@ pnpm test:e2e
 - `RUN_E2E_WITH_DB=true pnpm test:e2e` - 1 test passed.
 - `pnpm build` - passed.
 
-## Что нужно перед реальной интеграцией Express Pay / E-POS
+## Исторический список входов для legacy Express Pay / E-POS
 
 - sandbox или production режим;
 - API base URL;
@@ -93,7 +95,7 @@ pnpm test:e2e
 - Не реализована автоматическая интеграция с НПД-приложением.
 - Не добавлены подписки, пакеты тестов, промокоды, автоматические возвраты или CRM.
 
-## Оставшиеся риски
+## Оставшиеся legacy-риски
 
 - `ExpressPayEposProvider` пока является безопасной заготовкой: при выборе provider без credentials он возвращает понятную configuration error.
 - Реальную проверку webhook signature нужно сделать строго по официальной документации Express Pay.

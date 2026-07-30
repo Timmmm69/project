@@ -4,33 +4,42 @@
 
 ## Активная карточка
 
-- Следующий приоритет: `A-05`
-- Статус: `READY`
+- ID: `A-05`
+- Статус: `IN_REVIEW`
+- Implementer: текущая goal-сессия, 2026-07-30
+- Base SHA: `7dee3b0`
+- Final SHA: атомарный A-05 commit, содержащий этот handoff; reviewer берёт SHA из HEAD
+- Next owner: отдельный независимый reviewer
 - Production verdict: `NO-GO`
 
-## Последний завершённый шаг
+## Выполнено
 
-- A-03 implementation: `fbcce7b`.
-- Review: `CHANGES_REQUIRED` только по `ANA-01`.
-- Correction: `2850e91`.
-- Correction re-review: `DONE`.
-- Итоговая matrix: 35 unique IDs; `12/10/9/2/2`.
-- A-03 переведена в `DONE`; 12 dependency-ready карточек открыты.
+- Создан `stage-7-launch-control-v1.md` с единым gate register.
+- Создан `webpay-onboarding-dossier-v1.md`.
+- Создан `webpay-sandbox-evidence-plan-v1.md`.
+- Source register обновлён владельцами/версиями/статусами артефактов.
+- README направлен на canonical WEBPAY target.
+- Launch readiness report помечен историческим для payment launch.
+- E-POS/ЕРИП report помечен superseded для canonical first-launch.
+- Оба WebPay smoke docs помечены local/assumed, не merchant-approved evidence.
+- Feature-off и rollback определены; legacy fallback запрещён.
+- Production остаётся технически и документально `NO-GO`.
+- Runtime/schema/API не менялись.
 
-## Точное продолжение A-05
+## Точное продолжение
 
-1. Записать claim и base SHA.
-2. Создать единый launch-control gate register.
-3. Создать WEBPAY onboarding dossier.
-4. Создать real sandbox evidence plan.
-5. Согласовать README, legacy E-POS report и WebPay smoke docs с canonical WEBPAY target.
-6. Явно зафиксировать feature-off/rollback и запрет production activation.
-7. Не называть assumed sandbox protocol merchant-approved.
-8. Передать отдельному reviewer.
+Reviewer:
 
-## Другие READY-карточки
+1. Читает source register, launch-control, dossier, sandbox plan, board, A-05 и этот handoff.
+2. Проверяет diff от `7dee3b0` до final HEAD.
+3. Проверяет владельца/evidence/status каждого blocking gate.
+4. Проверяет, что PDF/site requirements не подменяют technical merchant protocol.
+5. Проверяет README, docs 21/22/26/27 и отсутствие legacy production fallback.
+6. Повторяет task reference scan и `git diff --check`.
+7. Не исправляет implementation.
+8. Создаёт `docs/payment-program/reviews/A-05.md`.
 
-`A-06`, `A-07`, `B1-01`, `B2-01`, `B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`, `B3-04`.
+После `A-05 = DONE` приоритет остаётся между A-06/A-07 и critical READY feature/security cards; production по-прежнему закрыт external gates.
 
 ## Правило передачи при заполнении контекста
 
@@ -48,7 +57,8 @@ Unrelated modified/untracked файлы:
 
 ## Незакрытые решения и блокеры
 
-- A-05 launch-control package ещё не создан.
+- A-05 требует независимого verdict.
+- A-06 analytics plan и A-07 traceability ещё открыты.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются внешними gates.
-- Audited sibling branch содержит verified-session/recovery changes, отсутствующие в current main; интеграция веток не выполнялась молча.
+- Current main всё ещё не содержит verified-session/recovery changes из audited sibling branch.
 - Production остаётся `NO-GO`.
