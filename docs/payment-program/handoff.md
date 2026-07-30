@@ -5,11 +5,11 @@
 ## Активная карточка
 
 - ID: `A-02`
-- Статус: `CHANGES_REQUIRED`
+- Статус: `IN_REVIEW`
 - Implementer: текущая goal-сессия, 2026-07-30
 - Base SHA: `1a07bb898556a511197541934f04b6790f7aaff1`
 - Final SHA: атомарный A-02 commit, содержащий этот handoff; reviewer берёт точный SHA из HEAD
-- Next owner: отдельный implementation correction pass
+- Next owner: независимый correction reviewer
 - Production verdict: `NO-GO`
 
 ## Выполнено
@@ -35,10 +35,10 @@
 
 ## Точное продолжение
 
-1. Удалить только trailing spaces на строках 3–4 `docs/payment-program/source-reconciliation.md`.
-2. Повторить `git diff --check`.
-3. Записать correction evidence, перевести A-02 в `IN_REVIEW` и создать отдельный correction commit.
-4. Передать новый SHA тому же независимому reviewer для проверки только finding `A02-DOC-HYGIENE-01`.
+1. Проверить correction commit относительно review commit `7fe25ba`.
+2. Подтвердить, что удалены только trailing spaces finding `A02-DOC-HYGIENE-01`.
+3. Повторить `git diff --check 1a07bb8..HEAD`.
+4. При отсутствии новых findings обновить `reviews/A-02.md`, board, карточку и handoff с verdict `DONE`.
 
 ## Состояние рабочей копии
 
