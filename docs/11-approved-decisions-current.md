@@ -4,6 +4,8 @@
 
 Этот документ фиксирует текущие утвержденные решения для разработки MVP. Главный источник истины по scope остается `docs/00-final-mvp-spec-v2.md`.
 
+Для платёжной программы применяются source hierarchy и conflict register из `docs/payment-program/sources/README.md` и `docs/payment-program/source-reconciliation.md`. Пока карточки reconciliation не приняты независимым review, противоречия между этим документом, Final MVP Spec, Payment UX Contract и ACC-01A не разрешаются молча и блокируют зависимую feature-реализацию.
+
 ## Technical Base
 
 - Локальная база: PostgreSQL через Docker.
