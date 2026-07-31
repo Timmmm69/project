@@ -1,8 +1,8 @@
 # Stage 7 Payment Launch Control v1
 
-Версия: 1.0  
-Дата: 2026-07-30  
-Владелец: Product Owner / Payments Program  
+Версия: 1.0
+Дата: 2026-07-30
+Владелец: Product Owner / Payments Program
 Production verdict: `NO-GO`
 
 ## Целевой launch boundary

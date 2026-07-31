@@ -1,8 +1,8 @@
 # WEBPAY Real Sandbox Evidence Plan v1
 
-Версия: 1.0  
-Дата: 2026-07-30  
-Владелец: Payments QA / Merchant integration owner  
+Версия: 1.0
+Дата: 2026-07-30
+Владелец: Payments QA / Merchant integration owner
 Статус: `BLOCKED_EXTERNAL`
 
 ## Preconditions
