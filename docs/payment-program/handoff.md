@@ -4,10 +4,9 @@
 
 ## Активная карточка
 
-- Следующий приоритет: `A-06`
-- Статус: `IN_REVIEW`
-- Implementer: текущая goal-сессия, 2026-07-31
-- Base SHA: `c137ba6`
+- Следующий приоритет: `A-07`
+- Статус A-06: `DONE`
+- A-06 reviewed SHA: `96e95f864dc5fc88a46a28ee86cc5ca68d78c07d`
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
@@ -24,21 +23,24 @@
   зависят от B2-03.
 - Выявлен privacy gap: текущий `order_created` содержит запрещённые контрактом
   `amount` и `currency`.
+- Independent review A-06: `DONE` в `reviews/A-06.md`; `git diff --check
+  c137ba6 96e95f8` прошёл.
+- B3-05 и D-01 разблокированы; A-06 больше не является незакрытой зависимостью.
 
-## Точное продолжение A-06
+## Точное продолжение
 
-1. Зафиксировать атомарный docs-only implementation commit A-06.
-2. Независимый reviewer проверяет diff от `c137ba6`.
-3. Повторно сверить раздел 10 Payment UX Contract с 14 строками реестра.
-4. Проверить strict privacy boundary, особенно запрет email hash,
-   provider references, точной суммы/валюты и raw URL.
-5. Проверить, что CTA/return/browser не могут создать `payment_confirmed`.
-6. Записать findings и verdict в `reviews/A-06.md`; reviewer не исправляет
-   implementation.
+1. Claim `A-07` и зафиксировать base SHA.
+2. Обновить полную traceability payment-program согласно карточке A-07.
+3. `B3-05` и `D-01` newly READY после A-06; не claim без отдельного выбора.
 
 ## Другие READY-карточки
 
-`A-07`, `B1-01`, `B2-01`, `B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`, `B3-04`.
+`B1-01`, `B2-01`, `B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`,
+`B3-04`.
+
+## Newly READY после A-06
+
+`B3-05`, `D-01`.
 
 ## Правило передачи при заполнении контекста
 
@@ -56,7 +58,7 @@ Unrelated modified/untracked файлы:
 
 ## Незакрытые решения и блокеры
 
-- A-06 analytics plan и A-07 traceability ещё открыты.
+- A-07 traceability ещё открыта; A-06 принята independent review.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются external gates.
 - Current main не содержит verified-session/recovery changes из audited sibling branch.
 - Production остаётся `NO-GO`.
