@@ -38,14 +38,14 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | `BACKLOG` | 19 |
 | `READY` | 11 |
 | `IN_PROGRESS` | 0 |
-| `IN_REVIEW` | 1 |
+| `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 4 |
+| `DONE` | 5 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: finding `A05-DOC-HYGIENE-01` исправлен; A-05 повторно находится `IN_REVIEW`. Остальные 11 dependency-ready карточек остаются открыты. Production остаётся `NO-GO`.
+Текущий gate: A-05 принята независимым correction review; 11 dependency-ready карточек остаются открыты. Следующий governance priority — A-06. Production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -55,7 +55,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [A-02](tasks/A-02.md) | A — Управление и документация | Закрепить источники и их иерархию | `DONE` | `CRITICAL` | `A-01` |
 | [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `DONE` | `CRITICAL` | `A-02` |
 | [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `DONE` | `CRITICAL` | `A-02` |
-| [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `IN_REVIEW` | `HIGH` | `A-03`, `A-04` |
+| [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `READY` | `HIGH` | `A-03`, `A-04` |
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `READY` | `HIGH` | `A-03` |
 | [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `READY` | `CRITICAL` | `A-03`, `A-04` |
