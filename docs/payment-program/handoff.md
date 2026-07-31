@@ -5,11 +5,11 @@
 ## Активная карточка
 
 - ID: `A-05`
-- Статус: `CHANGES_REQUIRED`
+- Статус: `IN_REVIEW`
 - Implementer: текущая goal-сессия, 2026-07-30
 - Base SHA: `7dee3b0`
 - Final SHA: атомарный A-05 commit, содержащий этот handoff; reviewer берёт SHA из HEAD
-- Next owner: отдельный implementation correction pass
+- Next owner: независимый correction reviewer
 - Production verdict: `NO-GO`
 
 ## Выполнено
@@ -28,13 +28,10 @@
 
 ## Точное продолжение
 
-1. Удалить только trailing whitespace на строках 3–5:
-   - `stage-7-launch-control-v1.md`;
-   - `webpay-onboarding-dossier-v1.md`;
-   - `webpay-sandbox-evidence-plan-v1.md`.
-2. Повторить `git diff --check` и `git diff --check 7dee3b0`.
-3. Записать correction evidence, вернуть A-05 в `IN_REVIEW` и создать отдельный correction commit.
-4. Передать correction commit отдельному reviewer.
+1. Проверить correction commit относительно review commit `30ded45`.
+2. Подтвердить, что удалены только trailing spaces finding `A05-DOC-HYGIENE-01`.
+3. Повторить `git diff --check 30ded45..HEAD` и полный `git diff --check 7dee3b0..HEAD`.
+4. При отсутствии findings обновить review report и перевести A-05 в `DONE`.
 
 После `A-05 = DONE` приоритет остаётся между A-06/A-07 и critical READY feature/security cards; production по-прежнему закрыт external gates.
 
@@ -54,7 +51,7 @@ Unrelated modified/untracked файлы:
 
 ## Незакрытые решения и блокеры
 
-- A-05 имеет `CHANGES_REQUIRED` только по diff hygiene finding.
+- A-05 correction ожидает независимого verdict.
 - A-06 analytics plan и A-07 traceability ещё открыты.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются внешними gates.
 - Current main всё ещё не содержит verified-session/recovery changes из audited sibling branch.

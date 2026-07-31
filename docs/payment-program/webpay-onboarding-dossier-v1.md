@@ -1,8 +1,8 @@
 # WEBPAY Onboarding Dossier v1
 
-Версия: 1.0  
-Дата: 2026-07-30  
-Владелец: Merchant onboarding owner / Product Owner  
+Версия: 1.0
+Дата: 2026-07-30
+Владелец: Merchant onboarding owner / Product Owner
 Статус: `BLOCKED_EXTERNAL`
 
 Этот dossier — реестр необходимых authoritative inputs. Он не является merchant agreement или технической документацией WEBPAY.
