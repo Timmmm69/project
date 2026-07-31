@@ -5,7 +5,9 @@
 ## Активная карточка
 
 - Следующий приоритет: `A-06`
-- Статус: `READY`
+- Статус: `IN_REVIEW`
+- Implementer: текущая goal-сессия, 2026-07-31
+- Base SHA: `c137ba6`
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
@@ -16,16 +18,23 @@
 - Correction: `c2a1133`.
 - Independent correction review: `DONE`; оба diff checks прошли.
 - A-05 переведена в `DONE`.
+- A-06: создан `docs/payment-program/analytics-measurement-plan-v1.md`.
+- Зафиксированы 14 обязательных событий: 4 implemented, 2 partial, 8 missing.
+- Все missing/partial producers направлены в B3-05; PWA-derived events также
+  зависят от B2-03.
+- Выявлен privacy gap: текущий `order_created` содержит запрещённые контрактом
+  `amount` и `currency`.
 
 ## Точное продолжение A-06
 
-1. Записать claim и base SHA.
-2. Сверить текущий analytics registry, privacy guard, persistence и callsites.
-3. Создать `analytics-measurement-plan-v1.md`.
-4. Для каждого обязательного event записать authority, producer, commit boundary и allowlisted payload.
-5. Явно запретить payment confirmation от CTA/return/browser state.
-6. Связать отсутствующие producers с B3-05.
-7. Передать отдельному reviewer.
+1. Зафиксировать атомарный docs-only implementation commit A-06.
+2. Независимый reviewer проверяет diff от `c137ba6`.
+3. Повторно сверить раздел 10 Payment UX Contract с 14 строками реестра.
+4. Проверить strict privacy boundary, особенно запрет email hash,
+   provider references, точной суммы/валюты и raw URL.
+5. Проверить, что CTA/return/browser не могут создать `payment_confirmed`.
+6. Записать findings и verdict в `reviews/A-06.md`; reviewer не исправляет
+   implementation.
 
 ## Другие READY-карточки
 

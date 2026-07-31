@@ -1,6 +1,6 @@
 # Payment Program Source Register
 
-Последнее обновление: 2026-07-30
+Последнее обновление: 2026-07-31
 
 ## Иерархия и правило разрешения конфликтов
 
@@ -46,6 +46,7 @@
 | `docs/payment-program/stage-7-launch-control-v1.md` | Product Owner / Payments Program | v1.0 | `CANONICAL / NO-GO` | Единый production gate register, activation rule и rollback |
 | `docs/payment-program/webpay-onboarding-dossier-v1.md` | Merchant onboarding owner | v1.0 | `BLOCKED_EXTERNAL` | Реестр merchant/legal/protocol/credential inputs |
 | `docs/payment-program/webpay-sandbox-evidence-plan-v1.md` | Payments QA / Merchant integration owner | v1.0 | `BLOCKED_EXTERNAL` | Настоящая sandbox matrix и правила evidence |
+| `docs/payment-program/analytics-measurement-plan-v1.md` | Payments Product / Backend Analytics | v1.0 | `CANONICAL DESIGN; IMPLEMENTATION PARTIAL; NO-GO` | Authority, producer boundaries, privacy allowlist и implementation gaps для payment/access analytics |
 
 ## Baselines
 

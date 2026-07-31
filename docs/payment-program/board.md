@@ -1,6 +1,6 @@
 # Payment Program Board
 
-Последнее обновление: **2026-07-30**
+Последнее обновление: **2026-07-31**
 Planning/current baseline at board creation: `80c6838ce54e8e0768b4264698343e98be7cbaea`  
 Historical audit baseline: `adf23554a1bac5a6f751fa4fc9a80f2bf64371f2`  
 Production verdict: **NO-GO**
@@ -36,16 +36,16 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 19 |
-| `READY` | 11 |
+| `READY` | 10 |
 | `IN_PROGRESS` | 0 |
-| `IN_REVIEW` | 0 |
+| `IN_REVIEW` | 1 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 5 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: A-05 принята независимым correction review; 11 dependency-ready карточек остаются открыты. Следующий governance priority — A-06. Production остаётся `NO-GO`.
+Текущий gate: A-06 находится `IN_REVIEW` на base SHA `c137ba6`; остальные 10 dependency-ready карточек остаются открыты. Production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -56,7 +56,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [A-03](tasks/A-03.md) | A — Управление и документация | Повторно проверить 35 audit findings | `DONE` | `CRITICAL` | `A-02` |
 | [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `DONE` | `CRITICAL` | `A-02` |
 | [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `DONE` | `HIGH` | `A-03`, `A-04` |
-| [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `READY` | `HIGH` | `A-03`, `A-04` |
+| [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `IN_REVIEW` | `HIGH` | `A-03`, `A-04` |
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `READY` | `HIGH` | `A-03` |
 | [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `READY` | `CRITICAL` | `A-03`, `A-04` |
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `BACKLOG` | `CRITICAL` | `B1-01` |
