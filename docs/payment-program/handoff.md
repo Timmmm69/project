@@ -4,9 +4,10 @@
 
 ## Активная карточка
 
-- Следующий приоритет: `A-07`
-- Статус A-07: `IN_PROGRESS`
-- A-07 base SHA: `68e48c1`
+- Feature-карточка: `B1-01`
+- Статус B1-01: `IN_REVIEW`
+- B1-01 base SHA: `509c79b`
+- Program-control A-07: `IN_PROGRESS`, checkpoint `509c79b`
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
@@ -29,11 +30,13 @@
 
 ## Точное продолжение
 
-1. Зафиксировать docs-only checkpoint A-07.
-2. A-07 остаётся `IN_PROGRESS` как program-control до финальной сверки перед
-   QA-02; обновлять её после каждого принятого review.
-3. Следующая отдельная implementation-карточка: `B1-01` на новом base SHA.
-4. `B3-05` и `D-01` также READY, но не claim без отдельного изменения.
+1. Зафиксировать атомарный implementation commit B1-01.
+2. Независимый reviewer проверяет diff от `509c79b`.
+3. Повторить schema/migration validation, token/cookie lifecycle и ключевые
+   transaction/concurrency tests в отдельной `acc01a_*` schema.
+4. Проверить, что новый plane не подключён к identify/public routes и не имеет
+   legacy fallback.
+5. Записать findings/verdict в `reviews/B1-01.md`.
 
 ## Другие READY-карточки
 

@@ -161,6 +161,25 @@ enum AccessCodeStatus {
   @@map("access_code_status")
 }
 
+enum VerifiedStudentSessionSource {
+  EMAIL_OTP_RECOVERY     @map("email_otp_recovery")
+  ACCESS_CODE            @map("access_code")
+  COMMERCIAL_ORDER_CLAIM @map("commercial_order_claim")
+
+  @@map("verified_student_session_source")
+}
+
+enum VerifiedStudentSessionRevocationReason {
+  LOGOUT           @map("logout")
+  EXPIRED          @map("expired")
+  ROTATED          @map("rotated")
+  ACCESS_REVOKED   @map("access_revoked")
+  SECURITY_REVOKED @map("security_revoked")
+  KEY_RETIRED      @map("key_retired")
+
+  @@map("verified_student_session_revocation_reason")
+}
+
 enum AttemptStatus {
   STARTED   @map("started")
   COMPLETED @map("completed")
@@ -205,20 +224,21 @@ model User {
   updatedAt    DateTime  @updatedAt @map("updated_at")
   deletedAt    DateTime? @map("deleted_at")
 
-  payments              Payment[]         @relation("PaymentUser")
-  accesses              Access[]          @relation("AccessUser")
-  attempts              Attempt[]         @relation("AttemptUser")
-  createdTests          Test[]            @relation("TestCreatedByAdmin")
-  createdAccesses       Access[]          @relation("AccessCreatedByAdmin")
-  revokedAccesses       Access[]          @relation("AccessRevokedByAdmin")
-  createdAccessCodes    AccessCode[]      @relation("AccessCodeCreatedByAdmin")
-  activatedAccessCodes  AccessCode[]      @relation("AccessCodeActivatedByUser")
-  revokedAccessCodes    AccessCode[]      @relation("AccessCodeRevokedByAdmin")
-  importJobs            ImportJob[]       @relation("ImportJobAdmin")
-  manualAccessAdminLogs ManualAccessLog[] @relation("ManualAccessAdmin")
-  manualAccessUserLogs  ManualAccessLog[] @relation("ManualAccessUser")
-  eventLogs             EventLog[]        @relation("EventLogActor")
-  emailLogs             EmailLog[]        @relation("EmailLogUser")
+  payments                Payment[]                @relation("PaymentUser")
+  accesses                Access[]                 @relation("AccessUser")
+  attempts                Attempt[]                @relation("AttemptUser")
+  createdTests            Test[]                   @relation("TestCreatedByAdmin")
+  createdAccesses         Access[]                 @relation("AccessCreatedByAdmin")
+  revokedAccesses         Access[]                 @relation("AccessRevokedByAdmin")
+  createdAccessCodes      AccessCode[]             @relation("AccessCodeCreatedByAdmin")
+  activatedAccessCodes    AccessCode[]             @relation("AccessCodeActivatedByUser")
+  revokedAccessCodes      AccessCode[]             @relation("AccessCodeRevokedByAdmin")
+  importJobs              ImportJob[]              @relation("ImportJobAdmin")
+  manualAccessAdminLogs   ManualAccessLog[]        @relation("ManualAccessAdmin")
+  manualAccessUserLogs    ManualAccessLog[]        @relation("ManualAccessUser")
+  eventLogs               EventLog[]               @relation("EventLogActor")
+  emailLogs               EmailLog[]               @relation("EmailLogUser")
+  verifiedStudentSessions VerifiedStudentSession[]
 
   @@index([role])
   @@map("users")
@@ -255,16 +275,17 @@ model Test {
   updatedAt           DateTime   @updatedAt @map("updated_at")
   deletedAt           DateTime?  @map("deleted_at")
 
-  createdByAdmin     User?               @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
-  scoringScheme      ScoringScheme?      @relation(fields: [scoringSchemeId], references: [id])
-  questions          Question[]
-  payments           Payment[]
-  accesses           Access[]
-  accessCodes        AccessCode[]
-  attempts           Attempt[]
-  importJobs         ImportJob[]
-  manualLogs         ManualAccessLog[]
-  commercialProducts CommercialProduct[]
+  createdByAdmin          User?                    @relation("TestCreatedByAdmin", fields: [createdByAdminId], references: [id])
+  scoringScheme           ScoringScheme?           @relation(fields: [scoringSchemeId], references: [id])
+  questions               Question[]
+  payments                Payment[]
+  accesses                Access[]
+  accessCodes             AccessCode[]
+  attempts                Attempt[]
+  importJobs              ImportJob[]
+  manualLogs              ManualAccessLog[]
+  commercialProducts      CommercialProduct[]
+  verifiedStudentSessions VerifiedStudentSession[]
 
   @@index([status])
   @@index([subject])
@@ -393,6 +414,7 @@ model Access {
   commercialPaymentAttempt CommercialPaymentAttempt? @relation(fields: [commercialPaymentAttemptId], references: [id])
   attempts                 Attempt[]
   manualLogs               ManualAccessLog[]
+  verifiedStudentSessions  VerifiedStudentSession[]
 
   @@index([userId])
   @@index([testId])
@@ -416,10 +438,11 @@ model CommercialProduct {
   createdAt           DateTime @default(now()) @map("created_at")
   updatedAt           DateTime @updatedAt @map("updated_at")
 
-  test          Test                     @relation(fields: [testId], references: [id])
-  orders        CommercialOrder[]
-  checkoutFlows CommercialCheckoutFlow[]
-  accesses      Access[]
+  test                    Test                     @relation(fields: [testId], references: [id])
+  orders                  CommercialOrder[]
+  checkoutFlows           CommercialCheckoutFlow[]
+  accesses                Access[]
+  verifiedStudentSessions VerifiedStudentSession[]
 
   @@index([testId])
   @@index([isActive])
@@ -526,6 +549,39 @@ model CommercialPaymentEvent {
   @@index([commercialPaymentAttemptId])
   @@index([provider, providerEventKey])
   @@map("commercial_payment_events")
+}
+
+model VerifiedStudentSession {
+  id                    String                                  @id @default(uuid()) @db.Uuid
+  tokenDigest           String                                  @unique @map("token_digest") @db.Char(64)
+  tokenKeyVersion       String                                  @map("token_key_version") @db.VarChar(32)
+  tokenGeneration       Int                                     @default(1) @map("token_generation")
+  userId                String                                  @map("user_id") @db.Uuid
+  commercialProductId   String                                  @map("commercial_product_id") @db.Uuid
+  testId                String                                  @map("test_id") @db.Uuid
+  accessId              String                                  @map("access_id") @db.Uuid
+  source                VerifiedStudentSessionSource
+  sourceReferenceId     String                                  @map("source_reference_id") @db.Uuid
+  issuanceOperationId   String                                  @map("issuance_operation_id") @db.Uuid
+  issuedAt              DateTime                                @default(now()) @map("issued_at")
+  expiresAt             DateTime                                @map("expires_at")
+  lastRotatedAt         DateTime?                               @map("last_rotated_at")
+  revokedAt             DateTime?                               @map("revoked_at")
+  revocationReason      VerifiedStudentSessionRevocationReason? @map("revocation_reason")
+  securityCorrelationId String                                  @unique @map("security_correlation_id") @db.Uuid
+  createdAt             DateTime                                @default(now()) @map("created_at")
+  updatedAt             DateTime                                @updatedAt @map("updated_at")
+
+  user    User              @relation(fields: [userId], references: [id])
+  product CommercialProduct @relation(fields: [commercialProductId], references: [id])
+  test    Test              @relation(fields: [testId], references: [id])
+  access  Access            @relation(fields: [accessId], references: [id])
+
+  @@unique([source, sourceReferenceId, issuanceOperationId])
+  @@index([userId, commercialProductId, testId, expiresAt])
+  @@index([accessId, expiresAt])
+  @@index([tokenKeyVersion, expiresAt])
+  @@map("verified_student_sessions")
 }
 
 model AccessCode {
@@ -689,7 +745,7 @@ model EventLog {
 model AnalyticsEvent {
   id                           String   @id @default(uuid()) @db.Uuid
   eventId                      String   @unique @map("event_id")
-  transitionKey               String   @unique @map("transition_key")
+  transitionKey                String   @unique @map("transition_key")
   eventName                    String   @map("event_name")
   eventVersion                 Int      @map("event_version")
   occurredAt                   DateTime @map("occurred_at")

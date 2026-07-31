@@ -36,16 +36,18 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 17 |
-| `READY` | 11 |
+| `READY` | 10 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 0 |
+| `IN_REVIEW` | 1 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 6 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: A-07 находится `IN_PROGRESS` на base SHA `68e48c1`; B3-05 и D-01 разблокированы A-06. Production остаётся `NO-GO`.
+Текущий feature claim: B1-01 находится `IN_REVIEW` на base SHA `509c79b`.
+A-07 остаётся long-lived program-control `IN_PROGRESS`; production остаётся
+`NO-GO`.
 
 ## 4. Реестр задач
 
@@ -58,7 +60,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `IN_PROGRESS` | `HIGH` | `A-03` |
-| [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `READY` | `CRITICAL` | `A-03`, `A-04` |
+| [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `IN_REVIEW` | `CRITICAL` | `A-03`, `A-04` |
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `BACKLOG` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-03` |
