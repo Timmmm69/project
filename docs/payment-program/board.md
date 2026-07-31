@@ -36,8 +36,8 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 17 |
-| `READY` | 12 |
-| `IN_PROGRESS` | 0 |
+| `READY` | 11 |
+| `IN_PROGRESS` | 1 |
 | `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
@@ -45,7 +45,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: A-06 принята независимым review на SHA `96e95f8`; B3-05 и D-01 разблокированы, 12 dependency-ready карточек открыты. Production остаётся `NO-GO`.
+Текущий gate: A-07 находится `IN_PROGRESS` на base SHA `68e48c1`; B3-05 и D-01 разблокированы A-06. Production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -57,7 +57,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [A-04](tasks/A-04.md) | A — Управление и документация | Согласовать WEBPAY, ЕРИП и production NO-GO | `DONE` | `CRITICAL` | `A-02` |
 | [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `DONE` | `HIGH` | `A-03`, `A-04` |
-| [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `READY` | `HIGH` | `A-03` |
+| [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `IN_PROGRESS` | `HIGH` | `A-03` |
 | [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `READY` | `CRITICAL` | `A-03`, `A-04` |
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `BACKLOG` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-02` |
@@ -96,6 +96,31 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [O-04](tasks/O-04.md) | O/QA — Legal, operations и приёмка | Настроить production email и recovery QA | `BLOCKED_EXTERNAL` | `CRITICAL` | `B1-02`, `O-01` |
 | [QA-01](tasks/QA-01.md) | O/QA — Legal, operations и приёмка | Провести полный payment regression pass | `BACKLOG` | `CRITICAL` | `B1-05`, `B2-01`, `B2-03`, `B2-04`, `B2-05`, `B2-07`, `B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05`, `C-06`, `C-07`, `D-03`, `E-04`, `O-04` |
 | [QA-02](tasks/QA-02.md) | O/QA — Legal, operations и приёмка | Финальное независимое ревью и production gate | `BACKLOG` | `CRITICAL` | `A-07`, `QA-01`, `E-05` |
+
+### 4.1. Контроль принятых карточек
+
+Последний независимо принятый program state до claim A-07: `68e48c1`.
+`DONE` допустим только при наличии отдельного review report.
+
+| Карточка | Accepted implementation/correction SHA | Review evidence | Verdict |
+|---|---|---|---|
+| A-01 | `82ead81b8b333773bdd923298cae0ca30d8bc847` | `reviews/A-01.md`; `reviews/A-01-rereview-2026-07-30.md` | `DONE` |
+| A-02 | `2a54a09` | `reviews/A-02.md` | `DONE` |
+| A-03 | `2850e91` | `reviews/A-03.md` | `DONE` |
+| A-04 | `2435e8b` | `reviews/A-04.md` | `DONE` |
+| A-05 | `c2a1133` | `reviews/A-05.md` | `DONE` |
+| A-06 | `96e95f864dc5fc88a46a28ee86cc5ca68d78c07d` | `reviews/A-06.md` | `DONE` |
+
+При каждом следующем принятом review reviewer обязан атомарно:
+
+1. записать reviewed/final SHA и evidence в карточку и review report;
+2. обновить registry status, dependency unlocks и counts;
+3. обновить затронутые строки разделов 5–9;
+4. проверить, что все `DONE` имеют report, а mock/placeholder не закрыл external gate;
+5. записать точное продолжение в `handoff.md`.
+
+A-07 остаётся program-control карточкой `IN_PROGRESS` до финальной сверки с
+QA-02. Текущий checkpoint не означает, что будущие requirements уже выполнены.
 
 ## 5. Audit traceability — 35 IDs
 
@@ -137,7 +162,11 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | DOC-02 | A-04, A-05, E-05, QA-02 | Explicit launch gates |
 | UI-01 | D-01, D-02, D-03, C-01..C-07 | Exact states/copy/mobile/a11y |
 
-Текущие статусы и evidence всех 35 строк: `audit-revalidation-2026-07-30.md`. Реализованные строки сохраняются как regression invariants в `QA-01/QA-02`.
+Текущие статусы и evidence всех 35 строк:
+`audit-revalidation-2026-07-30.md` (12 `IMPLEMENTED`, 10 `PARTIAL`, 9
+`MISSING`, 2 `CONTRADICTED`, 2 `MERCHANT_BLOCKED` на revalidated baseline).
+Реализованные строки сохраняются как regression invariants в `QA-01/QA-02`;
+ссылка на карточку не означает, что требование уже реализовано.
 
 ## 6. Payment UX acceptance traceability — 32 критерия
 
@@ -178,57 +207,61 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 
 ## 7. Provider dependencies — 20 пунктов
 
-| № | Dependency | Карточки |
-|---:|---|---|
-| 1 | Merchant agreement and eligibility | E-01 |
-| 2 | Sandbox and production credentials | E-01, E-05 |
-| 3 | Merchant-specific documentation | E-01 |
-| 4 | Integration method and endpoints | E-02 |
-| 5 | Signature and callback requirements | E-02 |
-| 6 | Real sandbox session | E-04 |
-| 7 | Real callback/signature evidence | E-04 |
-| 8 | Authenticated status API | E-02, E-04 |
-| 9 | Authoritative status mapping | E-02 |
-| 10 | Callback retry configuration | E-02, E-04 |
-| 11 | Status rate limits | E-02, B3-02 |
-| 12 | Session lifecycle and late success | E-02, E-04 |
-| 13 | Test card/scenario matrix | E-02, E-04 |
-| 14 | Return/cancel behavior | E-02, E-04 |
-| 15 | 3-D Secure and mobile behavior | E-02, E-04 |
-| 16 | Supported schemes/methods | E-02 |
-| 17 | Official logo/brand rules | E-02, D-02 |
-| 18 | Branded hosted-page constraints | E-02, D-02 |
-| 19 | Embedded-page admissibility if ever considered | E-02 (out-of-scope confirmation) |
-| 20 | Production acquiring/settlement | E-05 |
+Все строки остаются `BLOCKED_EXTERNAL`: public PDF, local fake provider и
+assumed sandbox protocol не являются merchant-approved evidence.
+
+| № | Dependency | Владелец | Карточки | Gate status |
+|---:|---|---|---|---|
+| 1 | Merchant agreement and eligibility | Merchant onboarding | E-01 | `BLOCKED_EXTERNAL` |
+| 2 | Sandbox and production credentials | Merchant onboarding / Release | E-01, E-05 | `BLOCKED_EXTERNAL` |
+| 3 | Merchant-specific documentation | Merchant onboarding | E-01 | `BLOCKED_EXTERNAL` |
+| 4 | Integration method and endpoints | Merchant integration | E-02 | `BLOCKED_EXTERNAL` |
+| 5 | Signature and callback requirements | Merchant integration / Security | E-02 | `BLOCKED_EXTERNAL` |
+| 6 | Real sandbox session | Payments QA | E-04 | `BLOCKED_EXTERNAL` |
+| 7 | Real callback/signature evidence | Payments QA / Security | E-04 | `BLOCKED_EXTERNAL` |
+| 8 | Authenticated status API | Merchant integration / Payments QA | E-02, E-04 | `BLOCKED_EXTERNAL` |
+| 9 | Authoritative status mapping | Merchant integration | E-02 | `BLOCKED_EXTERNAL` |
+| 10 | Callback retry configuration | Merchant integration / Payments QA | E-02, E-04 | `BLOCKED_EXTERNAL` |
+| 11 | Status rate limits | Merchant integration / Security | E-02, B3-02 | `BLOCKED_EXTERNAL` |
+| 12 | Session lifecycle and late success | Merchant integration / Payments QA | E-02, E-04 | `BLOCKED_EXTERNAL` |
+| 13 | Test card/scenario matrix | Merchant integration / Payments QA | E-02, E-04 | `BLOCKED_EXTERNAL` |
+| 14 | Return/cancel behavior | Merchant integration / Payments QA | E-02, E-04 | `BLOCKED_EXTERNAL` |
+| 15 | 3-D Secure and mobile behavior | Merchant integration / Payments QA | E-02, E-04 | `BLOCKED_EXTERNAL` |
+| 16 | Supported schemes/methods | Merchant integration | E-02 | `BLOCKED_EXTERNAL` |
+| 17 | Official logo/brand rules | Merchant integration / Design | E-02, D-02 | `BLOCKED_EXTERNAL` |
+| 18 | Branded hosted-page constraints | Merchant integration / Design | E-02, D-02 | `BLOCKED_EXTERNAL` |
+| 19 | Embedded-page admissibility if ever considered | Merchant integration; out-of-scope confirmation only | E-02 | `BLOCKED_EXTERNAL` |
+| 20 | Production acquiring/settlement | Release / Finance | E-05 | `BLOCKED_EXTERNAL` |
 
 ## 8. Legal/operational dependencies
 
-| Dependency | Карточки |
-|---|---|
-| Seller information | O-01 |
-| Legal qualification/NPD eligibility | O-01 |
-| Final public offer | O-01 |
-| Adult/email wording | O-01 |
-| Refund policy/manual process | O-01, O-03 |
-| Privacy pages/processor inventory | O-01 |
-| Tax receipt process | O-03 |
-| Support email/hours | O-02 |
-| Pending/duplicate/PWA runbook | O-02 |
-| Production email/recovery QA | O-04 |
-| Release/browser evidence | QA-01, QA-02 |
+| Dependency | Владелец | Карточки | Gate status |
+|---|---|---|---|
+| Seller information | Seller / Legal | O-01 | `BLOCKED_EXTERNAL` |
+| Legal qualification/NPD eligibility | Seller / Legal / Tax advisor | O-01 | `BLOCKED_EXTERNAL` |
+| Final public offer | Legal / Product Owner | O-01 | `BLOCKED_EXTERNAL` |
+| Adult/email wording | Legal / Product Owner | O-01 | `BLOCKED_EXTERNAL` |
+| Refund policy/manual process | Legal / Operations | O-01, O-03 | `BLOCKED_EXTERNAL` |
+| Privacy pages/processor inventory | Legal / Privacy owner | O-01 | `BLOCKED_EXTERNAL` |
+| Tax receipt process | Seller / Accounting / Operations | O-03 | `BLOCKED_EXTERNAL` |
+| Support email/hours | Support owner | O-02 | `BLOCKED_EXTERNAL` |
+| Pending/duplicate/PWA runbook | Support / Payments operations | O-02 | `BLOCKED_EXTERNAL` |
+| Production email/recovery QA | Email operations / Security QA | O-04 | `BLOCKED_EXTERNAL` |
+| Release/browser evidence | Payments QA / Release owner | QA-01, QA-02 | `BACKLOG` |
 
 ## 9. Figma handoff traceability
 
-| Requirement | Карточки |
-|---|---|
-| 19 desktop frames | D-02 |
-| 19 mobile frames at 360 px | D-02 |
-| 320 px overflow evidence | D-03 |
-| Required components and variants | D-02 |
-| Exact copy and state semantics | D-01, D-02 |
-| Focus/error/a11y annotations | D-02, D-03 |
-| 1440/360 screenshots and contrast checks | D-03 |
-| Placeholder/card-field scans | D-03 |
+| Requirement | Владелец | Карточки | Current status |
+|---|---|---|---|
+| 19 desktop frames: email, verification, review, creation/redirect/fallback, pending, terminal/unknown/PWA, existing entities и recovery | Product Design | D-02 | `BACKLOG` |
+| Те же 19 mobile frames на 360 px с одинаковой state semantics | Product Design | D-02 | `BACKLOG` |
+| 320 × 568 overflow, CTA, keyboard и safe-area evidence | Accessibility / Frontend QA | D-03, C-06 | `BACKLOG` |
+| Components: `PaymentMethodCard`, `CheckoutSummary`, `VerifiedEmailRow`, `RequiredLegalCheckbox`, `ExternalPaymentNotice`, `PaymentStatusPanel` variants, `OrderReference`, `PollingStatus`, `SupportEscalation`, `StickyCheckoutAction` | Product Design | D-02 | `BACKLOG` |
+| Loader/reduced-motion и focus/error/a11y annotations | Product Design / Accessibility | D-02, D-03 | `BACKLOG` |
+| Exact section 11 copy, source/CTA/prohibited-action/focus annotations на каждом frame | Payment UX / Product Design | D-01, D-02 | `READY / BACKLOG` |
+| Existing visual system; no new visual direction | Product Design reviewer | D-01, D-02 | `READY / BACKLOG` |
+| No card inputs, embedded bank form, ЕРИП или неподтверждённые provider/card-scheme assets | Product Design / Security reviewer | D-02, D-03 | `BACKLOG` |
+| Evidence: Figma link, frame/variant inventory, 1440/360 screenshots, 320 overflow, focus, contrast, placeholder scan, card-field scan и contract comparison | Product Design / Accessibility reviewer | D-03 | `BACKLOG` |
 
 ## 10. Изменяемые интерфейсы
 

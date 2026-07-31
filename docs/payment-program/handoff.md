@@ -5,8 +5,8 @@
 ## Активная карточка
 
 - Следующий приоритет: `A-07`
-- Статус A-06: `DONE`
-- A-06 reviewed SHA: `96e95f864dc5fc88a46a28ee86cc5ca68d78c07d`
+- Статус A-07: `IN_PROGRESS`
+- A-07 base SHA: `68e48c1`
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
@@ -29,9 +29,11 @@
 
 ## Точное продолжение
 
-1. Claim `A-07` и зафиксировать base SHA.
-2. Обновить полную traceability payment-program согласно карточке A-07.
-3. `B3-05` и `D-01` newly READY после A-06; не claim без отдельного выбора.
+1. Зафиксировать docs-only checkpoint A-07.
+2. A-07 остаётся `IN_PROGRESS` как program-control до финальной сверки перед
+   QA-02; обновлять её после каждого принятого review.
+3. Следующая отдельная implementation-карточка: `B1-01` на новом base SHA.
+4. `B3-05` и `D-01` также READY, но не claim без отдельного изменения.
 
 ## Другие READY-карточки
 
@@ -58,7 +60,8 @@ Unrelated modified/untracked файлы:
 
 ## Незакрытые решения и блокеры
 
-- A-07 traceability ещё открыта; A-06 принята independent review.
+- A-07 traceability остаётся long-lived `IN_PROGRESS` до QA-02; checkpoint
+  2026-07-31 заполнен.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются external gates.
 - Current main не содержит verified-session/recovery changes из audited sibling branch.
 - Production остаётся `NO-GO`.
