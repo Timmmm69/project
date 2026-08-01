@@ -5,7 +5,8 @@
 ## Активная карточка
 
 - Feature-карточка: `B2-01`
-- Статус B2-01: `READY`
+- Статус B2-01: `IN_PROGRESS`
+- B2-01 base SHA: `7068ad5`
 - Принятая B1-05: `DONE`, reviewed SHA `4a6a013` от base `1d9b758`
 - Принятая B1-04: `DONE`, reviewed SHA `df106dd` от base `dcf58d3`
 - Принятая B1-03: `DONE`, reviewed SHA `7b94ab2` от base `f38ddec`
@@ -27,12 +28,11 @@
 
 ## Точное продолжение
 
-1. Claim B2-01 на accepted baseline `4a6a013`.
-2. Реализовать только immutable commercial snapshot для server-authoritative
+1. Реализовать только immutable commercial snapshot для server-authoritative
    price/currency/product truth and compatible Access grant.
-3. Preserve verified authority, state recovery and production `NO-GO`; do not
+2. Preserve verified authority, state recovery and production `NO-GO`; do not
    add UI, provider activation or unrelated checkout scope.
-4. Record B2-01 evidence and request the required independent review when its
+3. Record B2-01 evidence and request the required independent review when its
    bounded milestone is complete.
 
 ## Другие READY-карточки
