@@ -1,6 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import { createCommercialOrderPostHandler } from "@/app/api/commercial/orders/route";
-import type { createCommercialOrder } from "@/lib/commercial/commercial-service";
+import { CommercialError, type createCommercialOrder } from "@/lib/commercial/commercial-service";
 import type { createRecoveryHttpRuntime } from "@/server/recovery/http-runtime";
 
 const productCode = "russian-training-variant-01";
@@ -54,15 +54,17 @@ function handler(input: {
 }) {
   const createOrder = input.createOrder ?? successfulCreateOrder();
   const validate = input.validate ?? vi.fn();
+  const setOrderToken = vi.fn().mockResolvedValue(undefined);
   return {
     createOrder,
+    setOrderToken,
     validate,
     post: createCommercialOrderPostHandler({
       environment: { VERIFIED_COMMERCIAL_SESSION_MODE: input.mode },
       allowAction: () => true,
       unavailableReason: () => null,
       createOrder,
-      setOrderToken: vi.fn().mockResolvedValue(undefined),
+      setOrderToken,
       createRecoveryRuntime: recoveryRuntime(input.mode, validate)
     })
   };
@@ -116,5 +118,31 @@ describe("commercial Order verified-email HTTP authority", () => {
     expect(response.status).toBe(403);
     expect((await response.json()).error.code).toBe("VERIFIED_EMAIL_REQUIRED");
     expect(test.createOrder).not.toHaveBeenCalled();
+  });
+
+  it("returns a safe pending-order action without issuing or rotating an order token", async () => {
+    const createOrder = vi.fn().mockRejectedValue(new CommercialError(
+      "ORDER_ALREADY_PENDING",
+      "Order already pending",
+      "WAIT_FOR_PAYMENT",
+      "safe-public-order-reference"
+    )) as unknown as ReturnType<typeof successfulCreateOrder>;
+    const test = handler({ mode: "enforce", createOrder });
+    const response = await test.post(request({
+      cookie: "acc01a_recovery=rs1.v1.verified-email-token"
+    }));
+
+    expect(response.status).toBe(409);
+    expect(await response.json()).toMatchObject({
+      success: false,
+      error: {
+        code: "ORDER_ALREADY_PENDING",
+        details: {
+          nextAction: "WAIT_FOR_PAYMENT",
+          orderReference: "safe-public-order-reference"
+        }
+      }
+    });
+    expect(test.setOrderToken).not.toHaveBeenCalled();
   });
 });

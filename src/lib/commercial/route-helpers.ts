@@ -8,7 +8,17 @@ export function commercialErrorResponse(error: unknown) {
       : error.code === "ORDER_TOKEN_REQUIRED" || error.code === "VERIFIED_EMAIL_REQUIRED"
         ? 403
         : 422;
-    return apiFailure({ code: error.code, message: commercialMessage(error.code), ...(error.nextAction ? { details: { nextAction: error.nextAction } } : {}) }, status);
+    const details = error.nextAction || error.publicOrderReference
+      ? {
+          ...(error.nextAction ? { nextAction: error.nextAction } : {}),
+          ...(error.publicOrderReference ? { orderReference: error.publicOrderReference } : {})
+        }
+      : undefined;
+    return apiFailure({
+      code: error.code,
+      message: commercialMessage(error.code),
+      ...(details ? { details } : {})
+    }, status);
   }
   return apiFailure({ code: "COMMERCIAL_CHECKOUT_ERROR", message: "Не удалось обработать запрос. Повторите попытку позже." }, 409);
 }

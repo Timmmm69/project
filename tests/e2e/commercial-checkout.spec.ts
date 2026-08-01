@@ -4,6 +4,7 @@ import { PrismaClient } from "@prisma/client";
 import { POST as webPayNotify } from "@/app/api/payments/webpay/notify/route";
 import { createCommercialCheckoutFlow, createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification, recordCommercialPaymentValidationFailure } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider } from "@/lib/commercial/providers";
+import { hashLookupToken } from "@/lib/commercial/security";
 import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
 import type { AnalyticsWriter } from "@/lib/analytics/analytics-service";
 
@@ -280,7 +281,14 @@ test("fake provider grants one access and replay is a no-op", async () => {
     adultBuyerConfirmed: true,
     legalBundleVersion: "e2e-v1",
     idempotencyKey: `order-${suffix}-different-key`
-  })).rejects.toMatchObject({ code: "ORDER_ALREADY_PENDING" });
+  })).rejects.toMatchObject({
+    code: "ORDER_ALREADY_PENDING",
+    nextAction: "WAIT_FOR_PAYMENT",
+    publicOrderReference: created.order.publicId
+  });
+  expect((await prisma.commercialOrder.findUniqueOrThrow({
+    where: { id: created.order.id }
+  })).lookupTokenHash).toBe(hashLookupToken(created.lookupToken));
 
   const raw = JSON.stringify({
     merchant_reference: payment.merchantReference,
@@ -317,25 +325,46 @@ test("fake provider grants one access and replay is a no-op", async () => {
 
   const access = await prisma.access.findUniqueOrThrow({ where: { commercialOrderId: created.order.id } });
   await prisma.access.update({ where: { id: access.id }, data: { attemptsAvailable: 0 } });
+  const resultFinishedAt = new Date();
+  const resultStartedAt = new Date(resultFinishedAt.getTime() - 60_000);
   await prisma.attempt.create({
     data: {
       userId: access.userId,
       testId: access.testId,
       accessId: access.id,
       status: "COMPLETED",
-      startedAt: new Date(),
-      finishedAt: new Date(),
-      testSnapshot: {}
+      startedAt: resultStartedAt,
+      finishedAt: resultFinishedAt,
+      durationSeconds: 60,
+      rawScore: 60,
+      maxRawScore: 80,
+      percent: 75,
+      testSnapshot: {
+        testId: access.testId,
+        subject: "russian",
+        mode: "ce_ct",
+        examMode: "rikz_russian_2026",
+        durationMinutes: 120,
+        maxRawScore: 80,
+        questions: Array.from({ length: 40 }, (_, index) => ({
+          snapshotQuestionId: `result-question-${index + 1}`,
+          orderIndex: index,
+          questionType: index < 18 ? "multi_select_five" : "short_answer_token",
+          points: 2
+        }))
+      }
     }
   });
-  const repurchase = await createCheckoutOrder({
+  await expect(createCheckoutOrder({
     productCode,
     email,
     adultBuyerConfirmed: true,
     legalBundleVersion: "e2e-v1",
     idempotencyKey: `order-${suffix}-after-completion`
-  });
-  expect(repurchase.order.id).not.toBe(created.order.id);
+  })).rejects.toMatchObject({ code: "EXISTING_ACCESS", nextAction: "VIEW_RESULT" });
+  expect(await prisma.commercialOrder.count({
+    where: { commercialProductId: productId, emailNormalized: email }
+  })).toBe(1);
 });
 
 test("forged WebPay callback cannot pay, while an exact status response grants one access", async () => {
