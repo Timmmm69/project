@@ -2,7 +2,11 @@ import { describe, expect, it } from "vitest";
 import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
 import { checkoutStartedPropertiesSchema, orderCreatedPropertiesSchema } from "@/lib/analytics/schemas";
 import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties } from "@/lib/commercial/checkout-flow";
-import { commercialCheckoutFlowIdSchema, commercialOrderSchema } from "@/lib/commercial/schemas";
+import {
+  commercialCheckoutFlowIdSchema,
+  commercialOrderSchema,
+  commercialVerifiedOrderSchema
+} from "@/lib/commercial/schemas";
 
 describe("commercial checkout flow", () => {
   it("creates distinct opaque UUIDs on the server", () => {
@@ -54,5 +58,19 @@ describe("commercial checkout flow", () => {
     expect(commercialOrderSchema.safeParse(base).success).toBe(true);
     expect(commercialOrderSchema.safeParse({ ...base, amount: 1 }).success).toBe(false);
     expect(commercialOrderSchema.safeParse({ ...base, currency: "USD" }).success).toBe(false);
+  });
+
+  it("keeps email out of the verified Order HTTP command", () => {
+    const command = {
+      productCode: "russian-training-variant-01",
+      checkout_flow_id: "33333333-3333-4333-8333-333333333333",
+      adultBuyerConfirmed: true,
+      legalBundleVersion: "v1"
+    };
+    expect(commercialVerifiedOrderSchema.safeParse(command).success).toBe(true);
+    expect(commercialVerifiedOrderSchema.safeParse({
+      ...command,
+      email: "client@example.test"
+    }).success).toBe(false);
   });
 });

@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, PrismaClient } from "@prisma/client";
 import { afterAll, beforeAll, beforeEach, describe, expect, it } from "vitest";
+import {
+  createCommercialCheckoutFlow,
+  createCommercialOrder
+} from "@/lib/commercial/commercial-service";
 import type { VerifiedStudentSessionConfig } from "@/server/auth/verified-student-session/config";
 import { createVerifiedStudentSessionService } from "@/server/auth/verified-student-session/service";
 import type { EnabledRecoveryConfig, RecoveryKeyRing } from "@/server/recovery/config";
@@ -1021,5 +1025,124 @@ describeWithDatabase("ACC-01A recovery continuation PostgreSQL integration", () 
         challengeId: null
       }
     ]);
+  });
+
+  it("creates an Order only from verified email authority and ignores body email", async () => {
+    const previousLegalVersion = process.env.LEGAL_BUNDLE_VERSION;
+    process.env.LEGAL_BUNDLE_VERSION = "verified-email-v1";
+    try {
+      const authorityEmail = "verified-order@example.test";
+      const recovery = await issueRecoveryCookie(authorityEmail);
+      const flow = await createCommercialCheckoutFlow({
+        productCode: recoveryConfig.productCode
+      });
+      const command = {
+        productCode: recoveryConfig.productCode,
+        checkoutFlowId: flow.id,
+        email: "attacker-supplied@example.test",
+        verifiedEmailAuthority: {
+          rawToken: recovery.rawToken,
+          validate: domain.validateRecoverySession
+        },
+        adultBuyerConfirmed: true,
+        legalBundleVersion: "verified-email-v1",
+        idempotencyKey: `verified-order-${randomUUID()}`
+      };
+
+      const [first, replay] = await Promise.all([
+        createCommercialOrder(command),
+        createCommercialOrder(command)
+      ]);
+      expect(first.order.id).toBe(replay.order.id);
+      const order = await prisma.commercialOrder.findUniqueOrThrow({
+        where: { id: first.order.id }
+      });
+      expect(order.emailOriginal).toBe(authorityEmail);
+      expect(order.emailNormalized).toBe(authorityEmail);
+      expect(order.emailNormalized).not.toBe(command.email);
+      expect(await prisma.commercialOrder.count({ where: { checkoutFlowId: flow.id } })).toBe(1);
+    } finally {
+      if (previousLegalVersion === undefined) delete process.env.LEGAL_BUNDLE_VERSION;
+      else process.env.LEGAL_BUNDLE_VERSION = previousLegalVersion;
+    }
+  });
+
+  it("rejects missing, invalid and cross-product email authority before Order discovery", async () => {
+    const previousLegalVersion = process.env.LEGAL_BUNDLE_VERSION;
+    process.env.LEGAL_BUNDLE_VERSION = "verified-email-v1";
+    try {
+      const recovery = await issueRecoveryCookie("scope-owner@example.test");
+      const otherTest = await prisma.test.create({
+        data: {
+          title: "Other authentic product",
+          slug: `other-authentic-${randomUUID()}`,
+          price: 1000,
+          durationMinutes: 120,
+          examMode: "RIKZ_RUSSIAN_2026",
+          status: "PUBLISHED"
+        }
+      });
+      const otherProduct = await prisma.commercialProduct.create({
+        data: {
+          code: `other-product-${randomUUID()}`,
+          testId: otherTest.id,
+          name: "Other product",
+          priceMinor: 1000,
+          attemptLimit: 1,
+          resultRetentionDays: 365
+        }
+      });
+      const otherFlow = await createCommercialCheckoutFlow({ productCode: otherProduct.code });
+      const common = {
+        productCode: otherProduct.code,
+        checkoutFlowId: otherFlow.id,
+        adultBuyerConfirmed: true,
+        legalBundleVersion: "verified-email-v1",
+        idempotencyKey: `cross-scope-${randomUUID()}`
+      };
+
+      await expect(createCommercialOrder(common)).rejects.toMatchObject({
+        code: "VERIFIED_EMAIL_REQUIRED"
+      });
+      await expect(createCommercialOrder({
+        ...common,
+        email: "victim@example.test",
+        verifiedEmailAuthority: {
+          rawToken: "rs1.v1.invalid-token",
+          validate: domain.validateRecoverySession
+        }
+      })).rejects.toMatchObject({ code: "VERIFIED_EMAIL_REQUIRED" });
+      await expect(createCommercialOrder({
+        ...common,
+        email: "victim@example.test",
+        verifiedEmailAuthority: {
+          rawToken: recovery.rawToken,
+          validate: domain.validateRecoverySession
+        }
+      })).rejects.toMatchObject({ code: "VERIFIED_EMAIL_REQUIRED" });
+
+      const recoveryRow = await prisma.verifiedRecoverySession.findFirstOrThrow({
+        where: { emailNormalized: "scope-owner@example.test" }
+      });
+      now = new Date(recoveryRow.expiresAt.getTime() + 1);
+      const expiredFlow = await createCommercialCheckoutFlow({
+        productCode: recoveryConfig.productCode
+      });
+      await expect(createCommercialOrder({
+        productCode: recoveryConfig.productCode,
+        checkoutFlowId: expiredFlow.id,
+        verifiedEmailAuthority: {
+          rawToken: recovery.rawToken,
+          validate: domain.validateRecoverySession
+        },
+        adultBuyerConfirmed: true,
+        legalBundleVersion: "verified-email-v1",
+        idempotencyKey: `expired-authority-${randomUUID()}`
+      })).rejects.toMatchObject({ code: "VERIFIED_EMAIL_REQUIRED" });
+      expect(await prisma.commercialOrder.count()).toBe(0);
+    } finally {
+      if (previousLegalVersion === undefined) delete process.env.LEGAL_BUNDLE_VERSION;
+      else process.env.LEGAL_BUNDLE_VERSION = previousLegalVersion;
+    }
   });
 });

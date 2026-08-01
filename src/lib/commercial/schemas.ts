@@ -9,6 +9,8 @@ export const commercialOrderSchema = z.object({
   legalBundleVersion: z.string().trim().min(1).max(100)
 }).strict();
 
+export const commercialVerifiedOrderSchema = commercialOrderSchema.omit({ email: true }).strict();
+
 export const commercialCheckoutFlowSchema = z.object({
   productCode: z.literal("russian-training-variant-01")
 }).strict();

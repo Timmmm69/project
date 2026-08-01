@@ -1,29 +1,32 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type CommercialPaymentAttemptStatus, type CommercialPaymentProvider, type CommercialOrderStatus } from "@prisma/client";
 import { analyticsConfig, hashAnalyticsId } from "@/lib/analytics/analytics-id";
-import {
-  emitCanonicalOrderCreated,
-  type CanonicalOrderCreatedEmitter
-} from "@/lib/analytics/order-created-callsite";
 import { safelyWriteAnalyticsEvent, type AnalyticsWriteInput, type AnalyticsWriter } from "@/lib/analytics/analytics-service";
 import { COMMERCIAL_CURRENCY, COMMERCIAL_PRICE_MINOR, commercialLegalConfig } from "@/lib/commercial/config";
-import { checkoutStartedProperties, createCheckoutFlowId } from "@/lib/commercial/checkout-flow";
+import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties } from "@/lib/commercial/checkout-flow";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
-import {
-  commercialOrderTokenSecret,
-  createLookupToken,
-  deriveCommercialOrderLookupToken,
-  hashLookupToken,
-  lookupTokenMatches,
-  payloadHash
-} from "@/lib/commercial/security";
+import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
 import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
 import { normalizeEmail } from "@/lib/validation/email";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
+import type { ValidateRecoverySessionResult } from "@/server/recovery/service";
 
 type Tx = Prisma.TransactionClient;
+
+export type CommercialVerifiedEmailAuthority = Readonly<{
+  rawToken: string;
+  validate: (
+    rawToken: string,
+    transaction?: Tx
+  ) => Promise<ValidateRecoverySessionResult>;
+}>;
+
+type ResolvedCommercialEmailAuthority = Extract<
+  ValidateRecoverySessionResult,
+  { status: "RESOLVED" }
+>;
 
 function analyticsPaymentProvider(provider: CommercialPaymentProvider) {
   return provider === "LOCAL_FAKE" ? "fake" as const : "webpay" as const;
@@ -150,6 +153,35 @@ async function ensureCheckoutStartedAnalytics(input: {
   }), writer);
 }
 
+async function ensureOrderCreatedAnalytics(input: {
+  checkoutFlowId: string;
+  occurredAt: Date;
+  orderId: string;
+  orderPublicId: string;
+  productCode: string;
+  testSlug: string;
+  amount: number;
+  currency: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId });
+    return {
+      eventName: "order_created",
+      transitionKey: `commercial-order-created:${input.orderId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: orderCreatedProperties({
+        checkoutFlowId: input.checkoutFlowId,
+        orderPublicIdHash: hashes.properties.order_public_id_hash ?? "",
+        productId: input.productCode,
+        testId: input.testSlug,
+        amount: input.amount,
+        currency: input.currency
+      })
+    };
+  }, writer);
+}
+
 async function ensureCheckoutFailureAnalytics(input: { occurredAt: Date; orderPublicId: string; paymentAttemptId: string; paymentAttemptPublicId: string }, writer?: AnalyticsWriter) {
   return ensureAnalytics(() => {
     const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
@@ -238,7 +270,7 @@ async function lockCommercialPaymentAttempt(tx: Tx, attemptId: string) {
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_payment_attempts" WHERE "id" = ${attemptId}::uuid FOR UPDATE`);
 }
 
-export type CommercialNextAction = "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
+export type CommercialNextAction = "START_TEST" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
 
 function addDays(date: Date, days: number) {
   const result = new Date(date);
@@ -285,7 +317,7 @@ async function existingAccessAction(tx: Tx, email: string, testId: string, now: 
     },
     select: { id: true }
   });
-  if (unusedAccess) return "OPEN_PRE" as const;
+  if (unusedAccess) return "START_TEST" as const;
   return null;
 }
 
@@ -334,67 +366,95 @@ export async function createCommercialCheckoutFlow(input: {
   return flow;
 }
 
+async function resolveCommercialEmailAuthority(
+  authority: CommercialVerifiedEmailAuthority,
+  transaction?: Tx
+): Promise<ResolvedCommercialEmailAuthority> {
+  const result = await authority.validate(authority.rawToken, transaction);
+  if (result.status !== "RESOLVED") {
+    throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
+  }
+  return result;
+}
+
+function requireLegacyCommercialEmail(email: string | undefined) {
+  if (!email) throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
+  return normalizeEmail(email);
+}
+
+function verifiedAuthorityMatchesProduct(
+  authority: ResolvedCommercialEmailAuthority,
+  product: { id: string; testId: string },
+  emailNormalized: string
+) {
+  return authority.commercialProductId === product.id &&
+    authority.testId === product.testId &&
+    authority.emailNormalized === emailNormalized;
+}
+
 async function recoverConcurrentOrderCreation(input: {
   productCode: string;
   emailNormalized: string;
   idempotencyKey: string;
   checkoutFlowId: string;
-  orderTokenSecret: string;
+  lookupToken: string;
+  verifiedEmailAuthority?: CommercialVerifiedEmailAuthority;
 }, integrityError: Prisma.PrismaClientKnownRequestError) {
-  const product = await prisma.commercialProduct.findUnique({
-    where: { code: input.productCode },
-    include: { test: { select: { slug: true, examMode: true } } }
-  });
-  if (!product) throw integrityError;
-
-  const sameRequest = await prisma.commercialOrder.findUnique({ where: { checkoutFlowId: input.checkoutFlowId } });
-  if (sameRequest) {
-    if (sameRequest.commercialProductId !== product.id || sameRequest.emailNormalized !== input.emailNormalized ||
-        sameRequest.idempotencyKey !== input.idempotencyKey) {
-      throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
+  return prisma.$transaction(async (tx) => {
+    const verifiedAuthority = input.verifiedEmailAuthority
+      ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority, tx)
+      : null;
+    const product = await tx.commercialProduct.findUnique({
+      where: { code: input.productCode },
+      select: { id: true, testId: true }
+    });
+    if (!product) throw integrityError;
+    if (verifiedAuthority && !verifiedAuthorityMatchesProduct(
+      verifiedAuthority,
+      product,
+      input.emailNormalized
+    )) {
+      throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
     }
-    const lookupToken = stableOrderLookupToken(sameRequest, input.orderTokenSecret);
-    return { kind: "created" as const, order: sameRequest, lookupToken, idempotent: true, product };
-  }
 
-  const openOrder = await prisma.commercialOrder.findFirst({
-    where: {
-      commercialProductId: product.id,
-      emailNormalized: input.emailNormalized,
-      status: { in: ["CREATED", "PENDING"] }
-    },
-    select: { id: true }
+    const sameRequest = await tx.commercialOrder.findUnique({
+      where: { checkoutFlowId: input.checkoutFlowId }
+    });
+    if (sameRequest) {
+      if (sameRequest.commercialProductId !== product.id ||
+          sameRequest.emailNormalized !== input.emailNormalized ||
+          sameRequest.idempotencyKey !== input.idempotencyKey) {
+        throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
+      }
+      const order = await tx.commercialOrder.update({
+        where: { id: sameRequest.id },
+        data: { lookupTokenHash: hashLookupToken(input.lookupToken) }
+      });
+      return { order, lookupToken: input.lookupToken, idempotent: true };
+    }
+
+    const openOrder = await tx.commercialOrder.findFirst({
+      where: {
+        commercialProductId: product.id,
+        emailNormalized: input.emailNormalized,
+        status: { in: ["CREATED", "PENDING"] }
+      },
+      select: { id: true }
+    });
+    if (openOrder) throw new CommercialError("ORDER_ALREADY_PENDING");
+    throw integrityError;
   });
-  if (openOrder) throw new CommercialError("ORDER_ALREADY_PENDING");
-  throw integrityError;
-}
-
-function stableOrderLookupToken(order: {
-  id: string;
-  checkoutFlowId: string | null;
-  idempotencyKey: string;
-  lookupTokenHash: string;
-}, secret: string) {
-  if (!order.checkoutFlowId) throw new CommercialError("ORDER_TOKEN_INTEGRITY_ERROR");
-  const token = deriveCommercialOrderLookupToken({
-    orderId: order.id,
-    checkoutFlowId: order.checkoutFlowId,
-    idempotencyKey: order.idempotencyKey
-  }, secret);
-  if (!lookupTokenMatches(token, order.lookupTokenHash)) {
-    throw new CommercialError("ORDER_TOKEN_INTEGRITY_ERROR");
-  }
-  return token;
 }
 
 export async function createCommercialOrder(input: {
   productCode: string;
   checkoutFlowId: string;
-  email: string;
+  email?: string;
+  verifiedEmailAuthority?: CommercialVerifiedEmailAuthority;
   adultBuyerConfirmed: boolean;
   legalBundleVersion: string;
   idempotencyKey: string;
-  orderCreatedAnalyticsEmitter?: CanonicalOrderCreatedEmitter;
+  analyticsWriter?: AnalyticsWriter;
 }) {
   if (!commercialCheckoutFlowIdSchema.safeParse(input.checkoutFlowId).success) {
     throw new CommercialError("INVALID_CHECKOUT_FLOW");
@@ -407,19 +467,21 @@ export async function createCommercialOrder(input: {
   }
 
   const now = new Date();
-  const emailNormalized = normalizeEmail(input.email);
+  const initialVerifiedAuthority = input.verifiedEmailAuthority
+    ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority)
+    : null;
+  const emailNormalized = initialVerifiedAuthority?.emailNormalized ??
+    requireLegacyCommercialEmail(input.email);
+  const emailOriginal = initialVerifiedAuthority?.emailNormalized ?? input.email!.trim();
   const legal = commercialLegalConfig();
-  const orderTokenSecret = commercialOrderTokenSecret();
-  const orderId = randomUUID();
-  const token = deriveCommercialOrderLookupToken({
-    orderId,
-    checkoutFlowId: input.checkoutFlowId,
-    idempotencyKey: input.idempotencyKey
-  }, orderTokenSecret);
+  const token = createLookupToken();
 
   let outcome;
   try {
     outcome = await prisma.$transaction(async (tx) => {
+    const verifiedAuthority = input.verifiedEmailAuthority
+      ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority, tx)
+      : null;
     const product = await tx.commercialProduct.findFirst({
       where: { code: input.productCode, isActive: true },
       include: { test: { select: { id: true, slug: true, examMode: true, status: true, deletedAt: true } } }
@@ -429,6 +491,13 @@ export async function createCommercialOrder(input: {
     }
     if (product.priceMinor !== COMMERCIAL_PRICE_MINOR || product.currency !== COMMERCIAL_CURRENCY) {
       throw new CommercialError("COMMERCIAL_PRODUCT_CONFIGURATION_INVALID");
+    }
+    if (verifiedAuthority && !verifiedAuthorityMatchesProduct(
+      verifiedAuthority,
+      product,
+      emailNormalized
+    )) {
+      throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
     }
 
     const checkoutFlow = await tx.commercialCheckoutFlow.findUnique({
@@ -444,8 +513,11 @@ export async function createCommercialOrder(input: {
       if (checkoutFlow.order.emailNormalized !== emailNormalized || checkoutFlow.order.idempotencyKey !== input.idempotencyKey) {
         throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
       }
-      const lookupToken = stableOrderLookupToken(checkoutFlow.order, orderTokenSecret);
-      return { kind: "created" as const, order: checkoutFlow.order, lookupToken, idempotent: true, product };
+      const updated = await tx.commercialOrder.update({
+        where: { id: checkoutFlow.order.id },
+        data: { lookupTokenHash: hashLookupToken(token) }
+      });
+      return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
     }
 
     const nextAction = await existingAccessAction(tx, emailNormalized, product.testId, now);
@@ -460,8 +532,11 @@ export async function createCommercialOrder(input: {
       if (existingByKey.emailNormalized !== emailNormalized || existingByKey.checkoutFlowId !== input.checkoutFlowId) {
         throw new CommercialError("IDEMPOTENCY_KEY_CONFLICT");
       }
-      const lookupToken = stableOrderLookupToken(existingByKey, orderTokenSecret);
-      return { kind: "created" as const, order: existingByKey, lookupToken, idempotent: true, product };
+      const updated = await tx.commercialOrder.update({
+        where: { id: existingByKey.id },
+        data: { lookupTokenHash: hashLookupToken(token) }
+      });
+      return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
     }
 
     const pending = await tx.commercialOrder.findFirst({
@@ -474,13 +549,12 @@ export async function createCommercialOrder(input: {
 
     const order = await tx.commercialOrder.create({
       data: {
-        id: orderId,
         commercialProductId: product.id,
         testIdSnapshot: product.testId,
         productNameSnapshot: product.name,
         priceMinor: product.priceMinor,
         currency: product.currency,
-        emailOriginal: input.email.trim(),
+        emailOriginal,
         emailNormalized,
         status: "CREATED",
         offerVersion: legal.version,
@@ -496,20 +570,20 @@ export async function createCommercialOrder(input: {
     await tx.eventLog.create({
       data: { eventType: "order_created", entityType: "commercial_order", entityId: order.id, payload: { productCode: product.code, priceMinor: product.priceMinor, currency: product.currency } }
     });
-    return { kind: "created" as const, order, lookupToken: token, idempotent: false, product };
+    return { kind: "created" as const, order, lookupToken: token, idempotent: false, product, newOrder: true };
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      outcome = await recoverConcurrentOrderCreation({
+      return recoverConcurrentOrderCreation({
         productCode: input.productCode,
         emailNormalized,
         idempotencyKey: input.idempotencyKey,
         checkoutFlowId: input.checkoutFlowId,
-        orderTokenSecret
+        lookupToken: token,
+        verifiedEmailAuthority: input.verifiedEmailAuthority
       }, error);
-    } else {
-      throw error;
     }
+    throw error;
   }
 
   if (outcome.kind === "existing") {
@@ -524,19 +598,17 @@ export async function createCommercialOrder(input: {
   if (outcome.kind === "pending") {
     throw new CommercialError("ORDER_ALREADY_PENDING");
   }
-  try {
-    if (outcome.order.checkoutFlowId) {
-      await (input.orderCreatedAnalyticsEmitter ?? emitCanonicalOrderCreated)({
-        checkoutFlowId: outcome.order.checkoutFlowId,
-        orderPublicId: outcome.order.publicId,
-        occurredAt: outcome.order.createdAt,
-        productId: outcome.product.code,
-        testId: outcome.product.test.slug,
-        examMode: outcome.product.test.examMode
-      });
-    }
-  } catch {
-    // Analytics is post-commit and must never replace a successful Order result.
+  if (outcome.newOrder) {
+    await ensureOrderCreatedAnalytics({
+      checkoutFlowId: input.checkoutFlowId,
+      occurredAt: outcome.order.createdAt,
+      orderId: outcome.order.id,
+      orderPublicId: outcome.order.publicId,
+      productCode: outcome.product.code,
+      testSlug: outcome.product.test.slug,
+      amount: outcome.order.priceMinor,
+      currency: outcome.order.currency
+    }, input.analyticsWriter);
   }
   return { order: outcome.order, lookupToken: outcome.lookupToken, idempotent: outcome.idempotent };
 }
@@ -966,7 +1038,7 @@ export async function commercialOrderStatus(publicId: string) {
       ? "RESUME_TEST"
       : attempt
         ? "VIEW_RESULT"
-        : "OPEN_PRE"
+        : "START_TEST"
     : order.status === "PENDING"
       ? "WAIT_FOR_PAYMENT"
       : "NONE";
@@ -975,89 +1047,33 @@ export async function commercialOrderStatus(publicId: string) {
     paymentStatus: payment?.status.toLowerCase() ?? null,
     accessStatus: order.access ? "granted" : "none",
     nextAction,
-    nextUrl: nextAction === "RESUME_TEST" && attempt
-      ? `/attempts/${attempt.id}`
-      : nextAction === "VIEW_RESULT" && attempt
-        ? `/results/${attempt.id}`
-        : nextAction === "OPEN_PRE"
-          ? `/tests/${order.product.test.slug}`
-          : null
+    nextUrl: nextAction === "RESUME_TEST" && attempt ? `/attempts/${attempt.id}` : nextAction === "VIEW_RESULT" && attempt ? `/results/${attempt.id}` : null
   };
 }
 
 export async function claimCommercialOrderAccess(publicId: string) {
-  const now = new Date();
-  const proof = await prisma.$transaction(async (tx) => {
-    const order = await tx.commercialOrder.findUnique({
-      where: { publicId },
-      include: {
-        product: {
-          include: {
-            test: { select: { id: true, slug: true, examMode: true } }
-          }
-        }
-      }
-    });
-    if (!order) throw new CommercialError("PAYMENT_NOT_CONFIRMED");
-
-    const accesses = await tx.access.findMany({
-      where: { commercialOrderId: order.id },
-      take: 2,
-      include: {
-        user: { select: { id: true, email: true, role: true, deletedAt: true } },
-        commercialProduct: { select: { id: true, testId: true } },
-        commercialPaymentAttempt: {
-          select: { id: true, commercialOrderId: true, status: true }
-        },
-        attempts: {
-          orderBy: { createdAt: "desc" },
-          take: 1,
-          select: { id: true, userId: true, testId: true, accessId: true, status: true }
-        }
-      }
-    });
-    const access = accesses.length === 1 ? accesses[0] : null;
-    const attempt = access?.attempts[0] ?? null;
-    const exactProof = order.status === "PAID" &&
-      order.commercialProductId === order.product.id &&
-      order.testIdSnapshot === order.product.testId &&
-      order.product.test.id === order.product.testId &&
-      access !== null &&
-      access.userId === access.user.id &&
-      access.testId === order.product.testId &&
-      access.source === "COMMERCIAL" &&
-      access.commercialProductId === order.product.id &&
-      access.commercialOrderId === order.id &&
-      access.commercialPaymentAttemptId !== null &&
-      access.commercialProduct?.id === order.product.id &&
-      access.commercialProduct.testId === order.product.testId &&
-      access.commercialPaymentAttempt?.id === access.commercialPaymentAttemptId &&
-      access.commercialPaymentAttempt.commercialOrderId === order.id &&
-      access.commercialPaymentAttempt.status === "PAID" &&
-      access.revokedAt === null &&
-      now.getTime() < access.expiresAt.getTime() &&
-      access.user.role === "STUDENT" &&
-      access.user.deletedAt === null &&
-      normalizeEmail(order.emailOriginal) === order.emailNormalized &&
-      normalizeEmail(access.user.email) === order.emailNormalized &&
-      (!attempt ||
-        attempt.userId === access.userId &&
-        attempt.testId === access.testId &&
-        attempt.accessId === access.id);
-    if (!exactProof || !access) throw new CommercialError("PAYMENT_NOT_CONFIRMED");
-    return { order, access, attempt };
+  const order = await getCommercialOrder(publicId);
+  const access = await prisma.access.findUnique({
+    where: { commercialOrderId: order.id },
+    include: {
+      user: { select: { id: true, email: true, role: true, deletedAt: true } },
+      attempts: { orderBy: { createdAt: "desc" }, take: 1 }
+    }
   });
+  if (!access || order.status !== "PAID" || access.revokedAt || access.expiresAt <= new Date()) {
+    throw new CommercialError("PAYMENT_NOT_CONFIRMED");
+  }
+  if (access.user.role !== "STUDENT" || access.user.deletedAt) {
+    throw new CommercialError("EMAIL_NOT_AVAILABLE");
+  }
 
-  const { order, access, attempt } = proof;
-
+  const attempt = access.attempts[0] ?? null;
   const nextAction: CommercialNextAction = attempt?.status === "STARTED"
     ? "RESUME_TEST"
     : attempt && access.attemptsAvailable <= 0
       ? "VIEW_RESULT"
-      : "OPEN_PRE";
+      : "START_TEST";
   return {
-    orderId: order.id,
-    examMode: order.product.test.examMode,
     student: { userId: access.user.id, email: access.user.email, role: "STUDENT" as const },
     accessId: access.id,
     commercialProductId: order.commercialProductId,

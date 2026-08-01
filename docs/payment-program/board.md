@@ -41,18 +41,19 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 14 |
-| `READY` | 11 |
+| `READY` | 10 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 0 |
+| `IN_REVIEW` | 1 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 9 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
+Текущий feature milestone: B1-04 — `IN_REVIEW` на base SHA `dcf58d3`.
 Последняя принятая feature-карточка: B1-03 — `DONE` (reviewed SHA `7b94ab2`).
-B1-04 теперь `READY`; A-07 остаётся long-lived program-control `IN_PROGRESS`;
-production остаётся `NO-GO`.
+A-07 остаётся long-lived program-control `IN_PROGRESS`; production остаётся
+`NO-GO`.
 
 ## 4. Реестр задач
 
@@ -68,7 +69,7 @@ production остаётся `NO-GO`.
 | [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `DONE` | `CRITICAL` | `A-03`, `A-04` |
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `DONE` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `DONE` | `CRITICAL` | `B1-01`, `B1-02` |
-| [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `READY` | `CRITICAL` | `B1-01`, `B1-03` |
+| [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `IN_REVIEW` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `BACKLOG` | `CRITICAL` | `B1-03`, `B1-04` |
 | [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `READY` | `HIGH` | `A-03`, `A-04` |
 | [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `READY` | `HIGH` | `A-03` |
