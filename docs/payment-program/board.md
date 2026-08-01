@@ -1,6 +1,6 @@
 # Payment Program Board
 
-Последнее обновление: **2026-07-31**
+Последнее обновление: **2026-08-01**
 Planning/current baseline at board creation: `80c6838ce54e8e0768b4264698343e98be7cbaea`  
 Historical audit baseline: `adf23554a1bac5a6f751fa4fc9a80f2bf64371f2`  
 Production verdict: **NO-GO**
@@ -35,17 +35,19 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | Статус | Количество |
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 17 |
+| `BACKLOG` | 16 |
 | `READY` | 11 |
 | `IN_PROGRESS` | 1 |
 | `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 6 |
+| `DONE` | 7 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий gate: A-07 находится `IN_PROGRESS` на base SHA `68e48c1`; B3-05 и D-01 разблокированы A-06. Production остаётся `NO-GO`.
+Последняя принятая feature-карточка: B1-01 — `DONE` (reviewed SHA `4014eee`).
+B1-02 теперь `READY`; A-07 остаётся long-lived program-control `IN_PROGRESS`;
+production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -58,8 +60,8 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | [A-05](tasks/A-05.md) | A — Управление и документация | Создать launch-control и WEBPAY evidence documents | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `IN_PROGRESS` | `HIGH` | `A-03` |
-| [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `READY` | `CRITICAL` | `A-03`, `A-04` |
-| [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `BACKLOG` | `CRITICAL` | `B1-01` |
+| [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `DONE` | `CRITICAL` | `A-03`, `A-04` |
+| [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `READY` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `BACKLOG` | `CRITICAL` | `B1-03`, `B1-04` |
@@ -110,6 +112,7 @@ Implementer не ставит `DONE`. Reviewer не исправляет код 
 | A-04 | `2435e8b` | `reviews/A-04.md` | `DONE` |
 | A-05 | `c2a1133` | `reviews/A-05.md` | `DONE` |
 | A-06 | `96e95f864dc5fc88a46a28ee86cc5ca68d78c07d` | `reviews/A-06.md` | `DONE` |
+| B1-01 | `4014eee` | `reviews/B1-01.md` | `DONE` |
 
 При каждом следующем принятом review reviewer обязан атомарно:
 
