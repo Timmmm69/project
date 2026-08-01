@@ -29,11 +29,16 @@ export function resolveAttemptCompletion(input: {
 export async function getAttemptForStudent(input: {
   attemptId: string;
   studentId: string;
+  authorizedAccessId?: string;
 }) {
   return prisma.attempt.findFirst({
     where: {
       id: input.attemptId,
-      userId: input.studentId
+      userId: input.studentId,
+      ...(input.authorizedAccessId ? {
+        accessId: input.authorizedAccessId,
+        access: { revokedAt: null }
+      } : {})
     },
     include: {
       answers: {
@@ -52,10 +57,15 @@ export async function startOrRestoreAttempt(input: {
   studentId: string;
   email: string;
   testId: string;
+  authorizedAccessId?: string;
 }) {
   const now = new Date();
 
-  const started = await getStartedAttempt(input.studentId, input.testId);
+  const started = await getStartedAttempt(
+    input.studentId,
+    input.testId,
+    input.authorizedAccessId
+  );
   if (started) {
     return {
       attempt: started,
@@ -70,7 +80,8 @@ export async function startOrRestoreAttempt(input: {
           userId: input.studentId,
           testId: input.testId,
           status: "STARTED",
-          access: { revokedAt: null }
+          access: { revokedAt: null },
+          ...(input.authorizedAccessId ? { accessId: input.authorizedAccessId } : {})
         },
         include: {
           answers: {
@@ -94,7 +105,8 @@ export async function startOrRestoreAttempt(input: {
           testId: input.testId,
           revokedAt: null,
           expiresAt: { gt: now },
-          attemptsAvailable: { gt: 0 }
+          attemptsAvailable: { gt: 0 },
+          ...(input.authorizedAccessId ? { id: input.authorizedAccessId } : {})
         },
         orderBy: [{ expiresAt: "asc" }, { createdAt: "asc" }]
       });
@@ -184,7 +196,11 @@ export async function startOrRestoreAttempt(input: {
     };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      const attempt = await getStartedAttempt(input.studentId, input.testId);
+      const attempt = await getStartedAttempt(
+        input.studentId,
+        input.testId,
+        input.authorizedAccessId
+      );
       if (attempt) {
         return {
           attempt,
@@ -196,13 +212,18 @@ export async function startOrRestoreAttempt(input: {
   }
 }
 
-async function getStartedAttempt(studentId: string, testId: string) {
+async function getStartedAttempt(
+  studentId: string,
+  testId: string,
+  authorizedAccessId?: string
+) {
   return prisma.attempt.findFirst({
     where: {
       userId: studentId,
       testId,
       status: "STARTED",
-      access: { revokedAt: null }
+      access: { revokedAt: null },
+      ...(authorizedAccessId ? { accessId: authorizedAccessId } : {})
     },
     include: {
       answers: {
@@ -220,13 +241,18 @@ async function getStartedAttempt(studentId: string, testId: string) {
 export async function saveAttemptAnswer(input: {
   attemptId: string;
   studentId: string;
+  authorizedAccessId?: string;
   snapshotQuestionId: string;
   selectedAnswer: string | null;
 }) {
   const attempt = await prisma.attempt.findFirst({
     where: {
       id: input.attemptId,
-      userId: input.studentId
+      userId: input.studentId,
+      ...(input.authorizedAccessId ? {
+        accessId: input.authorizedAccessId,
+        access: { revokedAt: null }
+      } : {})
     }
   });
 
@@ -272,13 +298,18 @@ export async function saveAttemptAnswer(input: {
 export async function completeAttempt(input: {
   attemptId: string;
   studentId: string;
+  authorizedAccessId?: string;
   expire: boolean;
 }) {
   const now = new Date();
   const attempt = await prisma.attempt.findFirst({
     where: {
       id: input.attemptId,
-      userId: input.studentId
+      userId: input.studentId,
+      ...(input.authorizedAccessId ? {
+        accessId: input.authorizedAccessId,
+        access: { revokedAt: null }
+      } : {})
     }
   });
 

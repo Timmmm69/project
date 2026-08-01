@@ -52,10 +52,22 @@ export function setVerifiedStudentSessionCookie(
   expiresAt: Date,
   options: Parameters<typeof verifiedStudentSessionCookieOptions>[1] = {}
 ) {
-  response.cookies.set(
-    VERIFIED_STUDENT_SESSION_COOKIE,
-    rawToken,
-    verifiedStudentSessionCookieOptions(expiresAt, options)
+  const cookie = verifiedStudentSessionCookieOptions(expiresAt, options);
+  const attributes = [
+    `Path=${cookie.path}`,
+    `Expires=${cookie.expires.toUTCString()}`,
+    `Max-Age=${cookie.maxAge}`,
+    cookie.secure ? "Secure" : null,
+    cookie.httpOnly ? "HttpOnly" : null,
+    `SameSite=${cookie.sameSite}`
+  ].filter((attribute): attribute is string => attribute !== null);
+
+  // NextResponse.cookies.set() recalculates Expires from Date.now() whenever
+  // Max-Age is present. Serializing here preserves the server-authoritative row
+  // expiry while retaining the bounded Max-Age accepted by B1-01.
+  response.headers.append(
+    "set-cookie",
+    `${VERIFIED_STUDENT_SESSION_COOKIE}=${encodeURIComponent(rawToken)}; ${attributes.join("; ")}`
   );
 }
 

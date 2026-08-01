@@ -69,4 +69,19 @@ jobs:
           RUN_ACC01A_HTTP_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_recovery_ci
         run: pnpm exec vitest run tests/integration/recovery-http-boundary.test.ts
+      - name: Run ACC-01A recovery state resolver PostgreSQL integration tests
+        env:
+          RUN_ACC01A_STATE_RESOLVER_INTEGRATION: "true"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_recovery_ci
+        run: pnpm exec vitest run tests/integration/recovery-state-resolver.test.ts
+      - name: Run ACC-01A recovery continuation PostgreSQL integration tests
+        env:
+          RUN_ACC01A_CONTINUATION_INTEGRATION: "true"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_recovery_ci
+        run: pnpm exec vitest run tests/integration/recovery-continuation-exchange.test.ts
+      - name: Run ACC-01A verified destination guards PostgreSQL integration tests
+        env:
+          RUN_ACC01A_DESTINATION_GUARDS_INTEGRATION: "true"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_recovery_ci
+        run: pnpm exec vitest run tests/integration/verified-destination-guards.test.ts
       - run: pnpm build

@@ -300,11 +300,9 @@ describe("ACC-01A recovery foundation", () => {
       }));
   });
 
-  it("requires verified commercial session enforcement before enabling recovery", () => {
-    expect(() => parseRecoveryConfig(enabledEnvironment({ VERIFIED_COMMERCIAL_SESSION_MODE: "shadow" })))
-      .toThrowError(expect.objectContaining<Partial<RecoveryConfigError>>({
-        code: "VERIFIED_SESSION_ENFORCEMENT_REQUIRED"
-      }));
+  it("keeps verified-session mode enforcement at the recovery HTTP runtime boundary", () => {
+    expect(parseRecoveryConfig(enabledEnvironment({ VERIFIED_COMMERCIAL_SESSION_MODE: "shadow" })))
+      .toMatchObject({ enabled: true });
   });
 
   it("pops test mailbox messages once in deterministic order", async () => {

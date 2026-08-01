@@ -85,7 +85,9 @@ function externalSecretCandidates(value: string) {
   return candidates;
 }
 
-function parseMode(value: string | undefined): VerifiedCommercialSessionMode {
+export function parseVerifiedCommercialSessionMode(
+  value: string | undefined
+): VerifiedCommercialSessionMode {
   const mode = value?.trim() || "off";
   if (mode !== "off" && mode !== "shadow" && mode !== "enforce") {
     throw new VerifiedStudentSessionConfigError("MODE_INVALID");
@@ -96,7 +98,7 @@ function parseMode(value: string | undefined): VerifiedCommercialSessionMode {
 export function parseVerifiedStudentSessionConfig(
   env: Record<string, string | undefined> = process.env
 ): VerifiedStudentSessionConfig {
-  const mode = parseMode(env.VERIFIED_COMMERCIAL_SESSION_MODE);
+  const mode = parseVerifiedCommercialSessionMode(env.VERIFIED_COMMERCIAL_SESSION_MODE);
   const rawKeyRing = env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING?.trim();
   if (!rawKeyRing) {
     throw new VerifiedStudentSessionConfigError("KEY_RING_MISSING");

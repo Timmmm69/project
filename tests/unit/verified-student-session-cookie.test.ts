@@ -1,5 +1,7 @@
 import { describe, expect, it } from "vitest";
+import { NextResponse } from "next/server";
 import {
+  setVerifiedStudentSessionCookie,
   verifiedStudentSessionCookieOptions,
   VerifiedStudentSessionCookieError
 } from "@/server/auth/verified-student-session/cookies";
@@ -29,6 +31,19 @@ describe("verified student session cookie policy", () => {
       now,
       environment: { NODE_ENV: "test" }
     }).maxAge).toBe(VERIFIED_STUDENT_SESSION_ABSOLUTE_TTL_MS / 1000);
+  });
+
+  it("preserves the authoritative row expiry when Max-Age is serialized", () => {
+    const response = NextResponse.json({ ok: true });
+    setVerifiedStudentSessionCookie(response, "vs1.v1.opaque-token", expiresAt, {
+      now,
+      environment: { NODE_ENV: "test" }
+    });
+
+    const cookie = response.headers.get("set-cookie") ?? "";
+    expect(cookie).toContain("Expires=Fri, 07 Aug 2026 10:00:00 GMT");
+    expect(cookie).toContain("Max-Age=604800");
+    expect(cookie).not.toContain("Domain=");
   });
 
   it("forces Secure in every production-like environment", () => {

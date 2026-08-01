@@ -1002,6 +1002,9 @@ export async function claimCommercialOrderAccess(publicId: string) {
       : "START_TEST";
   return {
     student: { userId: access.user.id, email: access.user.email, role: "STUDENT" as const },
+    accessId: access.id,
+    commercialProductId: order.commercialProductId,
+    attemptId: attempt?.id ?? null,
     nextAction,
     nextUrl: nextAction === "RESUME_TEST" && attempt ? `/attempts/${attempt.id}` : nextAction === "VIEW_RESULT" && attempt ? `/results/${attempt.id}` : `/tests/${order.product.test.slug}`,
     testId: order.testIdSnapshot

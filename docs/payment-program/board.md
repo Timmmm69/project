@@ -41,18 +41,19 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 15 |
-| `READY` | 11 |
+| `READY` | 10 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 0 |
+| `IN_REVIEW` | 1 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 8 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
+Текущий feature milestone: B1-03 — `IN_REVIEW` на base SHA `f38ddec`.
 Последняя принятая feature-карточка: B1-02 — `DONE` (reviewed SHA `6cdab4a`).
-B1-03 теперь `READY`; A-07 остаётся long-lived program-control `IN_PROGRESS`;
-production остаётся `NO-GO`.
+A-07 остаётся long-lived program-control `IN_PROGRESS`; production остаётся
+`NO-GO`.
 
 ## 4. Реестр задач
 
@@ -67,7 +68,7 @@ production остаётся `NO-GO`.
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `IN_PROGRESS` | `HIGH` | `A-03` |
 | [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `DONE` | `CRITICAL` | `A-03`, `A-04` |
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `DONE` | `CRITICAL` | `B1-01` |
-| [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `READY` | `CRITICAL` | `B1-01`, `B1-02` |
+| [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `IN_REVIEW` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `BACKLOG` | `CRITICAL` | `B1-03`, `B1-04` |
 | [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `READY` | `HIGH` | `A-03`, `A-04` |
@@ -144,7 +145,7 @@ QA-02. Текущий checkpoint не означает, что будущие re
 | ORD-03 | B1-04, C-01 | Verified email before Order |
 | ORD-04 | A-03, B1-04, QA-01 | One Order per checkout flow |
 | ORD-05 | B1-05 | Existing pending Order resolver |
-| ORD-06 | B1-05, C-03 | Existing Access/Attempt/Result; no repurchase |
+| ORD-06 | B1-03, B1-05, C-03 | Existing Access/Attempt/Result; no repurchase |
 | PAY-01 | A-03, QA-01 | Separate PaymentAttempt regression |
 | PAY-02 | A-03, QA-01 | At most one active attempt |
 | PAY-03 | B2-05 | Terminal retry consistency |
@@ -164,7 +165,7 @@ QA-02. Текущий checkpoint не означает, что будущие re
 | REC-01 | B1-05, C-05 | Reload restoration |
 | REC-02 | C-05 | Back/pageshow/foreground |
 | REC-03 | B1-02, B1-03, B2-07 | Verified recovery for payment |
-| SEC-01 | B1-04, B3-01 | Enumeration resistance |
+| SEC-01 | B1-03, B1-04, B3-01 | Enumeration resistance and identify-bypass prevention |
 | SEC-02 | B3-01, B3-02 | CSRF/client identity/rate limits |
 | SEC-03 | B3-03 | Cache/referrer/URL leakage |
 | CARD-01 | D-03, C-06, QA-01 | No card-data handling |

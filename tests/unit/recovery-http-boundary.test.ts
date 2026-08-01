@@ -11,7 +11,8 @@ import type {
 } from "@/server/recovery/http-runtime";
 import {
   createRecoveryHttpRuntime,
-  RECOVERY_HTTP_GLOBAL_SOURCE
+  RECOVERY_HTTP_GLOBAL_SOURCE,
+  RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
 } from "@/server/recovery/http-runtime";
 import { RecoveryDomainServiceError } from "@/server/recovery/service";
 import { normalizeRecoveryTiming } from "@/server/recovery/timing";
@@ -29,8 +30,14 @@ function enabledRuntime(service: RecoveryHttpService): RecoveryHttpRuntime {
   return {
     config: enabledConfig(),
     service,
+    resolveState: async () => ({
+      state: "no_access",
+      screen: "REC-01",
+      nextAction: null
+    }),
     trustedOrigin: origin,
-    sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE
+    sourceLimiterInput: RECOVERY_HTTP_GLOBAL_SOURCE,
+    resolverLimiterInput: RECOVERY_STATE_RESOLVER_GLOBAL_SOURCE
   };
 }
 
@@ -54,6 +61,8 @@ function enabledEnvironment(overrides: Record<string, string | undefined> = {}) 
     RECOVERY_OTP_HMAC_KEY_RING: `v1:${encoded(63)}`,
     RECOVERY_SESSION_TOKEN_ACTIVE_KEY_VERSION: "v1",
     RECOVERY_SESSION_TOKEN_HMAC_KEY_RING: `v1:${encoded(64)}`,
+    VERIFIED_STUDENT_SESSION_ACTIVE_KEY_VERSION: "v1",
+    VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: `v1:${encoded(65)}`,
     ...overrides
   };
 }
@@ -134,6 +143,8 @@ describe("ACC-01A recovery HTTP boundary", () => {
     requestChallenge: ReturnType<typeof vi.fn>;
     verifyChallenge: ReturnType<typeof vi.fn>;
     invalidateRecoverySession: ReturnType<typeof vi.fn>;
+    validateRecoverySession: ReturnType<typeof vi.fn>;
+    consumeResolverRead: ReturnType<typeof vi.fn>;
   };
   let handlers: ReturnType<typeof createRecoveryHttpHandlers>;
 
@@ -148,7 +159,9 @@ describe("ACC-01A recovery HTTP boundary", () => {
         expiresAt: sessionExpiry,
         correlationId: randomUUID()
       }),
-      invalidateRecoverySession: vi.fn().mockResolvedValue({ status: "REVOKED" })
+      invalidateRecoverySession: vi.fn().mockResolvedValue({ status: "REVOKED" }),
+      validateRecoverySession: vi.fn().mockResolvedValue({ status: "NOT_FOUND" }),
+      consumeResolverRead: vi.fn().mockResolvedValue({ allowed: true })
     };
     const runtime = enabledRuntime(service as unknown as RecoveryHttpService);
     handlers = createRecoveryHttpHandlers({
@@ -415,6 +428,46 @@ describe("ACC-01A recovery HTTP boundary", () => {
     expect(service.requestChallenge).not.toHaveBeenCalled();
     expect(service.verifyChallenge).not.toHaveBeenCalled();
     expect(service.invalidateRecoverySession).not.toHaveBeenCalled();
+  });
+
+  it.each([
+    ["off", "off"],
+    ["shadow", "shadow"],
+    ["missing/off", undefined]
+  ])("keeps every recovery endpoint unavailable in verified mode %s", async (_label, mode) => {
+    const runtime = createRecoveryHttpRuntime(enabledEnvironment({
+      VERIFIED_COMMERCIAL_SESSION_MODE: mode
+    }));
+    expect(runtime).toMatchObject({ config: { enabled: true }, available: false });
+    expect("service" in runtime).toBe(false);
+    const gated = createRecoveryHttpHandlers({ getRuntime: () => runtime });
+    const responses = await Promise.all([
+      gated.requestChallenge(postRequest("/api/recovery/challenges", challengeBody())),
+      gated.verifyChallenge(postRequest("/api/recovery/challenges/verify", verifyBody())),
+      gated.resolveState(new Request(`${origin}/api/recovery/state`, {
+        headers: { cookie: "acc01a_recovery=opaque" }
+      })),
+      gated.continueRecovery(postRequest(
+        "/api/recovery/continue",
+        { operationId: randomUUID() },
+        { cookie: "acc01a_recovery=opaque" }
+      )),
+      gated.invalidateSession(deleteRequest({ cookie: "acc01a_recovery=opaque" }))
+    ]);
+    for (const response of responses) {
+      expect(response.status).toBe(404);
+      expect((await response.json()).error.code).toBe("FEATURE_UNAVAILABLE");
+      expect(response.headers.get("set-cookie")).toBeNull();
+    }
+  });
+
+  it("creates the recovery HTTP runtime only in verified enforce mode", () => {
+    const runtime = createRecoveryHttpRuntime(enabledEnvironment({
+      VERIFIED_COMMERCIAL_SESSION_MODE: "enforce"
+    }));
+    expect(runtime).toMatchObject({ config: { enabled: true }, available: true });
+    expect("service" in runtime).toBe(true);
+    expect("continuation" in runtime).toBe(true);
   });
 
   it.each([
