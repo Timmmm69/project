@@ -43,17 +43,16 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | `BACKLOG` | 13 |
 | `READY` | 10 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 1 |
+| `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 10 |
+| `DONE` | 11 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий feature milestone: B1-05 — `IN_REVIEW` на accepted baseline `1d9b758`.
-Последняя принятая feature-карточка: B1-04 — `DONE` (reviewed SHA `df106dd`).
-A-07 остаётся long-lived program-control `IN_PROGRESS`;
-production остаётся `NO-GO`.
+Последняя принятая feature-карточка: B1-05 — `DONE` (reviewed SHA `4a6a013`).
+Следующий safe READY block: B2-01 — immutable commercial snapshot. A-07
+остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -70,7 +69,7 @@ production остаётся `NO-GO`.
 | [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `DONE` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `DONE` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `DONE` | `CRITICAL` | `B1-01`, `B1-03` |
-| [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `IN_REVIEW` | `CRITICAL` | `B1-03`, `B1-04` |
+| [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `DONE` | `CRITICAL` | `B1-03`, `B1-04` |
 | [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `READY` | `HIGH` | `A-03`, `A-04` |
 | [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `READY` | `HIGH` | `A-03` |
 | [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `BACKLOG` | `CRITICAL` | `B2-02`, `B2-06` |
@@ -123,6 +122,7 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B1-02 | `6cdab4a` | `reviews/B1-02.md` | `DONE` |
 | B1-03 | `7b94ab2` | `reviews/B1-03.md` | `DONE` |
 | B1-04 | `df106dd` | `reviews/B1-04.md` | `DONE` |
+| B1-05 | `4a6a013` | `reviews/B1-05.md` | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 
