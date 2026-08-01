@@ -7,7 +7,7 @@
 - Feature-карточка: `B1-02`
 - Статус B1-02: `READY`
 - Принятая зависимость B1-01: `DONE`, reviewed SHA `4014eee`
-- Program-control A-07: `IN_PROGRESS`, checkpoint `509c79b`
+- Program-control A-07: `IN_PROGRESS`, traceability обновлена через B1-01
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
@@ -30,7 +30,8 @@
    targeted security tests строго по recovery spec.
 3. Сохранить B1-01 plane отдельным; не подключать legacy fallback и не менять
    production `NO-GO`.
-4. Заполнить B1-02 evidence и передать на независимое review.
+4. Заполнить B1-02 evidence и передать на один независимый review всего
+   критичного recovery-backend milestone; малые подшаги отдельно не ревьюить.
 
 ## Другие READY-карточки
 
@@ -60,5 +61,6 @@ Unrelated modified/untracked файлы:
 - A-07 traceability остаётся long-lived `IN_PROGRESS` до QA-02; checkpoint
   2026-07-31 заполнен.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются external gates.
-- Current main не содержит verified-session/recovery changes из audited sibling branch.
+- Current main содержит принятую B1-01 verified-session foundation, но recovery
+  backend/continuation/guards ещё не реализованы.
 - Production остаётся `NO-GO`.

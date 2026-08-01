@@ -10,6 +10,7 @@
 | Base SHA | |
 | Final SHA | |
 | Reviewer chat | |
+| Review mode | `INDEPENDENT`, `CONSOLIDATED` или `SELF_CHECKED` |
 | Последнее обновление | |
 
 ## Цель
@@ -43,4 +44,3 @@
 ## Handoff
 
 Следующее точное действие:
-

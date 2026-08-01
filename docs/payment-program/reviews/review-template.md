@@ -6,6 +6,7 @@
 | Reviewed SHA | |
 | Дата | |
 | Verdict | `CHANGES_REQUIRED` или `DONE` |
+| Review mode | `INDEPENDENT` или `CONSOLIDATED` |
 
 ## Проверенный scope
 
@@ -29,4 +30,3 @@
 
 При `CHANGES_REQUIRED`: точный список исправлений для implementation chat.  
 При `DONE`: следующая READY-карточка и обновлённый handoff.
-
