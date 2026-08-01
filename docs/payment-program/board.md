@@ -22,13 +22,18 @@ Production verdict: **NO-GO**
 | `BACKLOG` | Определена, но зависимости не закрыты | Program/implementation chat после evidence |
 | `READY` | Решения и зависимости закрыты | Implementer при claim |
 | `IN_PROGRESS` | Один чат владеет карточкой и записал base SHA | Implementer |
-| `IN_REVIEW` | Implementation завершён, evidence и handoff заполнены | Только отдельный reviewer |
-| `CHANGES_REQUIRED` | Reviewer нашёл обязательные исправления | Новый implementation pass |
+| `IN_REVIEW` | Implementation завершён, evidence и handoff заполнены | Independent/consolidated reviewer либо Tier 3 self-check |
+| `CHANGES_REQUIRED` | Review/self-check нашёл обязательные исправления | Новый implementation pass |
 | `BLOCKED_EXTERNAL` | Нужен merchant/legal/operational input | Только после authoritative evidence |
-| `DONE` | Независимый review пройден | Только reviewer |
+| `DONE` | Пройден требуемый risk-based review tier | Reviewer для Tier 1/2; implementer для Tier 3 |
 | `SUPERSEDED` | Заменено утверждённым решением с ссылкой | Reviewer/program governance |
 
-Implementer не ставит `DONE`. Reviewer не исправляет код в review pass. Каждая feature-карточка требует отдельного атомарного изменения/коммита и отдельного review report.
+Review tier определяется по `reviews/README.md`. Отдельный reviewer обязателен
+для крупных и критичных payment/security/migration/launch блоков. Связанные
+средние карточки объединяются в consolidated milestone review. Малые безопасные
+docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельного чата; их evidence
+всё равно включается в ближайший milestone review или QA-02. Reviewer не
+исправляет implementation в review pass.
 
 ## 3. Сводка
 
@@ -101,8 +106,9 @@ production остаётся `NO-GO`.
 
 ### 4.1. Контроль принятых карточек
 
-Последний независимо принятый program state до claim A-07: `68e48c1`.
-`DONE` допустим только при наличии отдельного review report.
+Последний независимо принятый feature state: B1-01 implementation `4014eee`,
+review acceptance commit `7b6521d`. Для Tier 1/2 `DONE` требует review report;
+Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке.
 
 | Карточка | Accepted implementation/correction SHA | Review evidence | Verdict |
 |---|---|---|---|
@@ -114,13 +120,16 @@ production остаётся `NO-GO`.
 | A-06 | `96e95f864dc5fc88a46a28ee86cc5ca68d78c07d` | `reviews/A-06.md` | `DONE` |
 | B1-01 | `4014eee` | `reviews/B1-01.md` | `DONE` |
 
-При каждом следующем принятом review reviewer обязан атомарно:
+При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 
 1. записать reviewed/final SHA и evidence в карточку и review report;
 2. обновить registry status, dependency unlocks и counts;
 3. обновить затронутые строки разделов 5–9;
 4. проверить, что все `DONE` имеют report, а mock/placeholder не закрыл external gate;
 5. записать точное продолжение в `handoff.md`.
+
+Для Tier 3 те же механические обновления выполняет implementer без создания
+отдельного reviewer chat.
 
 A-07 остаётся program-control карточкой `IN_PROGRESS` до финальной сверки с
 QA-02. Текущий checkpoint не означает, что будущие requirements уже выполнены.
