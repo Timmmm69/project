@@ -41,18 +41,18 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 16 |
-| `READY` | 11 |
+| `READY` | 10 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 0 |
+| `IN_REVIEW` | 1 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 7 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Последняя принятая feature-карточка: B1-01 — `DONE` (reviewed SHA `4014eee`).
-B1-02 теперь `READY`; A-07 остаётся long-lived program-control `IN_PROGRESS`;
-production остаётся `NO-GO`.
+Текущий feature claim: B1-02 — `IN_REVIEW` на base SHA `8d682b7`.
+A-07 остаётся long-lived program-control `IN_PROGRESS`; production остаётся
+`NO-GO`.
 
 ## 4. Реестр задач
 
@@ -66,7 +66,7 @@ production остаётся `NO-GO`.
 | [A-06](tasks/A-06.md) | A — Управление и документация | Сверить analytics measurement plan | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [A-07](tasks/A-07.md) | A — Управление и документация | Поддерживать полную traceability | `IN_PROGRESS` | `HIGH` | `A-03` |
 | [B1-01](tasks/B1-01.md) | B1 — Verified authority и recovery | Реализовать verified commercial session | `DONE` | `CRITICAL` | `A-03`, `A-04` |
-| [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `READY` | `CRITICAL` | `B1-01` |
+| [B1-02](tasks/B1-02.md) | B1 — Verified authority и recovery | Реализовать ACC-01A recovery backend | `IN_REVIEW` | `CRITICAL` | `B1-01` |
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `BACKLOG` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `BACKLOG` | `CRITICAL` | `B1-03`, `B1-04` |

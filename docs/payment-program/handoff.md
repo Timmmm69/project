@@ -5,7 +5,8 @@
 ## Активная карточка
 
 - Feature-карточка: `B1-02`
-- Статус B1-02: `READY`
+- Статус B1-02: `IN_REVIEW`
+- B1-02 base SHA: `8d682b7`
 - Принятая зависимость B1-01: `DONE`, reviewed SHA `4014eee`
 - Program-control A-07: `IN_PROGRESS`, traceability обновлена через B1-01
 - Production verdict: `NO-GO`
@@ -25,13 +26,13 @@
 
 ## Точное продолжение
 
-1. Claim B1-02 отдельным implementer chat на текущем accepted baseline.
-2. Реализовать только bounded ACC-01A recovery backend/domain, fake mailer и
-   targeted security tests строго по recovery spec.
-3. Сохранить B1-01 plane отдельным; не подключать legacy fallback и не менять
-   production `NO-GO`.
-4. Заполнить B1-02 evidence и передать на один независимый review всего
-   критичного recovery-backend milestone; малые подшаги отдельно не ревьюить.
+1. Зафиксировать атомарный implementation commit B1-02.
+2. Один independent reviewer проверяет весь diff от `8d682b7`, recovery spec,
+   migration/privacy/config и критичные concurrency/HTTP boundaries.
+3. Не повторять дорогие green checks без причины; использовать записанное
+   evidence и spot-check наиболее рискованных мест.
+4. Verdict/findings записать в `reviews/B1-02.md`; малые подшаги отдельно не
+   ревьюить.
 
 ## Другие READY-карточки
 
