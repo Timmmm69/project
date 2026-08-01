@@ -9,8 +9,13 @@ import {
   type UserRole
 } from "@prisma/client";
 import {
+  COMMERCIAL_ATTEMPT_LIMIT,
   COMMERCIAL_CURRENCY,
-  COMMERCIAL_PRICE_MINOR
+  COMMERCIAL_DURATION_MINUTES,
+  COMMERCIAL_PRICE_MINOR,
+  COMMERCIAL_RESULT_DISPLAY_MODE,
+  COMMERCIAL_RESULT_RETENTION_DAYS,
+  COMMERCIAL_START_WINDOW_DAYS
 } from "@/lib/commercial/config";
 import {
   canOpenNewPaymentAttempt,
@@ -19,10 +24,10 @@ import {
 } from "@/lib/commercial/state-machine";
 import { z } from "zod";
 
-const AUTHENTIC_DURATION_MINUTES = 120;
+const AUTHENTIC_DURATION_MINUTES = COMMERCIAL_DURATION_MINUTES;
 const AUTHENTIC_MAX_RAW_SCORE = 80;
 const AUTHENTIC_QUESTION_COUNT = 40;
-const RESULT_RETENTION_DAYS = 365;
+const RESULT_RETENTION_DAYS = COMMERCIAL_RESULT_RETENTION_DAYS;
 
 export const RECOVERY_RESOLVED_STATES = [
   "access_unstarted",
@@ -92,6 +97,12 @@ type OrderCandidate = Readonly<{
   status: CommercialOrderStatus;
   priceMinor: number;
   currency: string;
+  attemptLimitSnapshot: number;
+  startWindowDaysSnapshot: number;
+  durationMinutesSnapshot: number;
+  resultRetentionDaysSnapshot: number;
+  examModeSnapshot: "GENERIC" | "RIKZ_RUSSIAN_2026";
+  resultDisplayModeSnapshot: string;
   paidAt: Date | null;
   paymentAttempts: readonly PaymentAttemptCandidate[];
 }>;
@@ -310,8 +321,7 @@ export function resolveRecoveryStateSnapshot(
   if (!product || product.id !== snapshot.commercialProductId ||
     product.code !== snapshot.configuredProductCode ||
     product.testId !== snapshot.testId || product.test.id !== snapshot.testId ||
-    product.test.deletedAt || product.test.examMode !== "RIKZ_RUSSIAN_2026" ||
-    product.attemptLimit !== 1) {
+    product.test.deletedAt || product.test.examMode !== "RIKZ_RUSSIAN_2026") {
     return state("support_required");
   }
 
@@ -341,7 +351,6 @@ export function resolveRecoveryStateSnapshot(
     !access.commercialOrderId || !access.commercialPaymentAttemptId ||
     !access.grantedAt || !access.startDeadlineAt || access.revokedAt ||
     access.expiresAt.getTime() !== access.startDeadlineAt.getTime() ||
-    access.attemptsTotal !== product.attemptLimit ||
     access.attemptsAvailable < 0 || access.attemptsAvailable > access.attemptsTotal) {
     return state("support_required");
   }
@@ -356,7 +365,14 @@ export function resolveRecoveryStateSnapshot(
     linkedOrder.testIdSnapshot !== snapshot.testId ||
     linkedOrder.emailNormalized !== snapshot.emailNormalized ||
     linkedOrder.priceMinor !== COMMERCIAL_PRICE_MINOR ||
-    linkedOrder.currency !== COMMERCIAL_CURRENCY || !linkedOrder.paidAt) {
+    linkedOrder.currency !== COMMERCIAL_CURRENCY ||
+    linkedOrder.attemptLimitSnapshot !== COMMERCIAL_ATTEMPT_LIMIT ||
+    linkedOrder.startWindowDaysSnapshot !== COMMERCIAL_START_WINDOW_DAYS ||
+    linkedOrder.durationMinutesSnapshot !== COMMERCIAL_DURATION_MINUTES ||
+    linkedOrder.resultRetentionDaysSnapshot !== COMMERCIAL_RESULT_RETENTION_DAYS ||
+    linkedOrder.examModeSnapshot !== "RIKZ_RUSSIAN_2026" ||
+    linkedOrder.resultDisplayModeSnapshot !== COMMERCIAL_RESULT_DISPLAY_MODE ||
+    access.attemptsTotal !== linkedOrder.attemptLimitSnapshot || !linkedOrder.paidAt) {
     return state("support_required");
   }
   const linkedPayments = linkedOrder.paymentAttempts.filter(
@@ -389,7 +405,7 @@ export function resolveRecoveryStateSnapshot(
     return terminalProjectionIsReadable(
       attempt,
       snapshot.testId,
-      product.resultRetentionDays,
+      linkedOrder.resultRetentionDaysSnapshot,
       now
     ) ? state("result_available") : state("support_required");
   }
@@ -449,6 +465,12 @@ async function loadRecoveryStateSnapshot(input: {
         status: true,
         priceMinor: true,
         currency: true,
+        attemptLimitSnapshot: true,
+        startWindowDaysSnapshot: true,
+        durationMinutesSnapshot: true,
+        resultRetentionDaysSnapshot: true,
+        examModeSnapshot: true,
+        resultDisplayModeSnapshot: true,
         paidAt: true,
         paymentAttempts: {
           select: {

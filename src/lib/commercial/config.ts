@@ -1,6 +1,11 @@
 export const COMMERCIAL_PRODUCT_CODE = "russian-training-variant-01";
 export const COMMERCIAL_PRICE_MINOR = 1000;
 export const COMMERCIAL_CURRENCY = "BYN";
+export const COMMERCIAL_ATTEMPT_LIMIT = 1;
+export const COMMERCIAL_START_WINDOW_DAYS = 90;
+export const COMMERCIAL_DURATION_MINUTES = 120;
+export const COMMERCIAL_RESULT_RETENTION_DAYS = 365;
+export const COMMERCIAL_RESULT_DISPLAY_MODE = "PRIMARY_ONLY";
 
 export function commercialLegalConfig() {
   return {

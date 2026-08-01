@@ -59,6 +59,12 @@ function baseSnapshot(overrides: Partial<RecoveryStateSnapshot> = {}): RecoveryS
       status: "PAID",
       priceMinor: 1000,
       currency: "BYN",
+      attemptLimitSnapshot: 1,
+      startWindowDaysSnapshot: 90,
+      durationMinutesSnapshot: 120,
+      resultRetentionDaysSnapshot: 365,
+      examModeSnapshot: "RIKZ_RUSSIAN_2026",
+      resultDisplayModeSnapshot: "PRIMARY_ONLY",
       paidAt: now,
       paymentAttempts: [{
         id: ids.payment,
@@ -261,10 +267,11 @@ describe("ACC-01A recovery state decision table", () => {
     }), now).state).toBe("support_required");
   });
 
-  it.each([0, 366])("rejects terminal Result retention configuration %i", (resultRetentionDays) => {
+  it.each([0, 366])("rejects purchased Result retention snapshot %i", (resultRetentionDaysSnapshot) => {
     const access = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    const order = { ...baseSnapshot().orders[0]!, resultRetentionDaysSnapshot };
     expect(resolveRecoveryStateSnapshot(baseSnapshot({
-      product: { ...baseSnapshot().product!, resultRetentionDays },
+      orders: [order],
       accesses: [access],
       attempts: [terminalAttempt()]
     }), now).state).toBe("support_required");
@@ -382,6 +389,39 @@ describe("ACC-01A recovery state decision table", () => {
       accesses: [consumedAccess],
       attempts: [terminalAttempt()]
     }), now).state).toBe("result_available");
+  });
+
+  it("uses the immutable Order snapshot after mutable Product terms change", () => {
+    const editedProduct = {
+      ...baseSnapshot().product!,
+      attemptLimit: 7,
+      resultRetentionDays: 1,
+      priceMinor: 7777,
+      currency: "USD"
+    };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({ product: editedProduct }), now).state)
+      .toBe("access_unstarted");
+
+    const consumedAccess = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product: editedProduct,
+      accesses: [consumedAccess],
+      attempts: [terminalAttempt()]
+    }), now).state).toBe("result_available");
+  });
+
+  it("fails closed when purchased snapshot terms are inconsistent", () => {
+    for (const order of [
+      { ...baseSnapshot().orders[0]!, attemptLimitSnapshot: 2 },
+      { ...baseSnapshot().orders[0]!, startWindowDaysSnapshot: 30 },
+      { ...baseSnapshot().orders[0]!, durationMinutesSnapshot: 60 },
+      { ...baseSnapshot().orders[0]!, resultRetentionDaysSnapshot: 30 },
+      { ...baseSnapshot().orders[0]!, examModeSnapshot: "GENERIC" as const },
+      { ...baseSnapshot().orders[0]!, resultDisplayModeSnapshot: "FULL" }
+    ]) {
+      expect(resolveRecoveryStateSnapshot(baseSnapshot({ orders: [order] }), now).state)
+        .toBe("support_required");
+    }
   });
 
   it("maps revoked or zero-availability unstarted Access to support_required", () => {

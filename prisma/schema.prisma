@@ -568,27 +568,33 @@ model CommercialCheckoutFlow {
 }
 
 model CommercialOrder {
-  id                    String                @id @default(uuid()) @db.Uuid
-  publicId              String                @unique @default(cuid()) @map("public_id")
-  commercialProductId   String                @map("commercial_product_id") @db.Uuid
-  testIdSnapshot        String                @map("test_id_snapshot") @db.Uuid
-  productNameSnapshot   String                @map("product_name_snapshot")
-  priceMinor            Int                   @map("price_minor")
-  currency              String                @default("BYN")
-  emailOriginal         String                @map("email_original")
-  emailNormalized       String                @map("email_normalized")
-  status                CommercialOrderStatus @default(CREATED)
-  offerVersion          String                @map("offer_version")
-  privacyVersion        String                @map("privacy_version")
-  refundPolicyVersion   String                @map("refund_policy_version")
-  disclaimerVersion     String                @map("disclaimer_version")
-  adultBuyerConfirmedAt DateTime              @map("adult_buyer_confirmed_at")
-  idempotencyKey        String                @map("idempotency_key")
-  checkoutFlowId        String?               @unique @map("checkout_flow_id") @db.Uuid
-  lookupTokenHash       String                @map("lookup_token_hash")
-  paidAt                DateTime?             @map("paid_at")
-  createdAt             DateTime              @default(now()) @map("created_at")
-  updatedAt             DateTime              @updatedAt @map("updated_at")
+  id                          String                @id @default(uuid()) @db.Uuid
+  publicId                    String                @unique @default(cuid()) @map("public_id")
+  commercialProductId         String                @map("commercial_product_id") @db.Uuid
+  testIdSnapshot              String                @map("test_id_snapshot") @db.Uuid
+  productNameSnapshot         String                @map("product_name_snapshot")
+  priceMinor                  Int                   @map("price_minor")
+  currency                    String                @default("BYN")
+  attemptLimitSnapshot        Int                   @default(1) @map("attempt_limit_snapshot")
+  startWindowDaysSnapshot     Int                   @default(90) @map("start_window_days_snapshot")
+  durationMinutesSnapshot     Int                   @default(120) @map("duration_minutes_snapshot")
+  resultRetentionDaysSnapshot Int                   @default(365) @map("result_retention_days_snapshot")
+  examModeSnapshot            ExamMode              @default(RIKZ_RUSSIAN_2026) @map("exam_mode_snapshot")
+  resultDisplayModeSnapshot   String                @default("PRIMARY_ONLY") @map("result_display_mode_snapshot")
+  emailOriginal               String                @map("email_original")
+  emailNormalized             String                @map("email_normalized")
+  status                      CommercialOrderStatus @default(CREATED)
+  offerVersion                String                @map("offer_version")
+  privacyVersion              String                @map("privacy_version")
+  refundPolicyVersion         String                @map("refund_policy_version")
+  disclaimerVersion           String                @map("disclaimer_version")
+  adultBuyerConfirmedAt       DateTime              @map("adult_buyer_confirmed_at")
+  idempotencyKey              String                @map("idempotency_key")
+  checkoutFlowId              String?               @unique @map("checkout_flow_id") @db.Uuid
+  lookupTokenHash             String                @map("lookup_token_hash")
+  paidAt                      DateTime?             @map("paid_at")
+  createdAt                   DateTime              @default(now()) @map("created_at")
+  updatedAt                   DateTime              @updatedAt @map("updated_at")
 
   product         CommercialProduct          @relation(fields: [commercialProductId], references: [id])
   checkoutFlow    CommercialCheckoutFlow?    @relation(fields: [checkoutFlowId], references: [id])
