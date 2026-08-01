@@ -5,7 +5,7 @@
 ## Активная карточка
 
 - Feature-карточка: `B2-01`
-- Статус B2-01: `IN_PROGRESS`
+- Статус B2-01: `IN_REVIEW`
 - B2-01 base SHA: `7068ad5`
 - Принятая B1-05: `DONE`, reviewed SHA `4a6a013` от base `1d9b758`
 - Принятая B1-04: `DONE`, reviewed SHA `df106dd` от base `dcf58d3`
@@ -17,28 +17,26 @@
 
 ## Последний завершённый шаг
 
-- B1-05 implementation: `4a6a013` от base `1d9b758`.
-- Один consolidated Tier-1 independent review всего milestone: `DONE` в
-  `reviews/B1-05.md`; новых findings нет.
-- Использовано existing evidence: lint/typecheck, targeted unit 61/61, full
-  regression 402 tests and fresh 14-migration commercial DB suite 15/15;
-  temporary `b105_ci` schema was removed.
-- Дорогие checks в review намеренно не повторялись. Production остаётся
-  default-off/`NO-GO`; full payment/status continuation остаётся B2-07.
+- B2-01 bounded implementation подготовлен от accepted base `7068ad5`.
+- Order snapshot дополнен attempts/start-window/duration/retention/exam/display;
+  Access grant и existing entitlement recovery переведены с mutable Product на
+  immutable Order truth.
+- Совместимость проверена реальным old Order на isolated 14→15 migration;
+  snapshot backfill PASS, temporary `b201_ci` schema удалена.
+- Lint/typecheck — PASS; unit resolver 56/56; full regression 404 PASS;
+  commercial DB regression 15/15 PASS, включая Product mutation до callback.
 
 ## Точное продолжение
 
-1. Реализовать только immutable commercial snapshot для server-authoritative
-   price/currency/product truth and compatible Access grant.
-2. Preserve verified authority, state recovery and production `NO-GO`; do not
-   add UI, provider activation or unrelated checkout scope.
-3. Record B2-01 evidence and request the required independent review when its
-   bounded milestone is complete.
+1. Создать bounded implementation commit B2-01 от `7068ad5`.
+2. Один independent Tier-2 reviewer проверяет весь migration/payment block,
+   используя recorded evidence без повторения дорогих green checks.
+3. При `DONE` синхронизировать A-07/board/handoff и claim B2-02; production
+   остаётся `NO-GO`.
 
 ## Другие READY-карточки
 
-`B2-01`, `B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`,
-`B3-04`.
+`B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`, `B3-04`.
 
 ## Newly READY после A-06
 
@@ -63,7 +61,6 @@ Unrelated modified/untracked файлы:
 - A-07 traceability остаётся long-lived `IN_PROGRESS` до QA-02; checkpoint
   2026-07-31 заполнен.
 - Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются external gates.
-- Current main содержит принятые B1-01 verified-session, B1-02 recovery backend,
-  B1-03 continuation/destination guards, B1-04 verified-email/order authority
-  и B1-05 state-recovery foundations; B2-01 immutable snapshot ещё не реализован.
+- Current working tree содержит завершённый B2-01 immutable snapshot milestone,
+  ожидающий один consolidated Tier-2 review.
 - Production остаётся `NO-GO`.

@@ -386,6 +386,18 @@ test("fake provider grants one access and replay is a no-op", async () => {
     idempotencyKey: `order-${suffix}-idempotency`
   });
   expect(created.order.priceMinor).toBe(1000);
+  expect(created.order).toMatchObject({
+    attemptLimitSnapshot: 1,
+    startWindowDaysSnapshot: 90,
+    durationMinutesSnapshot: 120,
+    resultRetentionDaysSnapshot: 365,
+    examModeSnapshot: "RIKZ_RUSSIAN_2026",
+    resultDisplayModeSnapshot: "PRIMARY_ONLY",
+    offerVersion: "e2e-v1",
+    privacyVersion: "e2e-v1",
+    refundPolicyVersion: "e2e-v1",
+    disclaimerVersion: "e2e-v1"
+  });
 
   const provider = new LocalFakeCommercialProvider();
   const payment = await createCommercialPaymentSession({
@@ -429,8 +441,42 @@ test("fake provider grants one access and replay is a no-op", async () => {
   const notification = await provider.verifyNotification(raw);
   const providerMismatch = await processCommercialProviderNotification({ notification, rawBody: raw, provider: "WEBPAY_SANDBOX" });
   expect(providerMismatch.rejected).toBe(true);
-  const first = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
-  const replay = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
+  const product = await prisma.commercialProduct.findUniqueOrThrow({
+    where: { id: productId },
+    select: { testId: true }
+  });
+  await prisma.commercialProduct.update({
+    where: { id: productId },
+    data: { attemptLimit: 3, startWindowDays: 5, resultRetentionDays: 5 }
+  });
+  await prisma.test.update({
+    where: { id: product.testId },
+    data: { durationMinutes: 30 }
+  });
+
+  let first: Awaited<ReturnType<typeof processCommercialProviderNotification>>;
+  let replay: Awaited<ReturnType<typeof processCommercialProviderNotification>>;
+  try {
+    first = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
+    replay = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
+
+    const immutableAccess = await prisma.access.findUniqueOrThrow({
+      where: { commercialOrderId: created.order.id }
+    });
+    const expectedStartDeadline = new Date(immutableAccess.grantedAt!);
+    expectedStartDeadline.setUTCDate(expectedStartDeadline.getUTCDate() + 90);
+    expect(immutableAccess).toMatchObject({ attemptsTotal: 1, attemptsAvailable: 1 });
+    expect(immutableAccess.startDeadlineAt).toEqual(expectedStartDeadline);
+  } finally {
+    await prisma.commercialProduct.update({
+      where: { id: productId },
+      data: { attemptLimit: 1, startWindowDays: 90, resultRetentionDays: 365 }
+    });
+    await prisma.test.update({
+      where: { id: product.testId },
+      data: { durationMinutes: 120 }
+    });
+  }
 
   expect(first.grantedAccess).toBe(true);
   expect(replay.duplicate).toBe(true);

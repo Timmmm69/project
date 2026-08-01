@@ -2,7 +2,16 @@ import { randomUUID } from "node:crypto";
 import { Prisma, type CommercialPaymentAttemptStatus, type CommercialPaymentProvider, type CommercialOrderStatus } from "@prisma/client";
 import { analyticsConfig, hashAnalyticsId } from "@/lib/analytics/analytics-id";
 import { safelyWriteAnalyticsEvent, type AnalyticsWriteInput, type AnalyticsWriter } from "@/lib/analytics/analytics-service";
-import { COMMERCIAL_CURRENCY, COMMERCIAL_PRICE_MINOR, commercialLegalConfig } from "@/lib/commercial/config";
+import {
+  COMMERCIAL_ATTEMPT_LIMIT,
+  COMMERCIAL_CURRENCY,
+  COMMERCIAL_DURATION_MINUTES,
+  COMMERCIAL_PRICE_MINOR,
+  COMMERCIAL_RESULT_DISPLAY_MODE,
+  COMMERCIAL_RESULT_RETENTION_DAYS,
+  COMMERCIAL_START_WINDOW_DAYS,
+  commercialLegalConfig
+} from "@/lib/commercial/config";
 import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties } from "@/lib/commercial/checkout-flow";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
@@ -497,12 +506,28 @@ export async function createCommercialOrder(input: {
       : null;
     const product = await tx.commercialProduct.findFirst({
       where: { code: input.productCode, isActive: true },
-      include: { test: { select: { id: true, slug: true, examMode: true, status: true, deletedAt: true } } }
+      include: {
+        test: {
+          select: {
+            id: true,
+            slug: true,
+            examMode: true,
+            status: true,
+            deletedAt: true,
+            durationMinutes: true
+          }
+        }
+      }
     });
     if (!product || product.test.deletedAt || product.test.status !== "PUBLISHED" || product.test.examMode !== "RIKZ_RUSSIAN_2026") {
       throw new CommercialError("COMMERCIAL_PRODUCT_UNAVAILABLE");
     }
-    if (product.priceMinor !== COMMERCIAL_PRICE_MINOR || product.currency !== COMMERCIAL_CURRENCY) {
+    if (product.priceMinor !== COMMERCIAL_PRICE_MINOR ||
+      product.currency !== COMMERCIAL_CURRENCY ||
+      product.attemptLimit !== COMMERCIAL_ATTEMPT_LIMIT ||
+      product.startWindowDays !== COMMERCIAL_START_WINDOW_DAYS ||
+      product.resultRetentionDays !== COMMERCIAL_RESULT_RETENTION_DAYS ||
+      product.test.durationMinutes !== COMMERCIAL_DURATION_MINUTES) {
       throw new CommercialError("COMMERCIAL_PRODUCT_CONFIGURATION_INVALID");
     }
     if (verifiedAuthority && !verifiedAuthorityMatchesProduct(
@@ -582,7 +607,14 @@ export async function createCommercialOrder(input: {
       ]);
       if (pending.testIdSnapshot !== product.testId ||
         pending.priceMinor !== COMMERCIAL_PRICE_MINOR ||
-        pending.currency !== COMMERCIAL_CURRENCY || paidOrder || access || attempt) {
+        pending.currency !== COMMERCIAL_CURRENCY ||
+        pending.attemptLimitSnapshot !== COMMERCIAL_ATTEMPT_LIMIT ||
+        pending.startWindowDaysSnapshot !== COMMERCIAL_START_WINDOW_DAYS ||
+        pending.durationMinutesSnapshot !== COMMERCIAL_DURATION_MINUTES ||
+        pending.resultRetentionDaysSnapshot !== COMMERCIAL_RESULT_RETENTION_DAYS ||
+        pending.examModeSnapshot !== product.test.examMode ||
+        pending.resultDisplayModeSnapshot !== COMMERCIAL_RESULT_DISPLAY_MODE ||
+        paidOrder || access || attempt) {
         return { kind: "support" as const };
       }
       return { kind: "pending" as const, publicOrderReference: pending.publicId };
@@ -608,6 +640,12 @@ export async function createCommercialOrder(input: {
         productNameSnapshot: product.name,
         priceMinor: product.priceMinor,
         currency: product.currency,
+        attemptLimitSnapshot: product.attemptLimit,
+        startWindowDaysSnapshot: product.startWindowDays,
+        durationMinutesSnapshot: product.test.durationMinutes,
+        resultRetentionDaysSnapshot: product.resultRetentionDays,
+        examModeSnapshot: product.test.examMode,
+        resultDisplayModeSnapshot: COMMERCIAL_RESULT_DISPLAY_MODE,
         emailOriginal,
         emailNormalized,
         status: "CREATED",
@@ -996,14 +1034,14 @@ export async function processCommercialProviderNotification(input: {
         if (user.role !== "STUDENT" || user.deletedAt) throw new CommercialError("EMAIL_NOT_AVAILABLE");
         const existing = await tx.access.findUnique({ where: { commercialOrderId: current.order.id } });
         if (!existing) {
-          const deadline = addDays(now, current.order.product.startWindowDays);
+          const deadline = addDays(now, current.order.startWindowDaysSnapshot);
           grantedAccessRecord = await tx.access.create({
             data: {
               userId: user.id,
               testId: current.order.testIdSnapshot,
               source: "COMMERCIAL",
-              attemptsTotal: current.order.product.attemptLimit,
-              attemptsAvailable: current.order.product.attemptLimit,
+              attemptsTotal: current.order.attemptLimitSnapshot,
+              attemptsAvailable: current.order.attemptLimitSnapshot,
               expiresAt: deadline,
               commercialProductId: current.order.commercialProductId,
               commercialOrderId: current.order.id,
@@ -1013,7 +1051,7 @@ export async function processCommercialProviderNotification(input: {
             }
           });
           grantedAccess = true;
-          await tx.eventLog.create({ data: { eventType: "access_granted", actorUserId: user.id, entityType: "commercial_order", entityId: current.order.id, payload: { source: "commercial", attempts: current.order.product.attemptLimit } } });
+          await tx.eventLog.create({ data: { eventType: "access_granted", actorUserId: user.id, entityType: "commercial_order", entityId: current.order.id, payload: { source: "commercial", attempts: current.order.attemptLimitSnapshot } } });
         }
       }
       await tx.commercialPaymentEvent.update({
