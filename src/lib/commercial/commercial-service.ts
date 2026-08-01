@@ -12,6 +12,7 @@ import { normalizeEmail } from "@/lib/validation/email";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
 import type { ValidateRecoverySessionResult } from "@/server/recovery/service";
+import { resolveRecoveryStateInTransaction } from "@/server/recovery/state-resolver";
 
 type Tx = Prisma.TransactionClient;
 
@@ -288,37 +289,42 @@ export class CommercialError extends Error {
   constructor(
     readonly code: string,
     message = code,
-    readonly nextAction?: CommercialNextAction
+    readonly nextAction?: CommercialNextAction,
+    readonly publicOrderReference?: string
   ) {
     super(message);
     this.name = "CommercialError";
   }
 }
 
-async function existingAccessAction(tx: Tx, email: string, testId: string, now: Date) {
-  const activeAttempt = await tx.attempt.findFirst({
-    where: {
-      user: { email, role: "STUDENT", deletedAt: null },
-      testId,
-      status: "STARTED",
-      access: { revokedAt: null, expiresAt: { gt: now } }
+async function existingStateAction(input: {
+  tx: Tx;
+  product: { id: string; code: string; testId: string };
+  emailNormalized: string;
+  now: Date;
+}) {
+  const resolution = await resolveRecoveryStateInTransaction({
+    transaction: input.tx,
+    productCode: input.product.code,
+    scope: {
+      emailNormalized: input.emailNormalized,
+      commercialProductId: input.product.id,
+      testId: input.product.testId
     },
-    select: { id: true }
+    now: input.now
   });
-  if (activeAttempt) return "RESUME_TEST" as const;
-
-  const unusedAccess = await tx.access.findFirst({
-    where: {
-      user: { email, role: "STUDENT", deletedAt: null },
-      testId,
-      revokedAt: null,
-      expiresAt: { gt: now },
-      attemptsAvailable: { gt: 0 }
-    },
-    select: { id: true }
-  });
-  if (unusedAccess) return "START_TEST" as const;
-  return null;
+  switch (resolution.response.state) {
+    case "access_unstarted":
+      return "START_TEST" as const;
+    case "attempt_active":
+      return "RESUME_TEST" as const;
+    case "result_available":
+      return "VIEW_RESULT" as const;
+    case "no_access":
+      return null;
+    default:
+      return "NONE" as const;
+  }
 }
 
 function legalVersionMatches(version: string) {
@@ -439,9 +445,16 @@ async function recoverConcurrentOrderCreation(input: {
         emailNormalized: input.emailNormalized,
         status: { in: ["CREATED", "PENDING"] }
       },
-      select: { id: true }
+      select: { id: true, publicId: true }
     });
-    if (openOrder) throw new CommercialError("ORDER_ALREADY_PENDING");
+    if (openOrder) {
+      throw new CommercialError(
+        "ORDER_ALREADY_PENDING",
+        "Order already pending",
+        "WAIT_FOR_PAYMENT",
+        openOrder.publicId
+      );
+    }
     throw integrityError;
   });
 }
@@ -520,11 +533,6 @@ export async function createCommercialOrder(input: {
       return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
     }
 
-    const nextAction = await existingAccessAction(tx, emailNormalized, product.testId, now);
-    if (nextAction) {
-      return { kind: "existing" as const, productId: product.id, productCode: product.code, nextAction };
-    }
-
     const existingByKey = await tx.commercialOrder.findUnique({
       where: { commercialProductId_idempotencyKey: { commercialProductId: product.id, idempotencyKey: input.idempotencyKey } }
     });
@@ -544,7 +552,53 @@ export async function createCommercialOrder(input: {
       orderBy: { createdAt: "desc" }
     });
     if (pending) {
-      return { kind: "pending" as const };
+      const [paidOrder, access, attempt] = await Promise.all([
+        tx.commercialOrder.findFirst({
+          where: {
+            id: { not: pending.id },
+            commercialProductId: product.id,
+            emailNormalized,
+            status: "PAID"
+          },
+          select: { id: true }
+        }),
+        tx.access.findFirst({
+          where: {
+            OR: [
+              { commercialProductId: product.id },
+              { testId: product.testId }
+            ],
+            user: { email: emailNormalized, role: "STUDENT", deletedAt: null }
+          },
+          select: { id: true }
+        }),
+        tx.attempt.findFirst({
+          where: {
+            testId: product.testId,
+            user: { email: emailNormalized, role: "STUDENT", deletedAt: null }
+          },
+          select: { id: true }
+        })
+      ]);
+      if (pending.testIdSnapshot !== product.testId ||
+        pending.priceMinor !== COMMERCIAL_PRICE_MINOR ||
+        pending.currency !== COMMERCIAL_CURRENCY || paidOrder || access || attempt) {
+        return { kind: "support" as const };
+      }
+      return { kind: "pending" as const, publicOrderReference: pending.publicId };
+    }
+
+    const nextAction = await existingStateAction({
+      tx,
+      product,
+      emailNormalized,
+      now
+    });
+    if (nextAction === "NONE") {
+      return { kind: "support" as const };
+    }
+    if (nextAction) {
+      return { kind: "existing" as const, productId: product.id, productCode: product.code, nextAction };
     }
 
     const order = await tx.commercialOrder.create({
@@ -596,7 +650,15 @@ export async function createCommercialOrder(input: {
     throw new CommercialError("EXISTING_ACCESS", "Existing access found", outcome.nextAction);
   }
   if (outcome.kind === "pending") {
-    throw new CommercialError("ORDER_ALREADY_PENDING");
+    throw new CommercialError(
+      "ORDER_ALREADY_PENDING",
+      "Order already pending",
+      "WAIT_FOR_PAYMENT",
+      outcome.publicOrderReference
+    );
+  }
+  if (outcome.kind === "support") {
+    throw new CommercialError("RECOVERY_SUPPORT_REQUIRED", "Recovery requires support", "NONE");
   }
   if (outcome.newOrder) {
     await ensureOrderCreatedAnalytics({
