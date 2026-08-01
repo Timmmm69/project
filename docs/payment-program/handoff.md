@@ -1,46 +1,40 @@
 # Payment Program Handoff
 
-Последнее обновление: 2026-07-31
+Последнее обновление: 2026-08-01
 
 ## Активная карточка
 
-- Feature-карточка: `B1-01`
-- Статус B1-01: `IN_REVIEW`
-- B1-01 base SHA: `509c79b`
+- Feature-карточка: `B1-02`
+- Статус B1-02: `READY`
+- Принятая зависимость B1-01: `DONE`, reviewed SHA `4014eee`
 - Program-control A-07: `IN_PROGRESS`, checkpoint `509c79b`
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
 
-- A-05 implementation: `36abf30`.
-- Review: `CHANGES_REQUIRED` только по `A05-DOC-HYGIENE-01`.
-- Review report commit: `30ded45`.
-- Correction: `c2a1133`.
-- Independent correction review: `DONE`; оба diff checks прошли.
-- A-05 переведена в `DONE`.
-- A-06: создан `docs/payment-program/analytics-measurement-plan-v1.md`.
-- Зафиксированы 14 обязательных событий: 4 implemented, 2 partial, 8 missing.
-- Все missing/partial producers направлены в B3-05; PWA-derived events также
-  зависят от B2-03.
-- Выявлен privacy gap: текущий `order_created` содержит запрещённые контрактом
-  `amount` и `currency`.
-- Independent review A-06: `DONE` в `reviews/A-06.md`; `git diff --check
-  c137ba6 96e95f8` прошёл.
-- B3-05 и D-01 разблокированы; A-06 больше не является незакрытой зависимостью.
+- B1-01 implementation: `4014eee` от base `509c79b`.
+- Consolidated critical-milestone independent review: `DONE` в
+  `reviews/B1-01.md`; новых findings нет.
+- Использовано существующее evidence: Prisma format/validate/generate, lint,
+  typecheck, 167 unit tests, targeted 39 tests, а также migrations и 31/31
+  verified-session integration tests в отдельной schema.
+- Повторные дорогие checks в consolidated review не запускались; temporary
+  integration schema удалена владельцем программы.
+- Foundation остаётся default-off, не подключена к routes/UI; identify остаётся
+  legacy-only. Production остаётся `NO-GO`.
 
 ## Точное продолжение
 
-1. Зафиксировать атомарный implementation commit B1-01.
-2. Независимый reviewer проверяет diff от `509c79b`.
-3. Повторить schema/migration validation, token/cookie lifecycle и ключевые
-   transaction/concurrency tests в отдельной `acc01a_*` schema.
-4. Проверить, что новый plane не подключён к identify/public routes и не имеет
-   legacy fallback.
-5. Записать findings/verdict в `reviews/B1-01.md`.
+1. Claim B1-02 отдельным implementer chat на текущем accepted baseline.
+2. Реализовать только bounded ACC-01A recovery backend/domain, fake mailer и
+   targeted security tests строго по recovery spec.
+3. Сохранить B1-01 plane отдельным; не подключать legacy fallback и не менять
+   production `NO-GO`.
+4. Заполнить B1-02 evidence и передать на независимое review.
 
 ## Другие READY-карточки
 
-`B1-01`, `B2-01`, `B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`,
+`B1-02`, `B2-01`, `B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`,
 `B3-04`.
 
 ## Newly READY после A-06
