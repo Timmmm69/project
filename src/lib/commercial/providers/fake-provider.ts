@@ -33,14 +33,14 @@ export class LocalFakeCommercialProvider implements CommercialPaymentProviderAda
     };
   }
 
-  async fetchPaymentStatus(input: { merchantReference: string; providerPaymentId: string | null }): Promise<ProviderNotification> {
+  async fetchPaymentStatus(input: Parameters<CommercialPaymentProviderAdapter["fetchPaymentStatus"]>[0]): Promise<ProviderNotification> {
     return {
       merchantReference: input.merchantReference,
       providerPaymentId: input.providerPaymentId,
       providerEventKey: null,
       status: "pending",
-      amountMinor: 0,
-      currency: "BYN",
+      amountMinor: input.amountMinor ?? 0,
+      currency: input.currency ?? "BYN",
       signatureValid: true,
       eventType: "fake_status",
       redactedPayload: { status: "pending" }

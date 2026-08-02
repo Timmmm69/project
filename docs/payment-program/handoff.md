@@ -4,7 +4,9 @@
 
 ## Активная карточка
 
-- Feature-карточка: нет активного claim после review B2-01
+- Feature-карточка: `B2-02`
+- Статус B2-02: `IN_REVIEW` до consolidated B2 milestone review
+- B2-02 base SHA: `e590b3cc0abfaf1c5c2e4870918d88caac2362dd`
 - Статус B2-01: `DONE`
 - B2-01 base SHA: `7068ad5`
 - B2-01 implementation/reviewed SHA: `20adce9`
@@ -18,6 +20,11 @@
 
 ## Последний завершённый шаг
 
+- B2-02 реализует transient `payment_status_unknown` без DB enum: timeout,
+  malformed/untrusted и unavailable provider outcome сохраняют последний
+  confirmed business state и запрещают retry/Access.
+- Route regression 6/6 PASS; full unit regression 410 PASS, 139 DB-gated
+  skipped; lint/typecheck PASS.
 - B2-01 принят независимым consolidated review: `DONE` для implementation
   `20adce9` от accepted base `7068ad5`.
 - Order snapshot дополнен attempts/start-window/duration/retention/exam/display;
@@ -30,9 +37,10 @@
 
 ## Точное продолжение
 
-1. Отдельным claim начать B2-02 с актуального baseline; этот review не
-   открывает и не реализует следующую карточку.
-2. Сохранить production `NO-GO` и external gates без изменений.
+1. Сделать атомарный implementation commit B2-02 от `e590b3c`.
+2. Claim B2-06 от нового HEAD и реализовать safe support DTO.
+3. B2-02 оставить `IN_REVIEW` до единого consolidated B2 review; production
+   сохранить `NO-GO`.
 
 ## Другие READY-карточки
 

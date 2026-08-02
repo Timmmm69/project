@@ -8,34 +8,74 @@ import { logEvent } from "@/server/events/log-event";
 
 type Context = { params: Promise<{ publicId: string }> };
 
-export async function POST(request: Request, context: Context) {
-  if (!isSameOriginRequest(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
-  const { publicId } = await context.params;
-  const order = await requireCommercialOrderToken(publicId);
-  if (!order) return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Заказ недоступен в этой сессии." }, 403);
-  if (!allowCommercialRefresh(`${request.headers.get("x-forwarded-for") ?? "local"}:${publicId}`)) return apiFailure({ code: "RATE_LIMITED", message: "Проверьте статус немного позже." }, 429);
+export type CommercialRefreshStatusRouteDependencies = Readonly<{
+  requireOrderToken?: typeof requireCommercialOrderToken;
+  allowRefresh?: typeof allowCommercialRefresh;
+  getOrder?: typeof getCommercialOrder;
+  providerForRuntime?: typeof commercialProviderForRuntime;
+  processNotification?: typeof processCommercialProviderNotification;
+  orderStatus?: typeof commercialOrderStatus;
+  writeEvent?: typeof logEvent;
+}>;
 
-  try {
-    const latest = await getCommercialOrder(publicId);
-    const attempt = latest.paymentAttempts[0];
-    if (attempt) {
-      const provider = commercialProviderForRuntime();
-      if (provider.provider !== attempt.provider) {
-        return apiFailure({ code: "PROVIDER_STATUS_REFRESH_UNAVAILABLE", message: "Provider status refresh is not available." }, 422);
+export function createCommercialRefreshStatusPostHandler(
+  dependencies: CommercialRefreshStatusRouteDependencies = {}
+) {
+  const requireOrderToken = dependencies.requireOrderToken ?? requireCommercialOrderToken;
+  const allowRefresh = dependencies.allowRefresh ?? allowCommercialRefresh;
+  const getOrder = dependencies.getOrder ?? getCommercialOrder;
+  const providerForRuntime = dependencies.providerForRuntime ?? commercialProviderForRuntime;
+  const processNotification = dependencies.processNotification ?? processCommercialProviderNotification;
+  const orderStatus = dependencies.orderStatus ?? commercialOrderStatus;
+  const writeEvent = dependencies.writeEvent ?? logEvent;
+
+  return async function commercialRefreshStatusPost(request: Request, context: Context) {
+    if (!isSameOriginRequest(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
+    const { publicId } = await context.params;
+    const order = await requireOrderToken(publicId);
+    if (!order) return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Заказ недоступен в этой сессии." }, 403);
+    if (!allowRefresh(`${request.headers.get("x-forwarded-for") ?? "local"}:${publicId}`)) return apiFailure({ code: "RATE_LIMITED", message: "Проверьте статус немного позже." }, 429);
+
+    try {
+      const latest = await getOrder(publicId);
+      const attempt = latest.paymentAttempts[0];
+      const refreshable = latest.status === "PENDING" &&
+        (attempt?.status === "CREATED" || attempt?.status === "PENDING");
+      if (attempt && refreshable) {
+        const unknown = async () => apiSuccess(await orderStatus(publicId, {
+          paymentStatus: "payment_status_unknown"
+        }));
+        const provider = providerForRuntime();
+        if (provider.provider !== attempt.provider) {
+          return unknown();
+        }
+        let notification;
+        try {
+          notification = await provider.fetchPaymentStatus({
+            merchantReference: attempt.merchantReference,
+            providerPaymentId: attempt.providerPaymentId,
+            amountMinor: attempt.amountMinor,
+            currency: attempt.currency
+          });
+        } catch {
+          return unknown();
+        }
+        if (!notification.signatureValid || notification.merchantReference !== attempt.merchantReference) {
+          return unknown();
+        }
+        const outcome = await processNotification({
+          notification,
+          rawBody: JSON.stringify(notification.redactedPayload),
+          provider: provider.provider
+        });
+        if (outcome.rejected) return unknown();
       }
-      const notification = await provider.fetchPaymentStatus({ merchantReference: attempt.merchantReference, providerPaymentId: attempt.providerPaymentId });
-      if (notification.merchantReference !== attempt.merchantReference) {
-        return apiFailure({ code: "PAYMENT_REFERENCE_MISMATCH", message: "Provider returned a different payment reference." }, 422);
-      }
-      await processCommercialProviderNotification({
-        notification,
-        rawBody: JSON.stringify(notification.redactedPayload),
-        provider: provider.provider
-      });
+      await writeEvent({ eventType: "payment_status_refresh_requested", entityType: "commercial_order", entityId: latest.id, payload: {} });
+      return apiSuccess(await orderStatus(publicId));
+    } catch (error) {
+      return commercialErrorResponse(error);
     }
-    await logEvent({ eventType: "payment_status_refresh_requested", entityType: "commercial_order", entityId: latest.id, payload: {} });
-    return apiSuccess(await commercialOrderStatus(publicId));
-  } catch (error) {
-    return commercialErrorResponse(error);
-  }
+  };
 }
+
+export const POST = createCommercialRefreshStatusPostHandler();
