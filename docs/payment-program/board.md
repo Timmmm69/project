@@ -41,17 +41,17 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 13 |
-| `READY` | 9 |
+| `READY` | 10 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 1 |
+| `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 11 |
+| `DONE` | 12 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Текущий feature milestone: B2-01 — `IN_REVIEW` на accepted baseline `7068ad5`.
-Последняя принятая feature-карточка: B1-05 — `DONE` (reviewed SHA `4a6a013`). A-07
+Последняя принятая feature-карточка: B2-01 — `DONE` (implementation SHA
+`20adce9`, review `reviews/B2-01.md`). Следующий READY block — B2-02. A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -70,7 +70,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B1-03](tasks/B1-03.md) | B1 — Verified authority и recovery | Реализовать безопасный continuation и destination guards | `DONE` | `CRITICAL` | `B1-01`, `B1-02` |
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `DONE` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `DONE` | `CRITICAL` | `B1-03`, `B1-04` |
-| [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `IN_REVIEW` | `HIGH` | `A-03`, `A-04` |
+| [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `READY` | `HIGH` | `A-03` |
 | [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `BACKLOG` | `CRITICAL` | `B2-02`, `B2-06` |
 | [B2-04](tasks/B2-04.md) | B2 — Payment state и восстановление | Восстанавливать provider session после crash | `BLOCKED_EXTERNAL` | `HIGH` | `A-03`, `E-02` |
@@ -106,8 +106,8 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 
 ### 4.1. Контроль принятых карточек
 
-Последний независимо принятый feature state: B1-01 implementation `4014eee`,
-review acceptance commit `7b6521d`. Для Tier 1/2 `DONE` требует review report;
+Последний независимо принятый feature state: B2-01 implementation `20adce9`,
+verdict `DONE` в `reviews/B2-01.md`. Для Tier 1/2 `DONE` требует review report;
 Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке.
 
 | Карточка | Accepted implementation/correction SHA | Review evidence | Verdict |
@@ -123,6 +123,7 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B1-03 | `7b94ab2` | `reviews/B1-03.md` | `DONE` |
 | B1-04 | `df106dd` | `reviews/B1-04.md` | `DONE` |
 | B1-05 | `4a6a013` | `reviews/B1-05.md` | `DONE` |
+| B2-01 | `20adce9` | `reviews/B2-01.md` | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 
