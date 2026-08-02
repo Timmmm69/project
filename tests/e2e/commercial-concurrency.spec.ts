@@ -308,6 +308,80 @@ test("terminal failure allows one retry and stale notification cannot reopen it"
   expect(await prisma.access.count({ where: { commercialOrderId: order.order.id } })).toBe(0);
 });
 
+test.describe("terminal retry contract", () => {
+  for (const terminal of ["failed", "cancelled", "expired"] as const) {
+    test(`${terminal} creates a new attempt inside the existing order`, async () => {
+      const order = await createOrder(`terminal-${terminal}`);
+      const first = await createSession(order.order.publicId, `terminal-${terminal}-first-${suffix}`);
+      const terminalEvent = await notification({
+        merchantReference: first.merchantReference,
+        eventKey: `terminal-${terminal}-event-${suffix}`,
+        status: terminal,
+        paymentId: `terminal-${terminal}-payment-${suffix}`
+      });
+      await processCommercialProviderNotification({
+        notification: terminalEvent.value,
+        rawBody: terminalEvent.rawBody,
+        provider: provider.provider
+      });
+
+      const retry = await createSession(order.order.publicId, `terminal-${terminal}-retry-${suffix}`);
+      expect(retry.id).not.toBe(first.id);
+      expect(retry.commercialOrderId).toBe(order.order.id);
+      expect(retry.status).toBe("PENDING");
+      expect(await prisma.commercialPaymentAttempt.count({
+        where: { commercialOrderId: order.order.id }
+      })).toBe(2);
+      expect(await prisma.commercialPaymentAttempt.count({
+        where: {
+          commercialOrderId: order.order.id,
+          status: { in: ["CREATED", "PENDING"] }
+        }
+      })).toBe(1);
+      expect((await prisma.commercialOrder.findUniqueOrThrow({
+        where: { id: order.order.id }
+      })).status).toBe("PENDING");
+    });
+  }
+
+  test("concurrent terminal retry creates at most one active attempt", async () => {
+    const order = await createOrder("terminal-concurrent");
+    const first = await createSession(order.order.publicId, `terminal-concurrent-first-${suffix}`);
+    const failed = await notification({
+      merchantReference: first.merchantReference,
+      eventKey: `terminal-concurrent-failed-${suffix}`,
+      status: "failed",
+      paymentId: `terminal-concurrent-payment-${suffix}`
+    });
+    await processCommercialProviderNotification({
+      notification: failed.value,
+      rawBody: failed.rawBody,
+      provider: provider.provider
+    });
+
+    const retries = await Promise.allSettled(
+      Array.from({ length: 8 }, (_, index) => createSession(
+        order.order.publicId,
+        `terminal-concurrent-retry-${index}-${suffix}`
+      ))
+    );
+    const fulfilledIds = retries.flatMap((result) =>
+      result.status === "fulfilled" ? [result.value.id] : []
+    );
+    expect(new Set(fulfilledIds).size).toBeLessThanOrEqual(1);
+    expect(await prisma.commercialPaymentAttempt.count({
+      where: { commercialOrderId: order.order.id }
+    })).toBe(2);
+    expect(await prisma.commercialPaymentAttempt.count({
+      where: {
+        commercialOrderId: order.order.id,
+        status: { in: ["CREATED", "PENDING"] }
+      }
+    })).toBe(1);
+    expect(await prisma.access.count({ where: { commercialOrderId: order.order.id } })).toBe(0);
+  });
+});
+
 test("concurrent paid_without_access reconciliation grants exactly one snapshot-based Access", async () => {
   const order = await createOrder("paid-without-access");
   const payment = await createSession(order.order.publicId, `pwa-session-${suffix}`);

@@ -41,9 +41,9 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 12 |
-| `READY` | 7 |
+| `READY` | 6 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 3 |
+| `IN_REVIEW` | 4 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 12 |
@@ -75,7 +75,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `IN_REVIEW` | `HIGH` | `A-03` |
 | [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `IN_REVIEW` | `CRITICAL` | `B2-02`, `B2-06` |
 | [B2-04](tasks/B2-04.md) | B2 — Payment state и восстановление | Восстанавливать provider session после crash | `BLOCKED_EXTERNAL` | `HIGH` | `A-03`, `E-02` |
-| [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `READY` | `HIGH` | `A-03` |
+| [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `IN_REVIEW` | `HIGH` | `A-03` |
 | [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `IN_REVIEW` | `HIGH` | `A-03` |
 | [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `BACKLOG` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
 | [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `READY` | `CRITICAL` | `A-03` |
