@@ -17,6 +17,10 @@ import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/l
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
 import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
 import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
+import {
+  serializeCommercialOrderStatus,
+  type CommercialPaymentStatusProjection
+} from "@/lib/commercial/status-dto";
 import { normalizeEmail } from "@/lib/validation/email";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
@@ -1129,33 +1133,12 @@ export async function recordCommercialPaymentValidationFailure(input: {
   }
 }
 
-export type CommercialPaymentStatusProjection = "payment_status_unknown";
-
 export async function commercialOrderStatus(
   publicId: string,
   projection?: Readonly<{ paymentStatus?: CommercialPaymentStatusProjection }>
 ) {
   const order = await getCommercialOrder(publicId);
-  const payment = order.paymentAttempts[0] ?? null;
-  const attempt = order.access?.attempts[0] ?? null;
-  const nextAction: CommercialNextAction = projection?.paymentStatus === "payment_status_unknown"
-    ? "WAIT_FOR_PAYMENT"
-    : order.access
-    ? attempt?.status === "STARTED"
-      ? "RESUME_TEST"
-      : attempt
-        ? "VIEW_RESULT"
-        : "START_TEST"
-    : order.status === "PENDING"
-      ? "WAIT_FOR_PAYMENT"
-      : "NONE";
-  return {
-    orderStatus: order.status.toLowerCase(),
-    paymentStatus: projection?.paymentStatus ?? payment?.status.toLowerCase() ?? null,
-    accessStatus: order.access ? "granted" : "none",
-    nextAction,
-    nextUrl: nextAction === "RESUME_TEST" && attempt ? `/attempts/${attempt.id}` : nextAction === "VIEW_RESULT" && attempt ? `/results/${attempt.id}` : null
-  };
+  return serializeCommercialOrderStatus(order, projection?.paymentStatus);
 }
 
 export async function claimCommercialOrderAccess(publicId: string) {

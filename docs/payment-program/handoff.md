@@ -4,7 +4,9 @@
 
 ## Активная карточка
 
-- Feature-карточка: `B2-02`
+- Feature-карточка: `B2-06`
+- Статус B2-06: `IN_REVIEW` до consolidated B2 milestone review
+- B2-06 base SHA: `a86d4f64573c7d7342bab4fbf42e11e0694d6c74`
 - Статус B2-02: `IN_REVIEW` до consolidated B2 milestone review
 - B2-02 base SHA: `e590b3cc0abfaf1c5c2e4870918d88caac2362dd`
 - Статус B2-01: `DONE`
@@ -20,6 +22,11 @@
 
 ## Последний завершённый шаг
 
+- B2-06 добавляет strict safe status/support DTO: opaque public reference,
+  category, safe timestamps/cooldown и allowlisted actions; internal/provider/
+  merchant IDs, email, payload, secrets, raw URLs/errors исключены.
+- DTO/unknown regression 12/12 PASS; full unit regression 416 PASS,
+  139 DB-gated skipped; lint/typecheck PASS.
 - B2-02 реализует transient `payment_status_unknown` без DB enum: timeout,
   malformed/untrusted и unavailable provider outcome сохраняют последний
   confirmed business state и запрещают retry/Access.
@@ -37,10 +44,10 @@
 
 ## Точное продолжение
 
-1. Сделать атомарный implementation commit B2-02 от `e590b3c`.
-2. Claim B2-06 от нового HEAD и реализовать safe support DTO.
-3. B2-02 оставить `IN_REVIEW` до единого consolidated B2 review; production
-   сохранить `NO-GO`.
+1. Сделать атомарный implementation commit B2-06 от `a86d4f6`.
+2. Claim B2-03 от нового HEAD и реализовать paid_without_access reconciliation.
+3. B2-02/B2-06 оставить `IN_REVIEW` до единого consolidated B2 review;
+   production сохранить `NO-GO`.
 
 ## Другие READY-карточки
 

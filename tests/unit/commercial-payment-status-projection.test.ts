@@ -1,5 +1,6 @@
 import { describe, expect, it, vi } from "vitest";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers/types";
+import { serializeCommercialOrderStatus } from "@/lib/commercial/status-dto";
 import { createCommercialRefreshStatusPostHandler } from "@/app/api/commercial/orders/[publicId]/refresh-status/route";
 
 const publicId = "ord_public_opaque";
@@ -45,13 +46,16 @@ function provider(fetchPaymentStatus: CommercialPaymentProviderAdapter["fetchPay
 }
 
 function statusDto(projection?: "payment_status_unknown") {
-  return {
-    orderStatus: "pending",
-    paymentStatus: projection ?? "pending",
-    accessStatus: "none",
-    nextAction: "WAIT_FOR_PAYMENT" as const,
-    nextUrl: null
-  };
+  const now = new Date("2026-08-02T10:00:00.000Z");
+  return serializeCommercialOrderStatus({
+    publicId,
+    status: "PENDING",
+    paidAt: null,
+    createdAt: now,
+    updatedAt: now,
+    paymentAttempts: [{ status: "PENDING", paidAt: null, updatedAt: now }],
+    access: null
+  }, projection, now);
 }
 
 function setup(input: {
@@ -98,10 +102,9 @@ describe("transient commercial payment status projection", () => {
     expect(await response.json()).toMatchObject({
       success: true,
       data: {
-        orderStatus: "pending",
-        paymentStatus: "payment_status_unknown",
-        accessStatus: "none",
-        nextAction: "WAIT_FOR_PAYMENT"
+        orderReference: publicId,
+        category: "payment_status_unknown",
+        allowedActions: ["refresh_status"]
       }
     });
     expect(processNotification).not.toHaveBeenCalled();
@@ -118,7 +121,7 @@ describe("transient commercial payment status projection", () => {
 
     const response = await call(handler);
 
-    expect((await response.json()).data.paymentStatus).toBe("payment_status_unknown");
+    expect((await response.json()).data.category).toBe("payment_status_unknown");
     expect(processNotification).not.toHaveBeenCalled();
   });
 
@@ -130,8 +133,8 @@ describe("transient commercial payment status projection", () => {
     const response = await call(handler);
 
     expect((await response.json()).data).toMatchObject({
-      paymentStatus: "payment_status_unknown",
-      nextAction: "WAIT_FOR_PAYMENT"
+      category: "payment_status_unknown",
+      allowedActions: ["refresh_status"]
     });
     expect(processNotification).not.toHaveBeenCalled();
   });
@@ -144,7 +147,7 @@ describe("transient commercial payment status projection", () => {
 
     const response = await call(handler);
 
-    expect((await response.json()).data.paymentStatus).toBe("pending");
+    expect((await response.json()).data.category).toBe("payment_pending");
     expect(fetchPaymentStatus).toHaveBeenCalledWith({
       merchantReference: "merchant-internal-reference",
       providerPaymentId: null,
@@ -161,8 +164,8 @@ describe("transient commercial payment status projection", () => {
     const response = await call(handler);
     const body = await response.json();
 
-    expect(body.data.paymentStatus).toBe("payment_status_unknown");
-    expect(body.data.nextAction).toBe("WAIT_FOR_PAYMENT");
+    expect(body.data.category).toBe("payment_status_unknown");
+    expect(body.data.allowedActions).toEqual(["refresh_status"]);
     expect(JSON.stringify(body)).not.toContain("retry");
   });
 });
