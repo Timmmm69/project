@@ -7,6 +7,8 @@ import {
   backendOperationFailedPropertiesSchema,
   checkoutStartedPropertiesSchema,
   orderCreatedPropertiesSchema,
+  paidWithoutAccessDetectedPropertiesSchema,
+  paidWithoutAccessResolvedPropertiesSchema,
   parseAnalyticsEvent,
   paymentConfirmedPropertiesSchema
 } from "@/lib/analytics/schemas";
@@ -46,10 +48,11 @@ const access = {
 };
 
 describe("analytics event contracts", () => {
-  it("registers only the six implemented event names", () => {
+  it("registers the eight implemented event names", () => {
     expect(Object.keys(analyticsEventRegistry)).toEqual([
       "checkout_started", "order_created",
-      "payment_confirmed", "access_granted", "payment_validation_failed", "backend_operation_failed"
+      "payment_confirmed", "access_granted", "paid_without_access_detected",
+      "paid_without_access_resolved", "payment_validation_failed", "backend_operation_failed"
     ]);
   });
 
@@ -79,6 +82,30 @@ describe("analytics event contracts", () => {
     }).event_name).toBe("order_created");
     expect(parseAnalyticsEvent({ ...envelope, analytics_id_key_version: "v1", event_name: "payment_confirmed", properties: paid }).event_name).toBe("payment_confirmed");
     expect(parseAnalyticsEvent({ ...envelope, analytics_id_key_version: "v1", event_name: "access_granted", properties: access }).event_name).toBe("access_granted");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "paid_without_access_detected",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        detection_source: "reconciliation",
+        age_bucket: "60s_to_5m",
+        support_required: true
+      }
+    }).event_name).toBe("paid_without_access_detected");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "paid_without_access_resolved",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        access_public_id_hash: "c".repeat(64),
+        resolution: "access_granted",
+        resolution_time_bucket: "60s_to_5m"
+      }
+    }).event_name).toBe("paid_without_access_resolved");
     expect(parseAnalyticsEvent({
       ...envelope,
       analytics_id_key_version: "v1",
@@ -173,6 +200,33 @@ describe("analytics event contracts", () => {
       retryable: true,
       severity: "sev1",
       message: "raw provider error"
+    })).toThrow();
+  });
+
+  it("keeps paid_without_access analytics closed and PII-free", () => {
+    const detected = {
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      detection_source: "provider_replay",
+      age_bucket: "lt_60s",
+      support_required: false
+    };
+    const resolved = {
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      access_public_id_hash: "c".repeat(64),
+      resolution: "access_granted",
+      resolution_time_bucket: "lt_60s"
+    };
+    expect(paidWithoutAccessDetectedPropertiesSchema.parse(detected)).toEqual(detected);
+    expect(paidWithoutAccessResolvedPropertiesSchema.parse(resolved)).toEqual(resolved);
+    expect(() => paidWithoutAccessDetectedPropertiesSchema.parse({
+      ...detected,
+      email: "student@example.test"
+    })).toThrow();
+    expect(() => paidWithoutAccessResolvedPropertiesSchema.parse({
+      ...resolved,
+      provider_payment_id: "provider-secret"
     })).toThrow();
   });
 });

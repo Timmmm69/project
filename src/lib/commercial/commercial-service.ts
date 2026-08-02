@@ -147,6 +147,60 @@ async function ensurePaidAnalytics(facts: PaidAnalyticsFacts, writer?: Analytics
   }, writer);
 }
 
+type PaidWithoutAccessAnalyticsFacts = Readonly<{
+  source: "provider_replay" | "reconciliation";
+  orderId: string;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  accessPublicId: string;
+  paidAt: Date;
+  resolvedAt: Date;
+}>;
+
+function paidWithoutAccessAgeBucket(paidAt: Date, now: Date) {
+  const elapsedSeconds = Math.max(0, Math.floor((now.getTime() - paidAt.getTime()) / 1_000));
+  return elapsedSeconds < 60 ? "lt_60s" as const : elapsedSeconds < 300 ? "60s_to_5m" as const : "gte_5m" as const;
+}
+
+async function ensurePaidWithoutAccessAnalytics(
+  facts: PaidWithoutAccessAnalyticsFacts,
+  writer?: AnalyticsWriter
+) {
+  const hashes = analyticsHashes({
+    orderPublicId: facts.orderPublicId,
+    paymentAttemptPublicId: facts.paymentAttemptPublicId,
+    accessPublicId: facts.accessPublicId
+  });
+  const ageBucket = paidWithoutAccessAgeBucket(facts.paidAt, facts.resolvedAt);
+  await ensureAnalytics(() => ({
+    eventName: "paid_without_access_detected",
+    transitionKey: `commercial-paid-without-access-detected:${facts.orderId}`,
+    occurredAt: facts.resolvedAt,
+    analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+    properties: {
+      order_public_id_hash: hashes.properties.order_public_id_hash,
+      payment_attempt_public_id_hash: hashes.properties.payment_attempt_public_id_hash,
+      detection_source: facts.source,
+      age_bucket: ageBucket,
+      support_required: ageBucket !== "lt_60s"
+    }
+  }), writer);
+  await ensureAnalytics(() => ({
+    eventName: "paid_without_access_resolved",
+    transitionKey: `commercial-paid-without-access-resolved:${facts.orderId}`,
+    occurredAt: facts.resolvedAt,
+    analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+    properties: {
+      order_public_id_hash: hashes.properties.order_public_id_hash,
+      payment_attempt_public_id_hash: hashes.properties.payment_attempt_public_id_hash,
+      access_public_id_hash: hashes.properties.access_public_id_hash,
+      resolution: "access_granted",
+      resolution_time_bucket: ageBucket
+    }
+  }), writer);
+}
+
 async function ensureCheckoutStartedAnalytics(input: {
   checkoutFlowId: string;
   occurredAt: Date;
@@ -909,6 +963,191 @@ function isCommercialPaymentEventUniqueConflict(error: Prisma.PrismaClientKnownR
   return /commercial_payment_events|payload_?hash|provider_?event_?key/i.test(value);
 }
 
+type PaidOrderAccessInput = Readonly<{
+  id: string;
+  publicId: string;
+  emailNormalized: string;
+  commercialProductId: string;
+  testIdSnapshot: string;
+  attemptLimitSnapshot: number;
+  startWindowDaysSnapshot: number;
+}>;
+
+async function ensurePaidOrderAccess(
+  tx: Tx,
+  input: {
+    order: PaidOrderAccessInput;
+    paymentAttemptId: string;
+    now: Date;
+  }
+) {
+  const existing = await tx.access.findUnique({
+    where: { commercialOrderId: input.order.id }
+  });
+  if (existing) return { access: existing, created: false as const };
+
+  const student = await tx.user.findUnique({
+    where: { email: input.order.emailNormalized }
+  });
+  const user = student ?? await tx.user.create({
+    data: { email: input.order.emailNormalized, role: "STUDENT" }
+  });
+  if (user.role !== "STUDENT" || user.deletedAt) {
+    throw new CommercialError("EMAIL_NOT_AVAILABLE");
+  }
+
+  const deadline = addDays(input.now, input.order.startWindowDaysSnapshot);
+  const access = await tx.access.create({
+    data: {
+      userId: user.id,
+      testId: input.order.testIdSnapshot,
+      source: "COMMERCIAL",
+      attemptsTotal: input.order.attemptLimitSnapshot,
+      attemptsAvailable: input.order.attemptLimitSnapshot,
+      expiresAt: deadline,
+      commercialProductId: input.order.commercialProductId,
+      commercialOrderId: input.order.id,
+      commercialPaymentAttemptId: input.paymentAttemptId,
+      grantedAt: input.now,
+      startDeadlineAt: deadline
+    }
+  });
+  await tx.eventLog.create({
+    data: {
+      eventType: "access_granted",
+      actorUserId: user.id,
+      entityType: "commercial_order",
+      entityId: input.order.id,
+      payload: { source: "commercial", attempts: input.order.attemptLimitSnapshot }
+    }
+  });
+  return { access, created: true as const };
+}
+
+function paidWithoutAccessSupportRequired(paidAt: Date, now: Date) {
+  return now.getTime() - paidAt.getTime() >= 60_000;
+}
+
+async function recordPaidWithoutAccessDetected(
+  tx: Tx,
+  input: { orderId: string; paidAt: Date; now: Date; source: "provider_replay" | "reconciliation" }
+) {
+  await tx.eventLog.create({
+    data: {
+      eventType: "paid_without_access_detected",
+      entityType: "commercial_order",
+      entityId: input.orderId,
+      payload: {
+        detectionSource: input.source,
+        supportRequired: paidWithoutAccessSupportRequired(input.paidAt, input.now)
+      }
+    }
+  });
+}
+
+async function recordPaidWithoutAccessResolved(
+  tx: Tx,
+  input: { orderId: string; accessId: string; paidAt: Date; now: Date }
+) {
+  const elapsedSeconds = Math.max(0, Math.floor((input.now.getTime() - input.paidAt.getTime()) / 1_000));
+  await tx.eventLog.create({
+    data: {
+      eventType: "paid_without_access_resolved",
+      entityType: "commercial_order",
+      entityId: input.orderId,
+      payload: {
+        resolution: "access_granted",
+        resolutionTimeBucket: elapsedSeconds < 60 ? "lt_60s" : elapsedSeconds < 300 ? "60s_to_5m" : "gte_5m"
+      }
+    }
+  });
+}
+
+export async function reconcilePaidCommercialOrderAccess(
+  publicId: string,
+  analyticsWriter?: AnalyticsWriter
+) {
+  const outcome = await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "commercial_orders" WHERE "public_id" = ${publicId} FOR UPDATE
+    `);
+    if (locked.length !== 1) throw new CommercialError("ORDER_NOT_FOUND");
+
+    const order = await tx.commercialOrder.findUniqueOrThrow({
+      where: { publicId },
+      include: {
+        access: true,
+        paymentAttempts: { orderBy: { createdAt: "desc" } }
+      }
+    });
+    if (order.status !== "PAID" || !order.paidAt) {
+      return {
+        result: { state: "not_applicable" as const, access: order.access },
+        analytics: undefined
+      };
+    }
+    if (order.access) {
+      return {
+        result: { state: "already_resolved" as const, access: order.access },
+        analytics: undefined
+      };
+    }
+
+    const paidAttempts = order.paymentAttempts.filter((attempt) => attempt.status === "PAID");
+    const activeAttempts = order.paymentAttempts.filter((attempt) =>
+      attempt.status === "CREATED" || attempt.status === "PENDING"
+    );
+    const paidAttempt = paidAttempts[0];
+    if (paidAttempts.length !== 1 || activeAttempts.length !== 0 || !paidAttempt?.paidAt ||
+        paidAttempt.amountMinor !== order.priceMinor || paidAttempt.currency !== order.currency) {
+      throw new CommercialError("PAID_WITHOUT_ACCESS_INCONSISTENT");
+    }
+
+    const now = new Date();
+    await recordPaidWithoutAccessDetected(tx, {
+      orderId: order.id,
+      paidAt: order.paidAt,
+      now,
+      source: "reconciliation"
+    });
+    const granted = await ensurePaidOrderAccess(tx, {
+      order,
+      paymentAttemptId: paidAttempt.id,
+      now
+    });
+    if (granted.created) {
+      await recordPaidWithoutAccessResolved(tx, {
+        orderId: order.id,
+        accessId: granted.access.id,
+        paidAt: order.paidAt,
+        now
+      });
+    }
+    return {
+      result: {
+        state: granted.created ? "resolved" as const : "already_resolved" as const,
+        access: granted.access
+      },
+      analytics: granted.created
+        ? {
+            source: "reconciliation" as const,
+            orderId: order.id,
+            orderPublicId: order.publicId,
+            paymentAttemptId: paidAttempt.id,
+            paymentAttemptPublicId: paidAttempt.publicId,
+            accessPublicId: granted.access.publicId,
+            paidAt: order.paidAt,
+            resolvedAt: now
+          }
+        : undefined
+    };
+  });
+  if (outcome.analytics) {
+    await ensurePaidWithoutAccessAnalytics(outcome.analytics, analyticsWriter);
+  }
+  return outcome.result;
+}
+
 export async function processCommercialProviderNotification(input: {
   notification: ProviderNotification;
   rawBody: string;
@@ -987,11 +1226,49 @@ export async function processCommercialProviderNotification(input: {
         return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "provider_payment_id_conflict" as const, orderPublicId: current.order.publicId, paymentAttemptPublicId: current.publicId } };
       }
       if (current.status === nextAttemptStatus && current.order.status === nextOrderStatus) {
+        let access = current.order.access;
+        let reconciledPaidWithoutAccess = false;
+        let paidWithoutAccessAnalytics: PaidWithoutAccessAnalyticsFacts | undefined;
+        if (nextAttemptStatus === "PAID" && !access) {
+          const paidAt = current.order.paidAt ?? current.paidAt;
+          if (!paidAt) throw new CommercialError("PAID_WITHOUT_ACCESS_INCONSISTENT");
+          await recordPaidWithoutAccessDetected(tx, {
+            orderId: current.order.id,
+            paidAt,
+            now,
+            source: "provider_replay"
+          });
+          const granted = await ensurePaidOrderAccess(tx, {
+            order: current.order,
+            paymentAttemptId: current.id,
+            now
+          });
+          access = granted.access;
+          reconciledPaidWithoutAccess = granted.created;
+          if (granted.created) {
+            await recordPaidWithoutAccessResolved(tx, {
+              orderId: current.order.id,
+              accessId: granted.access.id,
+              paidAt,
+              now
+            });
+            paidWithoutAccessAnalytics = {
+              source: "provider_replay",
+              orderId: current.order.id,
+              orderPublicId: current.order.publicId,
+              paymentAttemptId: current.id,
+              paymentAttemptPublicId: current.publicId,
+              accessPublicId: granted.access.publicId,
+              paidAt,
+              resolvedAt: now
+            };
+          }
+        }
         await tx.commercialPaymentEvent.update({
           where: { id: event.id },
           data: { providerEventKey: processedEventKey, processingStatus: "PROCESSED", processedAt: now }
         });
-        const paid = nextAttemptStatus === "PAID" && current.order.access
+        const paid = nextAttemptStatus === "PAID" && access
           ? {
               occurredAt: current.paidAt ?? current.verifiedAt ?? now,
               provider: input.provider,
@@ -1000,15 +1277,21 @@ export async function processCommercialProviderNotification(input: {
               paymentAttemptId: current.id,
               paymentAttemptPublicId: current.publicId,
               access: {
-                publicId: current.order.access.publicId,
-                occurredAt: current.order.access.grantedAt ?? current.order.access.createdAt,
+                publicId: access.publicId,
+                occurredAt: access.grantedAt ?? access.createdAt,
                 productCode: current.order.product.code,
                 testSlug: current.order.product.test.slug,
                 examMode: current.order.product.test.examMode
               }
             } satisfies PaidAnalyticsFacts
           : undefined;
-        return { duplicate: false, grantedAccess: Boolean(current.order.access), rejected: false, paid };
+        return {
+          duplicate: false,
+          grantedAccess: reconciledPaidWithoutAccess || Boolean(access),
+          rejected: false,
+          paid,
+          paidWithoutAccessAnalytics
+        };
       }
       if (!canTransitionPaymentAttempt(current.status, nextAttemptStatus) || !canTransitionOrder(current.order.status, nextOrderStatus)) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "ILLEGAL_STATUS_TRANSITION", processedAt: now } });
@@ -1033,30 +1316,13 @@ export async function processCommercialProviderNotification(input: {
       let grantedAccess = false;
       let grantedAccessRecord = current.order.access;
       if (nextAttemptStatus === "PAID") {
-        const student = await tx.user.findUnique({ where: { email: current.order.emailNormalized } });
-        const user = student ?? await tx.user.create({ data: { email: current.order.emailNormalized, role: "STUDENT" } });
-        if (user.role !== "STUDENT" || user.deletedAt) throw new CommercialError("EMAIL_NOT_AVAILABLE");
-        const existing = await tx.access.findUnique({ where: { commercialOrderId: current.order.id } });
-        if (!existing) {
-          const deadline = addDays(now, current.order.startWindowDaysSnapshot);
-          grantedAccessRecord = await tx.access.create({
-            data: {
-              userId: user.id,
-              testId: current.order.testIdSnapshot,
-              source: "COMMERCIAL",
-              attemptsTotal: current.order.attemptLimitSnapshot,
-              attemptsAvailable: current.order.attemptLimitSnapshot,
-              expiresAt: deadline,
-              commercialProductId: current.order.commercialProductId,
-              commercialOrderId: current.order.id,
-              commercialPaymentAttemptId: current.id,
-              grantedAt: now,
-              startDeadlineAt: deadline
-            }
-          });
-          grantedAccess = true;
-          await tx.eventLog.create({ data: { eventType: "access_granted", actorUserId: user.id, entityType: "commercial_order", entityId: current.order.id, payload: { source: "commercial", attempts: current.order.attemptLimitSnapshot } } });
-        }
+        const granted = await ensurePaidOrderAccess(tx, {
+          order: current.order,
+          paymentAttemptId: current.id,
+          now
+        });
+        grantedAccessRecord = granted.access;
+        grantedAccess = granted.created;
       }
       await tx.commercialPaymentEvent.update({
         where: { id: event.id },
@@ -1084,6 +1350,9 @@ export async function processCommercialProviderNotification(input: {
     });
     if (outcome.validation) await writePaymentValidationFailed(outcome.validation, input.analyticsWriter);
     if (outcome.paid) await ensurePaidAnalytics(outcome.paid, input.analyticsWriter);
+    if (outcome.paidWithoutAccessAnalytics) {
+      await ensurePaidWithoutAccessAnalytics(outcome.paidWithoutAccessAnalytics, input.analyticsWriter);
+    }
     return { duplicate: outcome.duplicate, grantedAccess: outcome.grantedAccess, rejected: outcome.rejected };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && isCommercialPaymentEventUniqueConflict(error)) {
