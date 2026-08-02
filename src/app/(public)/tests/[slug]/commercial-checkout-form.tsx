@@ -2,7 +2,6 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
-import { RecoveryAccessPanel } from "./recovery-access-panel";
 
 type LegalLinks = {
   version: string;
@@ -16,12 +15,22 @@ type LegalLinks = {
 
 type OrderState = {
   publicId: string;
-  orderStatus: string;
-  paymentStatus: string | null;
-  accessStatus: "granted" | "none";
-  nextAction: "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
-  nextUrl: string | null;
+  orderReference: string;
+  category: "payment_pending" | "payment_paid" | "payment_failed" | "payment_cancelled" | "payment_expired" | "payment_status_unknown" | "paid_without_access";
+  timestamps: {
+    createdAt: string;
+    updatedAt: string;
+    paymentUpdatedAt: string | null;
+    paidAt: string | null;
+  };
+  cooldown: {
+    refreshAfterSeconds: number | null;
+    supportAvailableAt: string | null;
+  };
+  allowedActions: Array<"create_payment_session" | "refresh_status" | "retry_payment" | "continue_access" | "contact_support">;
 };
+
+type AccessNextAction = "START_TEST" | "RESUME_TEST" | "VIEW_RESULT";
 
 type ApiResponse<T> = { success: true; data: T } | { success: false; error: { code: string; message: string; details?: { nextAction?: string } } };
 
@@ -29,12 +38,12 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, recovery }: {
+export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, verifiedPreAuthorized }: {
   legal: LegalLinks;
   testId: string;
   priceMinor: number;
   currency: string;
-  recovery: Readonly<{ productCode: string; supportEmail: string }> | null;
+  verifiedPreAuthorized: boolean;
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -46,7 +55,6 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, re
   const orderKey = useRef<string | null>(null);
   const checkoutFlowId = useRef<string | null>(null);
   const paymentKey = useRef<string | null>(null);
-  const claimKey = useRef<string | null>(null);
 
   async function loadStatus(publicId: string) {
     const response = await fetch(`/api/commercial/orders/${publicId}/status`, { cache: "no-store" });
@@ -55,10 +63,16 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, re
       setMessage("Не удалось восстановить заказ в этой сессии.");
       return;
     }
+    if (body.data.orderReference !== publicId) {
+      setMessage("Не удалось восстановить заказ в этой сессии.");
+      return;
+    }
     const restored = { publicId, ...body.data };
     setOrder(restored);
-    if (restored.accessStatus === "granted") setMessage("Оплата подтверждена. Доступ активирован.");
-    else if (restored.orderStatus === "pending") setMessage("Платеж обрабатывается. Повторно оплачивать не нужно.");
+    if (restored.category === "payment_paid") setMessage("Оплата подтверждена. Доступ активирован.");
+    else if (restored.category === "payment_status_unknown") setMessage("Статус оплаты пока неизвестен. Повторно оплачивать не нужно.");
+    else if (restored.category === "paid_without_access") setMessage("Оплата подтверждена. Доступ оформляется.");
+    else if (restored.category === "payment_pending") setMessage("Платеж обрабатывается. Повторно оплачивать не нужно.");
   }
 
   useEffect(() => {
@@ -103,13 +117,14 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, re
       setMessage(body.error.code === "ORDER_ALREADY_PENDING" ? "Для этого email уже есть ожидающий оплаты заказ." : body.error.message);
       return;
     }
+    const createdAt = new Date().toISOString();
     setOrder({
       publicId: body.data.order.publicId,
-      orderStatus: body.data.order.status,
-      paymentStatus: null,
-      accessStatus: "none",
-      nextAction: "WAIT_FOR_PAYMENT",
-      nextUrl: null
+      orderReference: body.data.order.publicId,
+      category: "payment_pending",
+      timestamps: { createdAt, updatedAt: createdAt, paymentUpdatedAt: null, paidAt: null },
+      cooldown: { refreshAfterSeconds: 10, supportAvailableAt: null },
+      allowedActions: ["create_payment_session"]
     });
     setMessage("Заказ создан. Перейдите к тестовой оплате.");
   }
@@ -151,21 +166,30 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, re
     if (!body.success) return setMessage(body.error.message);
     const updated = { publicId: order.publicId, ...body.data };
     setOrder(updated);
-    setMessage(updated.accessStatus === "granted" ? "Оплата подтверждена. Доступ активирован." : "Статус заказа обновлен.");
+    setMessage(updated.category === "payment_paid" ? "Оплата подтверждена. Доступ активирован." : "Статус заказа обновлен.");
   }
 
   async function claimAndContinue() {
     if (!order) return;
     setBusy(true);
-    claimKey.current ??= newKey();
-    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, {
-      method: "POST",
-      headers: { "Idempotency-Key": claimKey.current }
-    });
-    const body = await response.json() as ApiResponse<{ nextAction: OrderState["nextAction"]; nextUrl: string }>;
+    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, { method: "POST" });
+    const body = await response.json() as ApiResponse<{ nextAction: AccessNextAction; nextUrl: string; testId: string }>;
     if (!body.success) {
       setBusy(false);
       setMessage(body.error.message);
+      return;
+    }
+    if (body.data.nextAction === "START_TEST") {
+      const start = await fetch(`/api/commercial/orders/${order.publicId}/start-attempt`, {
+        method: "POST",
+      });
+      const startBody = await start.json() as ApiResponse<{ nextUrl: string }>;
+      if (!startBody.success) {
+        setBusy(false);
+        setMessage(startBody.error.message);
+        return;
+      }
+      window.location.assign(startBody.data.nextUrl);
       return;
     }
     window.location.assign(body.data.nextUrl);
@@ -187,40 +211,66 @@ export function CommercialCheckoutForm({ legal, testId, priceMinor, currency, re
     window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
   }
 
+  async function startVerifiedAttempt() {
+    setBusy(true);
+    setMessage(null);
+    const response = await fetch("/api/attempts/start", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ testId })
+    });
+    const body = await response.json() as ApiResponse<{ attempt: { attemptId: string } }>;
+    setBusy(false);
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+    window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
+  }
+
   const price = `${(priceMinor / 100).toFixed(2)} ${currency}`;
-  const paid = order?.accessStatus === "granted";
-  return (
-    <>
-      <section className="subpanel stack compact" id="commercial-checkout">
-        <div>
-          <h3 className="subsection-title">Тестовая оплата</h3>
-          <p className="muted">Одна услуга прохождения одного тренировочного онлайн-теста.</p>
-        </div>
-        <p className="form-message info">Тестовый платеж. Реальные деньги не списываются.</p>
-        <ul className="muted">
-          <li>{price}, одна попытка.</li>
-          <li>Начать тест можно в течение 90 дней.</li>
-          <li>После начала: 120 минут без паузы.</li>
-          <li>Показывается первичный результат. Полный возврат доступен до старта.</li>
-        </ul>
-        {!order ? <>
-          <label className="field"><span>Email для заказа</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
-          <label className="checkbox-row"><input type="checkbox" checked={adult} onChange={(event) => setAdult(event.target.checked)} /><span>Подтверждаю, что я совершеннолетний покупатель.</span></label>
-        </> : null}
-        <p className="muted">
-          <a className="text-link" href={legal.offerUrl} target="_blank">Оферта</a>{" · "}
-          <a className="text-link" href={legal.privacyUrl} target="_blank">Конфиденциальность</a>{" · "}
-          <a className="text-link" href={legal.refundPolicyUrl} target="_blank">Возврат</a>{" · "}
-          <a className="text-link" href={legal.disclaimerUrl} target="_blank">Дисклеймер</a>
-        </p>
-        <p className="muted">Поддержка: {legal.supportEmail}{legal.supportTelegram ? ` · Telegram: ${legal.supportTelegram}` : ""}</p>
+  const paid = order?.category === "payment_paid";
+  const canPay = order?.allowedActions.includes("create_payment_session") || order?.allowedActions.includes("retry_payment");
+  const canRefresh = order?.allowedActions.includes("refresh_status");
+  if (verifiedPreAuthorized) {
+    return (
+      <section className="subpanel stack compact">
         {message ? <p className="form-message info">{message}</p> : null}
-        {!order ? <button className="button" type="button" disabled={busy || !email || !adult} onClick={createOrder}>Перейти к оплате {price}</button> : null}
-        {existingAccess ? <button className="button" type="button" disabled={busy} onClick={continueExistingAccess}>Продолжить тест</button> : null}
-        {order && !paid ? <div className="inline-actions"><button className="button" type="button" disabled={busy} onClick={beginPayment}>Открыть тестовую оплату</button><button className="button secondary" type="button" disabled={busy} onClick={refreshStatus}>Проверить статус</button></div> : null}
-        {paid ? <button className="button" type="button" disabled={busy} onClick={claimAndContinue}>{order?.nextAction === "RESUME_TEST" ? "Продолжить тест" : order?.nextAction === "VIEW_RESULT" ? "Посмотреть результат" : "Перейти к началу"}</button> : null}
+        <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
+          Начать или продолжить тест
+        </button>
       </section>
-      {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
-    </>
+    );
+  }
+  return (
+    <section className="subpanel stack compact">
+      <div>
+        <h3 className="subsection-title">Тестовая оплата</h3>
+        <p className="muted">Одна услуга прохождения одного тренировочного онлайн-теста.</p>
+      </div>
+      <p className="form-message info">Тестовый платеж. Реальные деньги не списываются.</p>
+      <ul className="muted">
+        <li>{price}, одна попытка.</li>
+        <li>Начать тест можно в течение 90 дней.</li>
+        <li>После начала: 120 минут без паузы.</li>
+        <li>Показывается первичный результат. Полный возврат доступен до старта.</li>
+      </ul>
+      {!order ? <>
+        <label className="field"><span>Email для заказа</span><input type="email" value={email} onChange={(event) => setEmail(event.target.value)} required /></label>
+        <label className="checkbox-row"><input type="checkbox" checked={adult} onChange={(event) => setAdult(event.target.checked)} /><span>Подтверждаю, что я совершеннолетний покупатель.</span></label>
+      </> : null}
+      <p className="muted">
+        <a className="text-link" href={legal.offerUrl} target="_blank">Оферта</a>{" · "}
+        <a className="text-link" href={legal.privacyUrl} target="_blank">Конфиденциальность</a>{" · "}
+        <a className="text-link" href={legal.refundPolicyUrl} target="_blank">Возврат</a>{" · "}
+        <a className="text-link" href={legal.disclaimerUrl} target="_blank">Дисклеймер</a>
+      </p>
+      <p className="muted">Поддержка: {legal.supportEmail}{legal.supportTelegram ? ` · Telegram: ${legal.supportTelegram}` : ""}</p>
+      {message ? <p className="form-message info">{message}</p> : null}
+      {!order ? <button className="button" type="button" disabled={busy || !email || !adult} onClick={createOrder}>Перейти к оплате {price}</button> : null}
+      {existingAccess ? <button className="button" type="button" disabled={busy} onClick={continueExistingAccess}>Продолжить тест</button> : null}
+      {order && !paid ? <div className="inline-actions">{canPay ? <button className="button" type="button" disabled={busy} onClick={beginPayment}>Открыть тестовую оплату</button> : null}{canRefresh ? <button className="button secondary" type="button" disabled={busy} onClick={refreshStatus}>Проверить статус</button> : null}</div> : null}
+      {paid ? <button className="button" type="button" disabled={busy} onClick={claimAndContinue}>Перейти к доступу</button> : null}
+    </section>
   );
 }
