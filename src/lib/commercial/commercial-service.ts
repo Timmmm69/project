@@ -16,7 +16,13 @@ import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
 import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
-import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
+import {
+  canOpenNewPaymentAttempt,
+  canRetryTerminalOrder,
+  canTransitionOrder,
+  canTransitionOrderForNewPaymentAttempt,
+  canTransitionPaymentAttempt
+} from "@/lib/commercial/state-machine";
 import {
   serializeCommercialOrderStatus,
   type CommercialPaymentStatusProjection
@@ -824,7 +830,24 @@ export async function createCommercialPaymentSession(input: {
         if (current.paymentUrl && current.providerFields) return { attempt: current, order, created: false as const };
         throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
       }
-      if (!canOpenNewPaymentAttempt(order.status)) throw new CommercialError("ORDER_ALREADY_PAID");
+      if (!canOpenNewPaymentAttempt(order.status)) {
+        throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
+      }
+
+      const latestAttempt = await tx.commercialPaymentAttempt.findFirst({
+        where: { commercialOrderId: order.id },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { status: true }
+      });
+      if (order.status === "CREATED" && latestAttempt) {
+        throw new CommercialError("PAYMENT_STATE_CHANGED");
+      }
+      if (canRetryTerminalOrder(order.status) && latestAttempt?.status !== order.status) {
+        throw new CommercialError("PAYMENT_STATE_CHANGED");
+      }
+      if (!canTransitionOrderForNewPaymentAttempt(order.status)) {
+        throw new CommercialError("PAYMENT_STATE_CHANGED");
+      }
 
       const attempt = await tx.commercialPaymentAttempt.create({
         data: {

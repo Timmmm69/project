@@ -4,7 +4,9 @@
 
 ## Активная карточка
 
-- Feature-карточка: `B2-03`
+- Feature-карточка: `B2-05`
+- Статус B2-05: `IN_REVIEW` до consolidated B2 milestone review
+- B2-05 base SHA: `fb1f926f73ee6ef4031b897072f7988f3d0f91a5`
 - Статус B2-03: `IN_REVIEW` до consolidated B2 milestone review
 - B2-03 base SHA: `0a7c69ea4a33480d0dae6511e2054924fcea6b66`
 - Статус B2-06: `IN_REVIEW` до consolidated B2 milestone review
@@ -24,6 +26,10 @@
 
 ## Последний завершённый шаг
 
+- B2-05 разрешает новую PaymentAttempt в существующем Order только из
+  FAILED/CANCELLED/EXPIRED; PENDING/unknown/PAID/PWA не открывают terminal retry.
+- Dedicated PostgreSQL matrix и concurrency: 16/16 PASS, во всех гонках не
+  более одной active PaymentAttempt; full unit 417 PASS, lint/typecheck PASS.
 - B2-03 добавляет PAID-only reconciliation с Order row lock, snapshot-based
   Access grant и exactly-one invariant; provider paid replay разрешает anomaly.
 - PostgreSQL concurrency 12/12 PASS: восемь параллельных reconciliation дают
@@ -51,13 +57,13 @@
 
 ## Точное продолжение
 
-1. Сделать атомарный implementation commit B2-03 от `0a7c69e`.
-2. Claim B2-05 от нового HEAD и формализовать terminal retry.
-3. B2-02/B2-03/B2-06 оставить `IN_REVIEW`; production сохранить `NO-GO`.
+1. Сделать атомарный implementation commit B2-05 от `fb1f926`.
+2. Claim B2-07 от нового HEAD и расширить verified recovery на pending payment.
+3. B2-02/B2-03/B2-05/B2-06 оставить `IN_REVIEW` до consolidated review.
 
 ## Другие READY-карточки
 
-`B2-05`, `B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `D-01`.
+`B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `D-01`.
 
 ## Newly READY после A-06
 

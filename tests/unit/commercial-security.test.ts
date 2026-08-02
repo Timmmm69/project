@@ -4,7 +4,15 @@ import { commercialNotificationMismatch, hasProviderPaymentIdConflict } from "@/
 import { LocalFakeCommercialProvider, WebPaySandboxProvider, commercialProviderForRuntime, isLocalFakeCommercialProviderEnabled } from "@/lib/commercial/providers";
 import { createLookupToken, hashLookupToken, lookupTokenMatches, normalizeCommercialEmail } from "@/lib/commercial/security";
 import { commercialOrderSchema } from "@/lib/commercial/schemas";
-import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt, isActivePaymentAttempt, isTerminalPaymentAttempt } from "@/lib/commercial/state-machine";
+import {
+  canOpenNewPaymentAttempt,
+  canRetryTerminalOrder,
+  canTransitionOrder,
+  canTransitionOrderForNewPaymentAttempt,
+  canTransitionPaymentAttempt,
+  isActivePaymentAttempt,
+  isTerminalPaymentAttempt
+} from "@/lib/commercial/state-machine";
 
 const originalEnv = { ...process.env };
 
@@ -81,7 +89,20 @@ describe("commercial checkout safeguards", () => {
     expect(canOpenNewPaymentAttempt("FAILED")).toBe(true);
     expect(canOpenNewPaymentAttempt("CANCELLED")).toBe(true);
     expect(canOpenNewPaymentAttempt("EXPIRED")).toBe(true);
+    expect(canOpenNewPaymentAttempt("CREATED")).toBe(true);
+    expect(canOpenNewPaymentAttempt("PENDING")).toBe(false);
     expect(canOpenNewPaymentAttempt("PAID")).toBe(false);
+    expect(canRetryTerminalOrder("FAILED")).toBe(true);
+    expect(canRetryTerminalOrder("CANCELLED")).toBe(true);
+    expect(canRetryTerminalOrder("EXPIRED")).toBe(true);
+    expect(canRetryTerminalOrder("CREATED")).toBe(false);
+    expect(canRetryTerminalOrder("PENDING")).toBe(false);
+    expect(canRetryTerminalOrder("PAID")).toBe(false);
+    expect(canTransitionOrderForNewPaymentAttempt("FAILED")).toBe(true);
+    expect(canTransitionOrderForNewPaymentAttempt("CANCELLED")).toBe(true);
+    expect(canTransitionOrderForNewPaymentAttempt("EXPIRED")).toBe(true);
+    expect(canTransitionOrderForNewPaymentAttempt("PENDING")).toBe(false);
+    expect(canTransitionOrderForNewPaymentAttempt("PAID")).toBe(false);
     expect(canTransitionPaymentAttempt("PAID", "FAILED")).toBe(false);
     expect(canTransitionPaymentAttempt("PAID", "CANCELLED")).toBe(false);
     expect(hasProviderPaymentIdConflict({ currentStatus: "PAID", currentProviderPaymentId: "payment-1", nextStatus: "PAID", nextProviderPaymentId: "payment-1" })).toBe(false);
