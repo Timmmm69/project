@@ -71,6 +71,22 @@ export const backendOperationFailedPropertiesSchema = z.object({
   severity: z.enum(["sev1", "sev2", "sev3"])
 }).strict();
 
+export const paidWithoutAccessDetectedPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  detection_source: z.enum(["provider_replay", "reconciliation"]),
+  age_bucket: z.enum(["lt_60s", "60s_to_5m", "gte_5m"]),
+  support_required: z.boolean()
+}).strict();
+
+export const paidWithoutAccessResolvedPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  access_public_id_hash: hash,
+  resolution: z.literal("access_granted"),
+  resolution_time_bucket: z.enum(["lt_60s", "60s_to_5m", "gte_5m"])
+}).strict();
+
 const envelope = {
   event_id: z.string().uuid(),
   event_version: z.literal(1),
@@ -99,6 +115,8 @@ export const analyticsEventRegistry = {
   order_created: eventSchema("order_created", orderCreatedPropertiesSchema),
   payment_confirmed: eventSchema("payment_confirmed", paymentConfirmedPropertiesSchema),
   access_granted: eventSchema("access_granted", accessGrantedPropertiesSchema),
+  paid_without_access_detected: eventSchema("paid_without_access_detected", paidWithoutAccessDetectedPropertiesSchema),
+  paid_without_access_resolved: eventSchema("paid_without_access_resolved", paidWithoutAccessResolvedPropertiesSchema),
   payment_validation_failed: eventSchema("payment_validation_failed", paymentValidationFailedPropertiesSchema),
   backend_operation_failed: eventSchema("backend_operation_failed", backendOperationFailedPropertiesSchema)
 } as const;

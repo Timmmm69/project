@@ -40,10 +40,10 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | Статус | Количество |
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 13 |
-| `READY` | 8 |
+| `BACKLOG` | 12 |
+| `READY` | 7 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 2 |
+| `IN_REVIEW` | 3 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 12 |
@@ -51,8 +51,8 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | **Всего** | **45** |
 
 Последняя принятая feature-карточка: B2-01 — `DONE` (implementation SHA
-`20adce9`, review `reviews/B2-01.md`). B2-02 ожидает consolidated B2 review;
-следующая implementation-карточка — B2-06. A-07
+`20adce9`, review `reviews/B2-01.md`). B2-02, B2-03 и B2-06 ожидают consolidated B2 review;
+следующая implementation-карточка — B2-05. A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -73,7 +73,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `DONE` | `CRITICAL` | `B1-03`, `B1-04` |
 | [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `DONE` | `HIGH` | `A-03`, `A-04` |
 | [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `IN_REVIEW` | `HIGH` | `A-03` |
-| [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `BACKLOG` | `CRITICAL` | `B2-02`, `B2-06` |
+| [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `IN_REVIEW` | `CRITICAL` | `B2-02`, `B2-06` |
 | [B2-04](tasks/B2-04.md) | B2 — Payment state и восстановление | Восстанавливать provider session после crash | `BLOCKED_EXTERNAL` | `HIGH` | `A-03`, `E-02` |
 | [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `READY` | `HIGH` | `A-03` |
 | [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `IN_REVIEW` | `HIGH` | `A-03` |

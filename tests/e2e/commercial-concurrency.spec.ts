@@ -1,6 +1,14 @@
 import { expect, test } from "@playwright/test";
 import { Prisma, PrismaClient } from "@prisma/client";
-import { createCommercialCheckoutFlow, createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification } from "@/lib/commercial/commercial-service";
+import type { AnalyticsWriteInput } from "@/lib/analytics/analytics-service";
+import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
+import {
+  createCommercialCheckoutFlow,
+  createCommercialOrder,
+  createCommercialPaymentSession,
+  processCommercialProviderNotification,
+  reconcilePaidCommercialOrderAccess
+} from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider } from "@/lib/commercial/providers";
 import { hashLookupToken } from "@/lib/commercial/security";
 
@@ -92,7 +100,14 @@ test.afterAll(async () => {
   await prisma.commercialOrder.deleteMany({ where: { id: { in: orderIds } } });
   await prisma.commercialCheckoutFlow.deleteMany({ where: { commercialProductId: productId } });
   const userIds = [...new Set(accesses.map((access) => access.userId))];
-  await prisma.eventLog.deleteMany({ where: { actorUserId: { in: userIds } } });
+  await prisma.eventLog.deleteMany({
+    where: {
+      OR: [
+        { actorUserId: { in: userIds } },
+        { entityType: "commercial_order", entityId: { in: orderIds } }
+      ]
+    }
+  });
   await prisma.user.deleteMany({ where: { id: { in: userIds } } });
   await prisma.commercialProduct.delete({ where: { id: productId } });
   await prisma.$disconnect();
@@ -292,6 +307,124 @@ test("terminal failure allows one retry and stale notification cannot reopen it"
   expect(staleResult.rejected).toBe(true);
   expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: order.order.id } })).status).toBe("PENDING");
   expect(await prisma.access.count({ where: { commercialOrderId: order.order.id } })).toBe(0);
+});
+
+test("concurrent paid_without_access reconciliation grants exactly one snapshot-based Access", async () => {
+  const order = await createOrder("paid-without-access");
+  const payment = await createSession(order.order.publicId, `pwa-session-${suffix}`);
+  const paidAt = new Date(Date.now() - 61_000);
+  await prisma.$transaction([
+    prisma.commercialPaymentAttempt.update({
+      where: { id: payment.id },
+      data: {
+        status: "PAID",
+        providerPaymentId: `pwa-provider-${suffix}`,
+        verifiedAt: paidAt,
+        paidAt
+      }
+    }),
+    prisma.commercialOrder.update({
+      where: { id: order.order.id },
+      data: { status: "PAID", paidAt }
+    })
+  ]);
+
+  const attemptsBefore = await prisma.commercialPaymentAttempt.count({
+    where: { commercialOrderId: order.order.id }
+  });
+  const analytics: AnalyticsWriteInput[] = [];
+  const previousAnalyticsEnabled = process.env.ANALYTICS_ENABLED;
+  const previousAnalyticsKey = process.env.ANALYTICS_ID_HMAC_KEY;
+  const previousAnalyticsVersion = process.env.ANALYTICS_ID_KEY_VERSION;
+  process.env.ANALYTICS_ENABLED = "true";
+  process.env.ANALYTICS_ID_HMAC_KEY = "pwa-concurrency-test-key-with-32-characters";
+  process.env.ANALYTICS_ID_KEY_VERSION = "pwa-test-v1";
+  let results: Array<Awaited<ReturnType<typeof reconcilePaidCommercialOrderAccess>>> = [];
+  try {
+    results = await Promise.all(
+      Array.from({ length: 8 }, () => reconcilePaidCommercialOrderAccess(
+        order.order.publicId,
+        async (input) => {
+          analytics.push(input);
+          return { enabled: true, inserted: true };
+        }
+      ))
+    );
+  } finally {
+    if (previousAnalyticsEnabled === undefined) delete process.env.ANALYTICS_ENABLED;
+    else process.env.ANALYTICS_ENABLED = previousAnalyticsEnabled;
+    if (previousAnalyticsKey === undefined) delete process.env.ANALYTICS_ID_HMAC_KEY;
+    else process.env.ANALYTICS_ID_HMAC_KEY = previousAnalyticsKey;
+    if (previousAnalyticsVersion === undefined) delete process.env.ANALYTICS_ID_KEY_VERSION;
+    else process.env.ANALYTICS_ID_KEY_VERSION = previousAnalyticsVersion;
+  }
+
+  expect(results.filter((result) => result.state === "resolved")).toHaveLength(1);
+  expect(results.filter((result) => result.state === "already_resolved")).toHaveLength(7);
+  expect(new Set(results.map((result) => result.access?.id)).size).toBe(1);
+  expect(await prisma.access.count({ where: { commercialOrderId: order.order.id } })).toBe(1);
+  expect(await prisma.commercialPaymentAttempt.count({ where: { commercialOrderId: order.order.id } })).toBe(attemptsBefore);
+
+  const access = await prisma.access.findUniqueOrThrow({
+    where: { commercialOrderId: order.order.id }
+  });
+  expect(access.commercialPaymentAttemptId).toBe(payment.id);
+  expect(access.attemptsTotal).toBe(order.order.attemptLimitSnapshot);
+  expect(access.attemptsAvailable).toBe(order.order.attemptLimitSnapshot);
+  expect(Math.round((access.startDeadlineAt!.getTime() - access.grantedAt!.getTime()) / 86_400_000))
+    .toBe(order.order.startWindowDaysSnapshot);
+  expect(await prisma.eventLog.count({
+    where: { entityId: order.order.id, eventType: "paid_without_access_detected" }
+  })).toBe(1);
+  expect(await prisma.eventLog.count({
+    where: { entityId: order.order.id, eventType: "paid_without_access_resolved" }
+  })).toBe(1);
+  expect(await prisma.eventLog.count({
+    where: { entityId: order.order.id, eventType: { contains: "refund" } }
+  })).toBe(0);
+  expect(analytics.map((event) => event.eventName)).toEqual([
+    "paid_without_access_detected",
+    "paid_without_access_resolved"
+  ]);
+  for (const event of analytics) assertNoForbiddenAnalyticsPayload(event.properties);
+  const serializedAnalytics = JSON.stringify(analytics);
+  expect(serializedAnalytics).not.toContain(order.order.emailNormalized);
+  expect(serializedAnalytics).not.toContain(payment.merchantReference);
+  expect(serializedAnalytics).not.toContain(`pwa-provider-${suffix}`);
+});
+
+test("an authoritative paid replay automatically reconciles paid_without_access", async () => {
+  const order = await createOrder("paid-replay-reconciliation");
+  const payment = await createSession(order.order.publicId, `pwa-replay-session-${suffix}`);
+  const providerPaymentId = `pwa-replay-provider-${suffix}`;
+  const paidAt = new Date();
+  await prisma.$transaction([
+    prisma.commercialPaymentAttempt.update({
+      where: { id: payment.id },
+      data: { status: "PAID", providerPaymentId, verifiedAt: paidAt, paidAt }
+    }),
+    prisma.commercialOrder.update({
+      where: { id: order.order.id },
+      data: { status: "PAID", paidAt }
+    })
+  ]);
+
+  const replay = await notification({
+    merchantReference: payment.merchantReference,
+    eventKey: `pwa-replay-event-${suffix}`,
+    status: "paid",
+    paymentId: providerPaymentId
+  });
+  const result = await processCommercialProviderNotification({
+    notification: replay.value,
+    rawBody: replay.rawBody,
+    provider: provider.provider
+  });
+
+  expect(result).toMatchObject({ rejected: false, grantedAccess: true });
+  expect(await prisma.access.count({ where: { commercialOrderId: order.order.id } })).toBe(1);
+  await expect(createSession(order.order.publicId, `pwa-replay-payment-retry-${suffix}`))
+    .rejects.toMatchObject({ code: "ORDER_ALREADY_PAID" });
 });
 
 test("providerPaymentId conflict is not treated as a duplicate webhook", async () => {

@@ -4,7 +4,9 @@
 
 ## Активная карточка
 
-- Feature-карточка: `B2-06`
+- Feature-карточка: `B2-03`
+- Статус B2-03: `IN_REVIEW` до consolidated B2 milestone review
+- B2-03 base SHA: `0a7c69ea4a33480d0dae6511e2054924fcea6b66`
 - Статус B2-06: `IN_REVIEW` до consolidated B2 milestone review
 - B2-06 base SHA: `a86d4f64573c7d7342bab4fbf42e11e0694d6c74`
 - Статус B2-02: `IN_REVIEW` до consolidated B2 milestone review
@@ -22,6 +24,11 @@
 
 ## Последний завершённый шаг
 
+- B2-03 добавляет PAID-only reconciliation с Order row lock, snapshot-based
+  Access grant и exactly-one invariant; provider paid replay разрешает anomaly.
+- PostgreSQL concurrency 12/12 PASS: восемь параллельных reconciliation дают
+  ровно один Access; canonical detected/resolved analytics PII-free; refund нет.
+- Full unit regression 417 PASS, 139 DB-gated skipped; lint/typecheck PASS.
 - B2-06 добавляет strict safe status/support DTO: opaque public reference,
   category, safe timestamps/cooldown и allowlisted actions; internal/provider/
   merchant IDs, email, payload, secrets, raw URLs/errors исключены.
@@ -44,14 +51,13 @@
 
 ## Точное продолжение
 
-1. Сделать атомарный implementation commit B2-06 от `a86d4f6`.
-2. Claim B2-03 от нового HEAD и реализовать paid_without_access reconciliation.
-3. B2-02/B2-06 оставить `IN_REVIEW` до единого consolidated B2 review;
-   production сохранить `NO-GO`.
+1. Сделать атомарный implementation commit B2-03 от `0a7c69e`.
+2. Claim B2-05 от нового HEAD и формализовать terminal retry.
+3. B2-02/B2-03/B2-06 оставить `IN_REVIEW`; production сохранить `NO-GO`.
 
 ## Другие READY-карточки
 
-`B2-02`, `B2-05`, `B2-06`, `B3-01`, `B3-02`, `B3-03`, `B3-04`.
+`B2-05`, `B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `D-01`.
 
 ## Newly READY после A-06
 
