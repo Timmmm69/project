@@ -34,5 +34,10 @@ export interface CommercialPaymentProviderAdapter {
     checkoutProxyUrl?: string;
   }): Promise<CheckoutSession>;
   verifyNotification(rawBody: string): Promise<ProviderNotification>;
-  fetchPaymentStatus(input: { merchantReference: string; providerPaymentId: string | null }): Promise<ProviderNotification>;
+  fetchPaymentStatus(input: {
+    merchantReference: string;
+    providerPaymentId: string | null;
+    amountMinor?: number;
+    currency?: string;
+  }): Promise<ProviderNotification>;
 }

@@ -1129,11 +1129,18 @@ export async function recordCommercialPaymentValidationFailure(input: {
   }
 }
 
-export async function commercialOrderStatus(publicId: string) {
+export type CommercialPaymentStatusProjection = "payment_status_unknown";
+
+export async function commercialOrderStatus(
+  publicId: string,
+  projection?: Readonly<{ paymentStatus?: CommercialPaymentStatusProjection }>
+) {
   const order = await getCommercialOrder(publicId);
   const payment = order.paymentAttempts[0] ?? null;
   const attempt = order.access?.attempts[0] ?? null;
-  const nextAction: CommercialNextAction = order.access
+  const nextAction: CommercialNextAction = projection?.paymentStatus === "payment_status_unknown"
+    ? "WAIT_FOR_PAYMENT"
+    : order.access
     ? attempt?.status === "STARTED"
       ? "RESUME_TEST"
       : attempt
@@ -1144,7 +1151,7 @@ export async function commercialOrderStatus(publicId: string) {
       : "NONE";
   return {
     orderStatus: order.status.toLowerCase(),
-    paymentStatus: payment?.status.toLowerCase() ?? null,
+    paymentStatus: projection?.paymentStatus ?? payment?.status.toLowerCase() ?? null,
     accessStatus: order.access ? "granted" : "none",
     nextAction,
     nextUrl: nextAction === "RESUME_TEST" && attempt ? `/attempts/${attempt.id}` : nextAction === "VIEW_RESULT" && attempt ? `/results/${attempt.id}` : null
