@@ -2,6 +2,19 @@ import { apiFailure } from "@/lib/api-response";
 import { CommercialError } from "@/lib/commercial/commercial-service";
 
 export { requireTrustedOrigin } from "@/lib/commercial/origin-policy";
+export {
+  commercialRateLimiter,
+  deriveCommercialClientKey,
+  type CommercialRateLimitResult
+} from "@/lib/commercial/rate-limit";
+
+export function commercialRateLimitedResponse(result: { allowed: false; safeCode: string; retryAfterSeconds: number }) {
+  return apiFailure(
+    { code: "RATE_LIMITED", message: "Слишком много запросов. Попробуйте позже." },
+    429,
+    { "Retry-After": String(result.retryAfterSeconds) }
+  );
+}
 
 export function commercialErrorResponse(error: unknown) {
   if (error instanceof CommercialError) {

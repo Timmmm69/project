@@ -28,14 +28,22 @@ export function apiSuccess<T>(data: T, init?: ResponseInit) {
   );
 }
 
-export function apiFailure(error: ApiErrorBody, status = 400) {
+export function apiFailure(error: ApiErrorBody, status = 400, extraHeaders?: Record<string, string>) {
+  let responseHeaders: Headers | undefined;
+  if (extraHeaders) {
+    responseHeaders = new Headers();
+    for (const [key, value] of Object.entries(extraHeaders)) {
+      responseHeaders.set(key, value);
+    }
+  }
   return NextResponse.json<ApiFailure>(
     {
       success: false,
       error
     },
     {
-      status
+      status,
+      ...(responseHeaders ? { headers: responseHeaders } : {})
     }
   );
 }

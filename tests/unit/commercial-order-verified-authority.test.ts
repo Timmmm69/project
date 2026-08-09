@@ -66,7 +66,7 @@ function handler(input: {
     validate,
     post: createCommercialOrderPostHandler({
       environment: { VERIFIED_COMMERCIAL_SESSION_MODE: input.mode, APP_URL: appUrl },
-      allowAction: () => true,
+      allowAction: async () => ({ allowed: true }),
       unavailableReason: () => null,
       createOrder,
       setOrderToken,
