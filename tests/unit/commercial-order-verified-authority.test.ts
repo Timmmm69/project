@@ -6,13 +6,18 @@ import type { createRecoveryHttpRuntime } from "@/server/recovery/http-runtime";
 const productCode = "russian-training-variant-01";
 const checkoutFlowId = "33333333-3333-4333-8333-333333333333";
 const idempotencyKey = "verified-order-idempotency-key";
+const appUrl = "http://checkout.test";
+
+process.env.APP_URL = appUrl;
 
 function request(input: { email?: string; cookie?: string } = {}) {
-  return new Request("http://checkout.test/api/commercial/orders", {
+  return new Request(`${appUrl}/api/commercial/orders`, {
     method: "POST",
     headers: {
       "content-type": "application/json",
       "idempotency-key": idempotencyKey,
+      origin: appUrl,
+      host: "checkout.test",
       ...(input.cookie ? { cookie: input.cookie } : {})
     },
     body: JSON.stringify({
@@ -60,7 +65,7 @@ function handler(input: {
     setOrderToken,
     validate,
     post: createCommercialOrderPostHandler({
-      environment: { VERIFIED_COMMERCIAL_SESSION_MODE: input.mode },
+      environment: { VERIFIED_COMMERCIAL_SESSION_MODE: input.mode, APP_URL: appUrl },
       allowAction: () => true,
       unavailableReason: () => null,
       createOrder,

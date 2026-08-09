@@ -1,9 +1,16 @@
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, describe, expect, it, vi } from "vitest";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers/types";
 import { serializeCommercialOrderStatus } from "@/lib/commercial/status-dto";
 import { createCommercialRefreshStatusPostHandler } from "@/app/api/commercial/orders/[publicId]/refresh-status/route";
 
 const publicId = "ord_public_opaque";
+const appUrl = "http://localhost";
+
+const originalEnv = { ...process.env };
+
+afterEach(() => {
+  process.env = { ...originalEnv };
+});
 
 function pendingOrder() {
   return {
@@ -84,8 +91,12 @@ function setup(input: {
 }
 
 async function call(handler: ReturnType<typeof createCommercialRefreshStatusPostHandler>) {
+  process.env.APP_URL = appUrl;
   return handler(
-    new Request(`http://localhost/api/commercial/orders/${publicId}/refresh-status`, { method: "POST" }),
+    new Request(`${appUrl}/api/commercial/orders/${publicId}/refresh-status`, {
+      method: "POST",
+      headers: { origin: appUrl, host: "localhost" }
+    }),
     { params: Promise.resolve({ publicId }) }
   );
 }
