@@ -230,6 +230,16 @@ enum RecoveryRateLimitKind {
   @@map("recovery_rate_limit_kind")
 }
 
+enum CommercialRateLimitKind {
+  ORDER_CREATE           @map("order_create")
+  PAYMENT_SESSION_CREATE @map("payment_session_create")
+  STATUS_REFRESH         @map("status_refresh")
+  CHECKOUT_FLOW          @map("checkout_flow")
+  BRUTE_FORCE            @map("brute_force")
+
+  @@map("commercial_rate_limit_kind")
+}
+
 enum RecoverySecurityEventCode {
   CHALLENGE_REQUESTED      @map("challenge_requested")
   CHALLENGE_REUSED         @map("challenge_reused")
@@ -794,6 +804,18 @@ model RecoveryRateLimitEvent {
   @@index([kind, keyDigest, occurredAt])
   @@index([expiresAt])
   @@map("recovery_rate_limit_events")
+}
+
+model CommercialRateLimitEvent {
+  id         String                   @id @default(uuid()) @db.Uuid
+  kind       CommercialRateLimitKind
+  keyDigest  String                   @map("key_digest") @db.Char(64)
+  occurredAt DateTime                 @default(now()) @map("occurred_at")
+  expiresAt  DateTime                 @map("expires_at")
+
+  @@index([kind, keyDigest, occurredAt])
+  @@index([expiresAt])
+  @@map("commercial_rate_limit_events")
 }
 
 model RecoverySecurityEvent {

@@ -41,9 +41,9 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 11 |
-| `READY` | 5 |
+| `READY` | 4 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 0 |
+| `IN_REVIEW` | 1 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 18 |
@@ -52,7 +52,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 
 Последняя принятая feature-карточка: B3-01 — `DONE` (implementation SHA
 `10ff5fa`). B2-02..B2-07 приняты в consolidated B2 milestone review; B3-01 реализован;
-следующая implementation-карточка — B3-02. A-07
+B3-02 — в `IN_REVIEW`; следующая implementation-карточка — B3-03. A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -79,7 +79,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `DONE` | `HIGH` | `A-03` |
 | [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `DONE` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
 | [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `DONE` | `CRITICAL` | `A-03` |
-| [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `READY` | `HIGH` | `A-03` |
+| [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `IN_REVIEW` | `HIGH` | `A-03` |
 | [B3-03](tasks/B3-03.md) | B3 — Security и analytics | Добавить private cache/referrer policy | `READY` | `HIGH` | `A-03` |
 | [B3-04](tasks/B3-04.md) | B3 — Security и analytics | Удалить raw provider payload persistence | `READY` | `CRITICAL` | `A-03` |
 | [B3-05](tasks/B3-05.md) | B3 — Security и analytics | Добавить authoritative analytics producers | `READY` | `HIGH` | `A-06` |

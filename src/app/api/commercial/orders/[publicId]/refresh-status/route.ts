@@ -2,15 +2,14 @@ import { apiFailure, apiSuccess } from "@/lib/api-response";
 import { commercialOrderStatus, getCommercialOrder, processCommercialProviderNotification } from "@/lib/commercial/commercial-service";
 import { requireCommercialOrderToken } from "@/lib/commercial/order-token";
 import { commercialProviderForRuntime } from "@/lib/commercial/providers";
-import { allowCommercialRefresh } from "@/lib/commercial/rate-limit";
-import { commercialErrorResponse, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
+import { commercialErrorResponse, commercialRateLimiter, deriveCommercialClientKey, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
 import { logEvent } from "@/server/events/log-event";
 
 type Context = { params: Promise<{ publicId: string }> };
 
 export type CommercialRefreshStatusRouteDependencies = Readonly<{
   requireOrderToken?: typeof requireCommercialOrderToken;
-  allowRefresh?: typeof allowCommercialRefresh;
+  allowRefresh?: (clientKey: string) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
   getOrder?: typeof getCommercialOrder;
   providerForRuntime?: typeof commercialProviderForRuntime;
   processNotification?: typeof processCommercialProviderNotification;
@@ -22,7 +21,10 @@ export function createCommercialRefreshStatusPostHandler(
   dependencies: CommercialRefreshStatusRouteDependencies = {}
 ) {
   const requireOrderToken = dependencies.requireOrderToken ?? requireCommercialOrderToken;
-  const allowRefresh = dependencies.allowRefresh ?? allowCommercialRefresh;
+  const checkRateLimit = dependencies.allowRefresh ?? (async (clientKey: string) => {
+    const result = await commercialRateLimiter.consume("STATUS_REFRESH", clientKey);
+    return result.allowed ? { allowed: true } : { allowed: false, retryAfterSeconds: result.retryAfterSeconds };
+  });
   const getOrder = dependencies.getOrder ?? getCommercialOrder;
   const providerForRuntime = dependencies.providerForRuntime ?? commercialProviderForRuntime;
   const processNotification = dependencies.processNotification ?? processCommercialProviderNotification;
@@ -34,7 +36,9 @@ export function createCommercialRefreshStatusPostHandler(
     const { publicId } = await context.params;
     const order = await requireOrderToken(publicId);
     if (!order) return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Заказ недоступен в этой сессии." }, 403);
-    if (!allowRefresh(`${request.headers.get("x-forwarded-for") ?? "local"}:${publicId}`)) return apiFailure({ code: "RATE_LIMITED", message: "Проверьте статус немного позже." }, 429);
+    const clientKey = `${deriveCommercialClientKey(request)}:${publicId}`;
+    const limitResult = await checkRateLimit(clientKey);
+    if (!limitResult.allowed) return apiFailure({ code: "RATE_LIMITED", message: "Проверьте статус немного позже." }, 429, { "Retry-After": String(limitResult.retryAfterSeconds ?? 60) });
 
     try {
       const latest = await getOrder(publicId);

@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `e087355` | Production: `NO-GO`
+2026-08-09 | HEAD: `931f7f9` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -25,36 +25,36 @@ B1, B2-02..B2-07, B3-01 — смотри `board.md` раздел 4.1 для SHA 
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|
-| **B3-02** | `READY` | `e087355` | `tasks/B3-02.md` — durable rate limits и cooldown |
+| **B3-03** | `READY` | `931f7f9` | `tasks/B3-03.md` — приватный cache/referrer policy |
 
-### T-04 / B3-02: durable rate limits и cooldown
+## Последний завершённый шаг
 
-**Суть:** заменить process-memory limiter на PostgreSQL-based durable store. Без Redis.
+B3-02 реализован: Work-in-progress на `931f7f9` (не закоммичен).
+- Process-memory limiter заменён на PostgreSQL-based (`CommercialRateLimitEvent` + advisory locks).
+- Trusted identity: `deriveCommercialClientKey()` через B3-01 trusted proxy policy.
+- Namespace: ORDER_CREATE, PAYMENT_SESSION_CREATE, STATUS_REFRESH, CHECKOUT_FLOW, BRUTE_FORCE.
+- `Retry-After` в 429 ответах.
+- 11 новых unit тестов; lint + typecheck + 452 тестов — PASS.
+- Миграция: `20260809082143_add_commercial_rate_limits`.
 
-**Namespace для лимитов:** recovery challenge, recovery OTP, order creation, payment-session creation, status refresh, recovery resolver read.
+## После реализации B3-02
 
-**Ключевые требования:**
-- Client identity через B3-01 trusted proxy policy (`TRUSTED_PROXY`, `APP_URL`).
-- Raw `x-forwarded-for` не authority.
-- Каждая блокировка → `429` + корректный `Retry-After`.
-- DTO cooldown от server-side truth, не от frontend.
-- Restart / несколько instances не сбрасывают лимиты.
-- Shared network ≠ объединение разных verified identities.
-
-**Тесты:** два instance → один лимит, restart persistence, concurrent bypass, shared IP + разные verified users, 429 + Retry-After, раздельные квоты.
-
-**Commit:** `feat(payment): persist commercial rate limits and cooldowns`
-
-## После реализации
-
-1. Обновить карточку B3-02 (статус, SHA, evidence).
-2. Обновить `board.md` (строка B3-02 → `DONE`, counts, accepted table).
-3. Обновить этот `handoff.md` (активная карточка → B3-03, последний шаг).
-4. `docs(payment): accept B3-02 ...`
+1. ~~Заменить process-memory limiter на PostgreSQL-based.~~
+2. ~~Trusted client identity через B3-01 trusted proxy policy.~~
+3. ~~Разнести по namespace.~~
+4. ~~Retry-After в ответах.~~
+5. ~~Тесты.~~
+6. ~~Обновить карточку, board, handoff.~~
+7. Закоммитить с сообщением `feat(payment): persist commercial rate limits and cooldowns`.
+8. `docs(payment): accept B3-02 ...` — после commit.
 
 ## Состояние рабочей копии
 
-Unrelated: `next-env.d.ts`, `pnpm-workspace.yaml`, `.serena/`, `docs/00-current-project-state.md`, `tmp/`
+Modified (B3-02 implementation): `prisma/schema.prisma`, `src/lib/api-response.ts`, `src/lib/commercial/rate-limit.ts`, `src/lib/commercial/route-helpers.ts`, `src/app/api/commercial/checkout-flows/route.ts`, `src/app/api/commercial/orders/route.ts`, `src/app/api/commercial/orders/[publicId]/payment-session/route.ts`, `src/app/api/commercial/orders/[publicId]/refresh-status/route.ts`, `tests/unit/commercial-rate-limit.test.ts`, `tests/unit/commercial-order-verified-authority.test.ts`, `tests/unit/commercial-payment-status-projection.test.ts`, `docs/payment-program/board.md`, `docs/payment-program/handoff.md`, `docs/payment-program/tasks/B3-02.md`.
+
+New: `prisma/migrations/20260809082143_add_commercial_rate_limits/`.
+
+Unrelated: `next-env.d.ts`, `pnpm-workspace.yaml`.
 
 ## Блокеры
 

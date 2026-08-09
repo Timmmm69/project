@@ -2,8 +2,7 @@ import { apiFailure, apiSuccess } from "@/lib/api-response";
 import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
 import { CommercialError, createCommercialOrder } from "@/lib/commercial/commercial-service";
 import { setCommercialOrderToken } from "@/lib/commercial/order-token";
-import { commercialErrorResponse, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
-import { allowCommercialAction } from "@/lib/commercial/rate-limit";
+import { commercialErrorResponse, commercialRateLimiter, deriveCommercialClientKey, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
 import {
   commercialIdempotencyKeySchema,
   commercialVerifiedOrderSchema
@@ -13,7 +12,7 @@ import { createRecoveryHttpRuntime } from "@/server/recovery/http-runtime";
 
 export type CommercialOrderRouteDependencies = Readonly<{
   environment?: Record<string, string | undefined>;
-  allowAction?: typeof allowCommercialAction;
+  allowAction?: (clientKey: string) => Promise<{ allowed: boolean; retryAfterSeconds?: number }>;
   unavailableReason?: typeof commercialCheckoutUnavailableReason;
   createOrder?: typeof createCommercialOrder;
   setOrderToken?: typeof setCommercialOrderToken;
@@ -24,7 +23,10 @@ export function createCommercialOrderPostHandler(
   dependencies: CommercialOrderRouteDependencies = {}
 ) {
   const environment = dependencies.environment ?? process.env;
-  const allowAction = dependencies.allowAction ?? allowCommercialAction;
+  const checkRateLimit = dependencies.allowAction ?? (async (clientKey: string) => {
+    const result = await commercialRateLimiter.consume("ORDER_CREATE", clientKey);
+    return result.allowed ? { allowed: true } : { allowed: false, retryAfterSeconds: result.retryAfterSeconds };
+  });
   const unavailableReason = dependencies.unavailableReason ?? commercialCheckoutUnavailableReason;
   const createOrder = dependencies.createOrder ?? createCommercialOrder;
   const setOrderToken = dependencies.setOrderToken ?? setCommercialOrderToken;
@@ -32,8 +34,9 @@ export function createCommercialOrderPostHandler(
 
   return async function commercialOrderPost(request: Request) {
   if (!requireTrustedOrigin(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
-  const clientKey = request.headers.get("x-forwarded-for") ?? "local";
-  if (!allowAction(`order:${clientKey}`, 5)) return apiFailure({ code: "RATE_LIMITED", message: "Try again later." }, 429);
+  const clientKey = deriveCommercialClientKey(request);
+  const limitResult = await checkRateLimit(clientKey);
+  if (!limitResult.allowed) return apiFailure({ code: "RATE_LIMITED", message: "Слишком много запросов. Попробуйте позже." }, 429, { "Retry-After": String(limitResult.retryAfterSeconds ?? 60) });
   const unavailable = unavailableReason();
   if (unavailable) return apiFailure({ code: unavailable, message: "Checkout сейчас недоступен." }, 403);
   const body = commercialVerifiedOrderSchema.safeParse(await request.json().catch(() => null));

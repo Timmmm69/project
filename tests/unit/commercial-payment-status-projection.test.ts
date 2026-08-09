@@ -80,7 +80,7 @@ function setup(input: {
   ) => statusDto(projection?.paymentStatus));
   const handler = createCommercialRefreshStatusPostHandler({
     requireOrderToken: vi.fn().mockResolvedValue({ id: "authorized-order" }),
-    allowRefresh: vi.fn().mockReturnValue(true),
+    allowRefresh: vi.fn().mockResolvedValue({ allowed: true }),
     getOrder: vi.fn().mockResolvedValue(pendingOrder()),
     providerForRuntime: () => input.runtimeProvider ?? provider(vi.fn().mockResolvedValue(notification())),
     processNotification,
