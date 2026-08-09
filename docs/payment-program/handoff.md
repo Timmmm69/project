@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `6574f75` | Production: `NO-GO` | Review: `B3-security-milestone` PASS
+2026-08-09 | HEAD: `1269a80` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -15,36 +15,40 @@
 - Не трогать чужие файлы.
 - Не расширять scope без отдельного утверждения.
 - Не закрывать production/external gates на mock/sandbox.
-- Commit message по шаблону `feat(payment): ...` / `docs(payment): ...`.
 - После commit: обновить карточку, board, handoff.
 
-**DONE карточки (Tier 2, review evidence):**
-B1, B2-02..B2-07, B3-01..B3-05 — смотри `board.md` раздел 4.1 для SHA и review evidence.
-B3 security block принят consolidated review `reviews/B3-security-milestone.md`.
+## Текущий статус
+
+Все implementation-карточки DONE (30 из 45):
+- A-01..A-06: управление и документация — DONE
+- B1-01..B1-05: verified authority и recovery — DONE
+- B2-01..B2-07: payment state и восстановление — DONE (consolidated review PASS)
+- B3-01..B3-05: security и analytics — DONE (consolidated review PASS)
+- D-01: UX documents — DONE
+- C-01..C-07: frontend — DONE
+
+Оставшиеся: QA-01 (regression), QA-02 (final gate), D-02/D-03 (Figma), E-01..E-05 (merchant), O-01..O-04 (legal/ops) — см. board.md.
 
 ## Следующая задача
 
-| Карточка | Статус | Base SHA | Требования |
-|---|---|---|---|---|
-| **C-03** | `READY` | `47b1a5e` | Отрисовать все payment return states per `tasks/C-03.md` |
+| Карточка | Статус | Требования |
+|---|---|---|
+| **QA-01** | `BACKLOG` | `tasks/QA-01.md` — полный payment regression pass |
 
-## Последний завершённый шаг
+**Суть QA-01:**
+- Полный Order → WEBPAY redirect → callback → Access → Attempt цикл
+- Duplicate click, reload, back, mobile return, callback replay, provider conflict
+- Pending/unknown/PWA, terminal retry, recovery
+- Отсутствие raw payload/card data/PII в logs, DB, analytics, URLs, referrer
+- DB concurrency: exactly one Access, at most one active PaymentAttempt, durable rate limits, resolver read-only
+- Миграции с чистой изолированной schema
 
-C-02: реализован Order/session/redirect handoff.
-- Машина состояний redirect: `idle` → `creating_order` → `creating_session` → `redirecting` / `fallback` / `session_error`.
-- Idempotency keys (orderKey, paymentKey, checkoutFlowId) — создаются один раз, передаются в `Idempotency-Key` header.
-- Same-tab redirect через `form.submit()`. Fallback через 10 сек с «Открыть страницу WEBPAY» без повторного API-вызова.
-- Session error: «Не удалось открыть страницу оплаты» + retry через resolver перед повторной попыткой.
-- Provider data не хранится в localStorage (только useRef в памяти).
-- Gates: typecheck/lint clean, 503 tests PASS.
-- Следующая READY-карточка: C-03 (payment return states).
+**Не менять production verdict:** итог остаётся `NO-GO` до QA-02 и закрытия внешних gates.
 
 ## Состояние рабочей копии
 
-Clean. B3-02..B3-05 committed.
-
-Unrelated (не коммитить): `next-env.d.ts`, `pnpm-workspace.yaml`.
+Unrelated: `next-env.d.ts`, `pnpm-workspace.yaml`, `.serena/`, `docs/00-current-project-state.md`, `tmp/`
 
 ## Блокеры
 
-A-07 long-lived `IN_PROGRESS` до QA-02. Merchant/legal/production email — external gates.
+A-07 long-lived `IN_PROGRESS` до QA-02. Merchant/legal/production email — external gates (E-01..E-05, O-01..O-04).

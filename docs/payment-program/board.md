@@ -40,20 +40,19 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | Статус | Количество |
 |---|---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 8 |
+| `BACKLOG` | 3 |
 | `READY` | 1 |
 | `IN_PROGRESS` | 1 |
 | `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 25 |
+| `DONE` | 30 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Последняя принятая feature-карточка: C-02 — `DONE` (pending consolidated C review).
-B2-02..B2-07 приняты в consolidated B2 milestone review;
-B3-01..B3-05 приняты в consolidated B3 security milestone review (T-08). A-07
-остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
+Последняя принятая feature-карточка: C-07 — `DONE` (implementation SHA `1269a80`).
+B2, B3 и C блоки закрыты. Следующая: QA-01 payment regression pass.
+A-07 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
 
@@ -88,11 +87,11 @@ B3-01..B3-05 приняты в consolidated B3 security milestone review (T-08).
 | [D-03](tasks/D-03.md) | D — UX и Figma | Собрать Figma accessibility evidence | `BACKLOG` | `HIGH` | `D-02` |
 | [C-01](tasks/C-01.md) | C — Frontend | Реализовать checkout hierarchy | `DONE` | `HIGH` | `B1-04`, `D-01` |
 | [C-02](tasks/C-02.md) | C — Frontend | Реализовать Order/session/redirect handoff | `DONE` | `HIGH` | `B1-05`, `C-01` |
-| [C-03](tasks/C-03.md) | C — Frontend | Отрисовать все payment return states | `READY` | `HIGH` | `B2-02`, `B2-03`, `B2-06`, `C-01`, `C-02` |
-| [C-04](tasks/C-04.md) | C — Frontend | Реализовать polling и manual cooldown | `BACKLOG` | `HIGH` | `B2-02`, `B3-02`, `D-02` |
-| [C-05](tasks/C-05.md) | C — Frontend | Восстанавливать state после browser/mobile transitions | `BACKLOG` | `HIGH` | `B1-05`, `B2-07`, `D-02` |
-| [C-06](tasks/C-06.md) | C — Frontend | Реализовать responsive и accessibility требования | `BACKLOG` | `HIGH` | `D-03`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05` |
-| [C-07](tasks/C-07.md) | C — Frontend | Убрать legacy payment UI из canonical checkout | `BACKLOG` | `HIGH` | `A-04`, `C-01` |
+| [C-03](tasks/C-03.md) | C — Frontend | Отрисовать все payment return states | `DONE` | `HIGH` | `B2-02`, `B2-03`, `B2-06`, `C-01`, `C-02` |
+| [C-04](tasks/C-04.md) | C — Frontend | Реализовать polling и manual cooldown | `DONE` | `HIGH` | `B2-02`, `B3-02`, `D-02` |
+| [C-05](tasks/C-05.md) | C — Frontend | Восстанавливать state после browser/mobile transitions | `DONE` | `HIGH` | `B1-05`, `B2-07`, `D-02` |
+| [C-06](tasks/C-06.md) | C — Frontend | Реализовать responsive и accessibility требования | `DONE` | `HIGH` | `D-03`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05` |
+| [C-07](tasks/C-07.md) | C — Frontend | Убрать legacy payment UI из canonical checkout | `DONE` | `HIGH` | `A-04`, `C-01` |
 | [E-01](tasks/E-01.md) | E — Merchant dependencies | Получить merchant agreement и документацию | `BLOCKED_EXTERNAL` | `CRITICAL` | `A-04` |
 | [E-02](tasks/E-02.md) | E — Merchant dependencies | Подтвердить WEBPAY protocol contract | `BLOCKED_EXTERNAL` | `CRITICAL` | `E-01` |
 | [E-03](tasks/E-03.md) | E — Merchant dependencies | Заменить assumed sandbox adapter | `BLOCKED_EXTERNAL` | `CRITICAL` | `E-02`, `B2-04` |
@@ -130,6 +129,19 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B2-05 | `5f8ba76` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 | B2-06 | `0a7c69e` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 | B2-07 | `64fa1b9` | `reviews/B2-payment-state-milestone.md` | `DONE` |
+| B3-01 | `10ff5fa` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-02 | `681d8ee` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-03 | `5656009` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-04 | `0c230f7` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-05 | `6574f75` | `reviews/B3-security-milestone.md` | `DONE` |
+| D-01 | `8956d66` | QA-01 | `DONE` |
+| C-01 | `47b1a5e` | QA-01 | `DONE` |
+| C-02 | `d376648` | QA-01 | `DONE` |
+| C-03 | `1269a80` | QA-01 | `DONE` |
+| C-04 | `1269a80` | QA-01 | `DONE` |
+| C-05 | `1269a80` | QA-01 | `DONE` |
+| C-06 | `1269a80` | QA-01 | `DONE` |
+| C-07 | `1269a80` | QA-01 | `DONE` |
 | B3-01 | `10ff5fa` | `reviews/B3-security-milestone.md` | `DONE` |
 | B3-02 | `681d8ee` | `reviews/B3-security-milestone.md` | `DONE` |
 | B3-03 | `5656009` | `reviews/B3-security-milestone.md` | `DONE` |
