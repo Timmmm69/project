@@ -1,52 +1,61 @@
-# Payment Program Handoff
+# Payment Program Handoff — единая точка входа
 
-Последнее обновление: 2026-08-09
+2026-08-09 | HEAD: `e087355` | Production: `NO-GO`
 
-## Активная карточка
+## Протокол для нового агента
 
-- Следующая implementation-карточка: `B3-02`
-- Статус B3-02: `READY`
-- B3-01: `DONE` (implementation SHA `10ff5fa`, ожидает consolidated B3 review)
-- Program-control A-07: `IN_PROGRESS`, traceability обновлена через B1-03
-- Production verdict: `NO-GO`
+**Обязательное чтение:** только этот файл. Остальное — по мере необходимости.
 
-## Последний завершённый шаг
+**Команды:** `pnpm typecheck` / `pnpm lint` / `pnpm test` через `cmd /c "pnpm ..."` (PowerShell блокирует скрипты).
 
-- B3-01 реализован: implementation SHA `10ff5fa` от base `806c1c5`.
-- Следующее действие: B3-02 (T-04) — durable rate limits и cooldown.
+**Неприкасаемые файлы:** `next-env.d.ts`, `pnpm-workspace.yaml`, `.serena/`, `docs/00-current-project-state.md`, `tmp/`.
 
-## Точное продолжение
+**Hard rules:**
+- Один атомарный commit на implementation-карточку.
+- Не трогать чужие файлы.
+- Не расширять scope без отдельного утверждения.
+- Не закрывать production/external gates на mock/sandbox.
+- Commit message по шаблону `feat(payment): ...` / `docs(payment): ...`.
+- После commit: обновить карточку, board, handoff.
 
-1. ~~Реализовать B3-01 (strict Origin/Host/CSRF enforcement).~~ Выполнено: `10ff5fa`.
-2. Реализовать B3-02 (durable rate limits и cooldown).
+**DONE карточки (Tier 2, ждут consolidated B3 review):**
+B1, B2-02..B2-07, B3-01 — смотри `board.md` раздел 4.1 для SHA и review evidence.
 
-## Другие READY-карточки
+## Следующая задача
 
-`B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `D-01`.
+| Карточка | Статус | Base SHA | Требования |
+|---|---|---|---|
+| **B3-02** | `READY` | `e087355` | `tasks/B3-02.md` — durable rate limits и cooldown |
 
-## Newly READY после A-06
+### T-04 / B3-02: durable rate limits и cooldown
 
-`B3-05`, `D-01`.
+**Суть:** заменить process-memory limiter на PostgreSQL-based durable store. Без Redis.
 
-## Правило передачи при заполнении контекста
+**Namespace для лимитов:** recovery challenge, recovery OTP, order creation, payment-session creation, status refresh, recovery resolver read.
 
-При приближении контекста к 90% создать `handoff-2.md` с полной целью, plan goal mode, SHA/status/evidence и точным продолжением. Следующий агент передаёт это правило дальше через `handoff-3.md` и последующие номера.
+**Ключевые требования:**
+- Client identity через B3-01 trusted proxy policy (`TRUSTED_PROXY`, `APP_URL`).
+- Raw `x-forwarded-for` не authority.
+- Каждая блокировка → `429` + корректный `Retry-After`.
+- DTO cooldown от server-side truth, не от frontend.
+- Restart / несколько instances не сбрасывают лимиты.
+- Shared network ≠ объединение разных verified identities.
+
+**Тесты:** два instance → один лимит, restart persistence, concurrent bypass, shared IP + разные verified users, 429 + Retry-After, раздельные квоты.
+
+**Commit:** `feat(payment): persist commercial rate limits and cooldowns`
+
+## После реализации
+
+1. Обновить карточку B3-02 (статус, SHA, evidence).
+2. Обновить `board.md` (строка B3-02 → `DONE`, counts, accepted table).
+3. Обновить этот `handoff.md` (активная карточка → B3-03, последний шаг).
+4. `docs(payment): accept B3-02 ...`
 
 ## Состояние рабочей копии
 
-Unrelated modified/untracked файлы:
+Unrelated: `next-env.d.ts`, `pnpm-workspace.yaml`, `.serena/`, `docs/00-current-project-state.md`, `tmp/`
 
-- `next-env.d.ts`;
-- `pnpm-workspace.yaml`;
-- `docs/00-current-project-state.md`;
-- `.serena/`;
-- `tmp/`.
+## Блокеры
 
-## Незакрытые решения и блокеры
-
-- A-07 traceability остаётся long-lived `IN_PROGRESS` до QA-02; checkpoint
-  2026-07-31 заполнен.
-- Merchant agreement/protocol/credentials, seller/legal/support/receipt/hosting и production email остаются external gates.
-- Current main содержит принятый B2-01 immutable snapshot milestone
-  (`20adce9`; `reviews/B2-01.md`).
-- Production остаётся `NO-GO`.
+A-07 long-lived `IN_PROGRESS` до QA-02. Merchant/legal/production email — external gates.
