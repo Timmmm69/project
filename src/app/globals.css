@@ -255,6 +255,7 @@ textarea {
   color: var(--foreground);
   font: inherit;
   min-height: 44px;
+}
 
 input:focus,
 select:focus,
