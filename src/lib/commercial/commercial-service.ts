@@ -1176,7 +1176,9 @@ export async function processCommercialProviderNotification(input: {
   rawBody: string;
   provider: CommercialPaymentProvider;
   analyticsWriter?: AnalyticsWriter;
+  grantAccess?: boolean;
 }) {
+  const grantAccess = input.grantAccess ?? true;
   const hash = payloadHash(input.rawBody);
   const attempt = await prisma.commercialPaymentAttempt.findUnique({
     where: { merchantReference: input.notification.merchantReference },
@@ -1252,7 +1254,7 @@ export async function processCommercialProviderNotification(input: {
         let access = current.order.access;
         let reconciledPaidWithoutAccess = false;
         let paidWithoutAccessAnalytics: PaidWithoutAccessAnalyticsFacts | undefined;
-        if (nextAttemptStatus === "PAID" && !access) {
+        if (nextAttemptStatus === "PAID" && !access && grantAccess) {
           const paidAt = current.order.paidAt ?? current.paidAt;
           if (!paidAt) throw new CommercialError("PAID_WITHOUT_ACCESS_INCONSISTENT");
           await recordPaidWithoutAccessDetected(tx, {
@@ -1338,7 +1340,7 @@ export async function processCommercialProviderNotification(input: {
 
       let grantedAccess = false;
       let grantedAccessRecord = current.order.access;
-      if (nextAttemptStatus === "PAID") {
+      if (nextAttemptStatus === "PAID" && grantAccess) {
         const granted = await ensurePaidOrderAccess(tx, {
           order: current.order,
           paymentAttemptId: current.id,

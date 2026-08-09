@@ -155,6 +155,9 @@ describe("transient commercial payment status projection", () => {
       currency: "BYN"
     });
     expect(processNotification).toHaveBeenCalledTimes(1);
+    expect(processNotification).toHaveBeenCalledWith(expect.objectContaining({
+      grantAccess: false
+    }));
     expect(orderStatus).toHaveBeenCalledWith(publicId);
   });
 

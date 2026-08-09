@@ -6,6 +6,7 @@ import {
   createCommercialCheckoutFlow,
   createCommercialOrder,
   createCommercialPaymentSession,
+  commercialOrderStatus,
   processCommercialProviderNotification,
   reconcilePaidCommercialOrderAccess
 } from "@/lib/commercial/commercial-service";
@@ -290,6 +291,44 @@ test("paid order rejects another payment session without changing access", async
   expect(await prisma.commercialPaymentAttempt.count({ where: { commercialOrderId: order.order.id } })).toBe(attemptsBefore);
   expect((await prisma.commercialOrder.findUniqueOrThrow({ where: { id: order.order.id } })).status).toBe("PAID");
   expect((await prisma.access.findUniqueOrThrow({ where: { commercialOrderId: order.order.id } })).id).toBe(accessBefore.id);
+});
+
+test("manual authoritative status processing creates no Order, PaymentAttempt or Access", async () => {
+  const order = await createOrder("manual-refresh-read-model");
+  const payment = await createSession(order.order.publicId, `manual-refresh-session-${suffix}`);
+  const paid = await notification({
+    merchantReference: payment.merchantReference,
+    eventKey: `manual-refresh-paid-${suffix}`,
+    status: "paid",
+    paymentId: `manual-refresh-payment-${suffix}`
+  });
+  const before = {
+    orders: await prisma.commercialOrder.count({ where: { id: order.order.id } }),
+    payments: await prisma.commercialPaymentAttempt.count({
+      where: { commercialOrderId: order.order.id }
+    }),
+    accesses: await prisma.access.count({ where: { commercialOrderId: order.order.id } })
+  };
+
+  const outcome = await processCommercialProviderNotification({
+    notification: paid.value,
+    rawBody: paid.rawBody,
+    provider: provider.provider,
+    grantAccess: false
+  });
+
+  expect(outcome).toMatchObject({ rejected: false, grantedAccess: false });
+  expect({
+    orders: await prisma.commercialOrder.count({ where: { id: order.order.id } }),
+    payments: await prisma.commercialPaymentAttempt.count({
+      where: { commercialOrderId: order.order.id }
+    }),
+    accesses: await prisma.access.count({ where: { commercialOrderId: order.order.id } })
+  }).toEqual(before);
+  expect((await prisma.commercialOrder.findUniqueOrThrow({
+    where: { id: order.order.id }
+  })).status).toBe("PAID");
+  expect((await commercialOrderStatus(order.order.publicId)).category).toBe("paid_without_access");
 });
 
 test("terminal failure allows one retry and stale notification cannot reopen it", async () => {

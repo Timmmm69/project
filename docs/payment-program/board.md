@@ -40,10 +40,10 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | Статус | Количество |
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 12 |
+| `BACKLOG` | 11 |
 | `READY` | 6 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 4 |
+| `IN_REVIEW` | 5 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
 | `DONE` | 12 |
@@ -77,7 +77,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B2-04](tasks/B2-04.md) | B2 — Payment state и восстановление | Восстанавливать provider session после crash | `BLOCKED_EXTERNAL` | `HIGH` | `A-03`, `E-02` |
 | [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `IN_REVIEW` | `HIGH` | `A-03` |
 | [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `IN_REVIEW` | `HIGH` | `A-03` |
-| [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `BACKLOG` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
+| [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `IN_REVIEW` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
 | [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `READY` | `CRITICAL` | `A-03` |
 | [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `READY` | `HIGH` | `A-03` |
 | [B3-03](tasks/B3-03.md) | B3 — Security и analytics | Добавить private cache/referrer policy | `READY` | `HIGH` | `A-03` |

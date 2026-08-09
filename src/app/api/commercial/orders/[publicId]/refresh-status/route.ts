@@ -66,7 +66,8 @@ export function createCommercialRefreshStatusPostHandler(
         const outcome = await processNotification({
           notification,
           rawBody: JSON.stringify(notification.redactedPayload),
-          provider: provider.provider
+          provider: provider.provider,
+          grantAccess: false
         });
         if (outcome.rejected) return unknown();
       }
