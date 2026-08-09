@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `5656009` | Production: `NO-GO`
+2026-08-09 | HEAD: `0c230f7` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -25,19 +25,23 @@ B1, B2-02..B2-07, B3-01 — смотри `board.md` раздел 4.1 для SHA 
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|
-| **B3-04** | `READY` | `5656009` | `tasks/B3-04.md` — удалить raw provider payload persistence |
+| **B3-05** | `READY` | `0c230f7` | `tasks/B3-05.md` — authoritative analytics producers |
 
 ## Последний завершённый шаг
 
-B3-03 закоммичен: `5656009` — `feat(payment): prevent cache and referrer leakage`.
-- `PAYMENT_RESPONSE_HEADERS` в `api-response.ts` — `Cache-Control: no-store` + `Referrer-Policy: no-referrer` на все `apiSuccess`/`apiFailure`.
-- 31 тест в `commercial-response-policy.test.ts`: positive/error headers, все статусы, Retry-After merge, no cacheable headers, no leak в body.
-- 483 tests PASS, typecheck/lint clean.
-- Recovery модуль уже имеет свои `RECOVERY_RESPONSE_HEADERS`.
+B3-04 закоммичен: `0c230f7` — `feat(payment): sanitize provider payload persistence`.
+- `payload-sanitizer.ts` — рекурсивный санитайзер forbidden ключей (PAN, CVV, expiry, 3DS, signature, secret, token, raw body/request/response, payment URL, credentials).
+- Применён к legacy `payment-service.ts`: `providerPayload`, `providerWebhookPayload`, event_logs.
+- Миграция: `UPDATE payments SET provider_payload_json = NULL, provider_webhook_payload_json = NULL`.
+- `containsForbiddenKeys()` для runtime privacy scan.
+- 16 тестов в `commercial-payload-sanitizer.test.ts`.
+- Canonical `redactedPayload` уже allowlisted; analytics защищены `forbidden-payload.ts`.
+- Legacy изолирован от canonical WEBPAY checkout.
+- 499 tests PASS, typecheck/lint clean.
 
 ## Состояние рабочей копии
 
-Clean. B3-02 committed at `681d8ee`.
+Clean. B3-02..B3-04 committed.
 
 Unrelated (не коммитить): `next-env.d.ts`, `pnpm-workspace.yaml`.
 
