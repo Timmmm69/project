@@ -4,6 +4,7 @@ import { PaymentProviderConfigurationError, type CreateProviderPaymentResult, ty
 import { findOrCreateStudent } from "@/lib/users/students";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
+import { sanitizeProviderPayload } from "@/lib/commercial/payload-sanitizer";
 
 function addDays(days: number) {
   const expiresAt = new Date();
@@ -38,7 +39,7 @@ function providerResponseData(result: CreateProviderPaymentResult) {
     qrCodePayload: result.qrCodePayload ?? null,
     paymentInstructions: result.paymentInstructions ?? null,
     providerStatus: result.providerStatus ?? "pending",
-    providerPayload: (result.rawPayload ?? {}) as Prisma.InputJsonValue
+    providerPayload: sanitizeProviderPayload(result.rawPayload ?? {}) as Prisma.InputJsonValue
   };
 }
 
@@ -182,6 +183,7 @@ export async function applyPaymentStatusUpdate(input: {
   rawPayload: unknown;
 }) {
   const now = new Date();
+  const sanitizedPayload = sanitizeProviderPayload(input.rawPayload);
   const where =
     input.paymentId
       ? { id: input.paymentId }
@@ -213,16 +215,16 @@ export async function applyPaymentStatusUpdate(input: {
           payload: {
             provider: input.provider.toLowerCase(),
             providerStatus: input.providerStatus,
-            rawPayload: input.rawPayload
+          rawPayload: sanitizedPayload
           } as Prisma.InputJsonValue
         }
       });
-
+ 
       const updated = await tx.payment.update({
         where: { id: payment.id },
         data: {
           providerStatus: input.providerStatus,
-          providerWebhookPayload: input.rawPayload as Prisma.InputJsonValue
+          providerWebhookPayload: sanitizedPayload as Prisma.InputJsonValue
         },
         include: paymentInclude
       });
@@ -245,11 +247,11 @@ export async function applyPaymentStatusUpdate(input: {
         where: { id: payment.id },
         data: {
           providerStatus: input.providerStatus,
-          providerWebhookPayload: input.rawPayload as Prisma.InputJsonValue
+          providerWebhookPayload: sanitizedPayload as Prisma.InputJsonValue
         },
         include: paymentInclude
       });
-
+ 
       return {
         payment: updated,
         access: updated.access,
@@ -257,7 +259,7 @@ export async function applyPaymentStatusUpdate(input: {
         statusChanged: false
       };
     }
-
+ 
     const statusChanged = payment.status !== nextStatus;
     const statusDates =
       nextStatus === "SUCCESS"
@@ -269,13 +271,13 @@ export async function applyPaymentStatusUpdate(input: {
             : nextStatus === "EXPIRED"
               ? { expiredAt: payment.expiredAt ?? now }
               : {};
-
+ 
     const updatedPayment = await tx.payment.update({
       where: { id: payment.id },
       data: {
         status: nextStatus,
         providerStatus: input.providerStatus,
-        providerWebhookPayload: input.rawPayload as Prisma.InputJsonValue,
+        providerWebhookPayload: sanitizedPayload as Prisma.InputJsonValue,
         ...statusDates
       },
       include: paymentInclude
