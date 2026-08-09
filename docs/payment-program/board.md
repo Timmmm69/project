@@ -50,9 +50,9 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Последняя принятая feature-карточка: B3-01 — `DONE` (implementation SHA
-`10ff5fa`). B2-02..B2-07 приняты в consolidated B2 milestone review; B3-01..B3-05 реализованы;
-B3 security block готов к consolidated B3 review (T-08). A-07
+Последняя принятая feature-карточка: B3-05 — `DONE` (implementation SHA
+`6574f75`, `reviews/B3-security-milestone.md`). B2-02..B2-07 приняты в consolidated B2 milestone review;
+B3-01..B3-05 приняты в consolidated B3 security milestone review (T-08). A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -130,11 +130,11 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B2-05 | `5f8ba76` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 | B2-06 | `0a7c69e` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 | B2-07 | `64fa1b9` | `reviews/B2-payment-state-milestone.md` | `DONE` |
-| B3-01 | `10ff5fa` | `reviews/B3-01.md` (pending consolidated B3 review) | `DONE` |
-| B3-02 | `681d8ee` | pending consolidated B3 review | `DONE` |
-| B3-03 | `5656009` | pending consolidated B3 review | `DONE` |
-| B3-04 | `0c230f7` | pending consolidated B3 review | `DONE` |
-| B3-05 | `6574f75` | pending consolidated B3 review | `DONE` |
+| B3-01 | `10ff5fa` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-02 | `681d8ee` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-03 | `5656009` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-04 | `0c230f7` | `reviews/B3-security-milestone.md` | `DONE` |
+| B3-05 | `6574f75` | `reviews/B3-security-milestone.md` | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 
