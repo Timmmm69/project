@@ -35,6 +35,8 @@ type ApiResponse<T> = { success: true; data: T } | { success: false; error: { co
 type RecoveryChallengeResponse = { challenge: { operationId: string; emailMasked: string; tokenTtlMs: number } };
 type RecoveryVerifyResponse = { session: { id: string; operationId: string; emailMasked: string; expiresAt: string } };
 
+type CheckoutPhase = "idle" | "creating_order" | "creating_session" | "redirecting" | "fallback" | "session_error";
+
 function newKey() {
   return crypto.randomUUID();
 }
@@ -60,18 +62,24 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   const [message, setMessage] = useState<string | null>(null);
   const [order, setOrder] = useState<OrderState | null>(null);
   const [existingAccess, setExistingAccess] = useState(false);
-  const [redirecting, setRedirecting] = useState(false);
-  const [redirectFallback, setRedirectFallback] = useState(false);
+  const [checkoutPhase, setCheckoutPhase] = useState<CheckoutPhase>("idle");
   const orderKey = useRef<string | null>(null);
   const checkoutFlowId = useRef<string | null>(null);
   const paymentKey = useRef<string | null>(null);
   const challengeKey = useRef<string | null>(null);
   const paymentFormRef = useRef<{ action: string; fields: Record<string, string> } | null>(null);
+  const redirectingOrderId = useRef<string | null>(null);
 
   const price = `${(priceMinor / 100).toFixed(2)} ${currency}`;
   const paid = order?.category === "payment_paid";
   const canPay = order?.allowedActions.includes("create_payment_session") || order?.allowedActions.includes("retry_payment");
   const canRefresh = order?.allowedActions.includes("refresh_status");
+
+  function resetRedirectState() {
+    setCheckoutPhase("idle");
+    redirectingOrderId.current = null;
+    paymentFormRef.current = null;
+  }
 
   async function loadStatus(publicId: string) {
     const response = await fetch(`/api/commercial/orders/${publicId}/status`, { cache: "no-store" });
@@ -153,75 +161,86 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     }
   }
 
-  async function createOrder() {
+  async function createCheckoutFlow() {
+    if (checkoutFlowId.current) return checkoutFlowId.current;
+    const response = await fetch("/api/commercial/checkout-flows", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ productCode })
+    });
+    const body = await response.json() as ApiResponse<{ checkout_flow_id: string }>;
+    if (!body.success) throw new Error(body.error.message);
+    checkoutFlowId.current = body.data.checkout_flow_id;
+    return checkoutFlowId.current;
+  }
+
+  async function handleCreateOrder() {
+    setCheckoutPhase("creating_order");
     setBusy(true);
     setMessage(null);
     setExistingAccess(false);
     orderKey.current ??= newKey();
-    if (!checkoutFlowId.current) {
-      const flowResponse = await fetch("/api/commercial/checkout-flows", {
+
+    try {
+      const flowId = await createCheckoutFlow();
+      const response = await fetch("/api/commercial/orders", {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ productCode })
+        headers: { "Content-Type": "application/json", "Idempotency-Key": orderKey.current },
+        body: JSON.stringify({
+          productCode,
+          checkout_flow_id: flowId,
+          adultBuyerConfirmed: adult,
+          legalBundleVersion: legal.version
+        })
       });
-      const flowBody = await flowResponse.json() as ApiResponse<{ checkout_flow_id: string }>;
-      if (!flowBody.success) {
+      const body = await response.json() as ApiResponse<{ order: { publicId: string; status: string; idempotent?: boolean } }>;
+      if (!body.success) {
+        setCheckoutPhase("idle");
         setBusy(false);
-        setMessage(flowBody.error.message);
+        setExistingAccess(body.error.code === "EXISTING_ACCESS");
+        if (body.error.code === "ORDER_ALREADY_PENDING") {
+          setMessage("Для этого email уже есть ожидающий оплаты заказ.");
+        } else {
+          setMessage(body.error.message);
+        }
         return;
       }
-      checkoutFlowId.current = flowBody.data.checkout_flow_id;
+      const createdAt = new Date().toISOString();
+      setOrder({
+        publicId: body.data.order.publicId,
+        orderReference: body.data.order.publicId,
+        category: "payment_pending",
+        timestamps: { createdAt, updatedAt: createdAt, paymentUpdatedAt: null, paidAt: null },
+        cooldown: { refreshAfterSeconds: 10, supportAvailableAt: null },
+        allowedActions: ["create_payment_session"]
+      });
+      redirectingOrderId.current = body.data.order.publicId;
+      await handleCreateSession(body.data.order.publicId);
+    } catch {
+      setCheckoutPhase("idle");
+      setBusy(false);
+      setMessage("Не удалось создать заказ. Оплата не начиналась.");
     }
-    const response = await fetch("/api/commercial/orders", {
-      method: "POST",
-      headers: { "Content-Type": "application/json", "Idempotency-Key": orderKey.current },
-      body: JSON.stringify({
-        productCode,
-        checkout_flow_id: checkoutFlowId.current,
-        adultBuyerConfirmed: adult,
-        legalBundleVersion: legal.version
-      })
-    });
-    const body = await response.json() as ApiResponse<{ order: { publicId: string; status: string } }>;
-    setBusy(false);
-    if (!body.success) {
-      setExistingAccess(body.error.code === "EXISTING_ACCESS");
-      setMessage(body.error.code === "ORDER_ALREADY_PENDING" ? "Для этого email уже есть ожидающий оплаты заказ." : body.error.message);
-      return;
-    }
-    const createdAt = new Date().toISOString();
-    setOrder({
-      publicId: body.data.order.publicId,
-      orderReference: body.data.order.publicId,
-      category: "payment_pending",
-      timestamps: { createdAt, updatedAt: createdAt, paymentUpdatedAt: null, paidAt: null },
-      cooldown: { refreshAfterSeconds: 10, supportAvailableAt: null },
-      allowedActions: ["create_payment_session"]
-    });
-    void beginPayment(body.data.order.publicId);
   }
 
-  async function beginPayment(publicId?: string) {
-    const id = publicId ?? order?.publicId;
-    if (!id) return;
-    setRedirecting(true);
-    setBusy(true);
+  async function handleCreateSession(publicId: string) {
+    setCheckoutPhase("creating_session");
     setMessage(null);
-    setRedirectFallback(false);
     paymentKey.current ??= newKey();
     try {
-      const response = await fetch(`/api/commercial/orders/${id}/payment-session`, {
+      const response = await fetch(`/api/commercial/orders/${publicId}/payment-session`, {
         method: "POST",
         headers: { "Idempotency-Key": paymentKey.current }
       });
       const body = await response.json() as ApiResponse<{ paymentSession: { actionUrl: string; method: "POST"; fields: Record<string, string> } }>;
-      setBusy(false);
       if (!body.success) {
-        setRedirecting(false);
-        setMessage(body.error.message);
+        setCheckoutPhase("session_error");
+        setBusy(false);
+        setMessage(null);
         return;
       }
       paymentFormRef.current = { action: body.data.paymentSession.actionUrl, fields: body.data.paymentSession.fields };
+      setCheckoutPhase("redirecting");
       const form = document.createElement("form");
       form.method = body.data.paymentSession.method;
       form.action = body.data.paymentSession.actionUrl;
@@ -237,14 +256,19 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
       setTimeout(() => {
         if (document.body.contains(form)) {
           form.remove();
-          setRedirectFallback(true);
+          setCheckoutPhase("fallback");
+          setBusy(false);
         }
       }, 10_000);
     } catch {
+      setCheckoutPhase("session_error");
       setBusy(false);
-      setRedirecting(false);
-      setMessage("Не удалось открыть страницу оплаты. Попробуйте снова.");
     }
+  }
+
+  async function handleRetryPayment() {
+    if (!order) return;
+    await handleCreateSession(order.publicId);
   }
 
   async function handleFallbackPayment() {
@@ -261,6 +285,28 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
       }
       document.body.append(form);
       form.submit();
+    }
+  }
+
+  async function handleRetryAfterSessionError() {
+    if (!order) return;
+    setMessage(null);
+    const response = await fetch(`/api/commercial/orders/${order.publicId}/refresh-status`, { method: "POST" });
+    const body = await response.json() as ApiResponse<Omit<OrderState, "publicId">>;
+    if (!body.success) {
+      setMessage(body.error.message);
+      return;
+    }
+    const updated = { publicId: order.publicId, ...body.data };
+    setOrder(updated);
+    const canRetry = updated.allowedActions.includes("create_payment_session") ||
+      updated.allowedActions.includes("retry_payment");
+    if (canRetry) {
+      await handleCreateSession(order.publicId);
+    } else {
+      setCheckoutPhase("idle");
+      setBusy(false);
+      setMessage("Перед повторной попыткой мы проверили состояние заказа. Создавать дубликат не нужно.");
     }
   }
 
@@ -358,25 +404,69 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     );
   }
 
-  if (redirecting) {
+  if (checkoutPhase === "creating_order") {
     return (
       <section className="subpanel">
         <div className="checkout-loader">
-          {redirectFallback ? (
-            <>
-              <p className="subsection-title">Страница оплаты не открылась автоматически</p>
-              <p className="muted">Заказ уже создан. Откройте подготовленную страницу оплаты вручную.</p>
-              <button className="button" type="button" onClick={handleFallbackPayment}>
-                Открыть страницу WEBPAY
-              </button>
-            </>
-          ) : (
-            <>
-              <div className="spinner" />
-              <p className="subsection-title">Открываем защищённую страницу WEBPAY…</p>
-              <p className="muted">Вы будете перенаправлены на защищённую страницу WEBPAY. Номер карты, срок действия, CVV/CVC и данные 3-D Secure вводятся только на стороне WEBPAY. Наш сайт не получает реквизиты карты.</p>
-            </>
-          )}
+          <div className="spinner" />
+          <p className="subsection-title">Создаём заказ…</p>
+          <p className="muted">Фиксируем цену {price}, состав покупки и данные для перехода к оплате.</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (checkoutPhase === "creating_session") {
+    return (
+      <section className="subpanel">
+        <div className="checkout-loader">
+          <div className="spinner" />
+          <p className="subsection-title">Открываем защищённую страницу WEBPAY…</p>
+          <p className="muted">Вы будете перенаправлены на защищённую страницу WEBPAY. Номер карты, срок действия, CVV/CVC и данные 3-D Secure вводятся только на стороне WEBPAY. Наш сайт не получает реквизиты карты.</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (checkoutPhase === "redirecting") {
+    return (
+      <section className="subpanel">
+        <div className="checkout-loader">
+          <div className="spinner" />
+          <p className="subsection-title">Переходим к оплате…</p>
+          <p className="muted">Реквизиты карты нужно будет ввести на стороне WEBPAY.</p>
+        </div>
+      </section>
+    );
+  }
+
+  if (checkoutPhase === "fallback") {
+    return (
+      <section className="subpanel">
+        <div className="checkout-loader">
+          <p className="subsection-title">Страница оплаты не открылась автоматически</p>
+          <p className="muted">Заказ уже создан. Откройте подготовленную страницу оплаты вручную.</p>
+          <button className="button" type="button" onClick={handleFallbackPayment}>
+            Открыть страницу WEBPAY
+          </button>
+        </div>
+      </section>
+    );
+  }
+
+  if (checkoutPhase === "session_error") {
+    return (
+      <section className="subpanel stack compact">
+        <div className="checkout-loader">
+          <p className="subsection-title">Не удалось открыть страницу оплаты</p>
+          <p className="muted">Заказ сохранён. Перед повторной попыткой мы проверим его состояние, чтобы не создать дубликат.</p>
+          <button className="button" type="button" disabled={busy} onClick={handleRetryAfterSessionError}>
+            {busy ? "Проверяем заказ…" : "Попробовать снова"}
+          </button>
+          <button className="button secondary" type="button" onClick={() => { resetRedirectState(); }}
+            disabled={busy}>
+            Вернуться к странице теста
+          </button>
         </div>
       </section>
     );
@@ -476,7 +566,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
       {message ? <p className={message.includes("отправлен") || message.includes("готов") || message.includes("обновлён") ? "form-message success" : "form-message info"}>{message}</p> : null}
 
       {emailVerified && !order ? (
-        <button className="button" type="button" disabled={busy || !adult || !terms} onClick={createOrder}>
+        <button className="button" type="button" disabled={busy || !adult || !terms} onClick={handleCreateOrder}>
           {busy ? "Создаём заказ…" : "Перейти к оплате картой"}
         </button>
       ) : null}
@@ -490,7 +580,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
       {order && !paid ? (
         <div className="inline-actions">
           {canPay ? (
-            <button className="button" type="button" disabled={busy} onClick={() => beginPayment()}>
+            <button className="button" type="button" disabled={busy} onClick={handleRetryPayment}>
               {busy ? "Открываем…" : "Попробовать оплатить снова"}
             </button>
           ) : null}
