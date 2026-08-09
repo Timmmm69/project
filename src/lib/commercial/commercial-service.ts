@@ -277,6 +277,109 @@ async function ensureCheckoutFailureAnalytics(input: { occurredAt: Date; orderPu
   }, writer);
 }
 
+async function ensurePaymentSessionCreatedAnalytics(input: {
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  amount: number;
+  currency: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    return {
+      eventName: "payment_session_created",
+      transitionKey: `commercial-payment-session-created:${input.paymentAttemptId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        payment_provider: analyticsPaymentProvider(input.provider),
+        payment_environment: analyticsPaymentEnvironment(input.provider),
+        amount: input.amount,
+        currency: input.currency
+      }
+    };
+  }, writer);
+}
+
+async function ensurePaymentPendingAnalytics(input: {
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderPublicId: string;
+  paymentAttemptPublicId: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    return {
+      eventName: "payment_pending",
+      transitionKey: `commercial-payment-pending:${input.paymentAttemptPublicId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        payment_provider: analyticsPaymentProvider(input.provider),
+        payment_environment: analyticsPaymentEnvironment(input.provider)
+      }
+    };
+  }, writer);
+}
+
+async function ensurePaymentTerminalAnalytics(input: {
+  eventName: "payment_failed" | "payment_cancelled" | "payment_expired";
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  failureCode?: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    const baseProperties = {
+      ...hashes.properties,
+      payment_provider: analyticsPaymentProvider(input.provider),
+      payment_environment: analyticsPaymentEnvironment(input.provider),
+      terminal: true as const
+    };
+    const properties = input.eventName === "payment_failed"
+      ? { ...baseProperties, failure_code: (input.failureCode ?? "payment_failed") as "checkout_create_failed" | "payment_failed" | "order_already_paid" }
+      : baseProperties;
+    return {
+      eventName: input.eventName,
+      transitionKey: `commercial-payment-terminal:${input.eventName}:${input.paymentAttemptId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties
+    };
+  }, writer);
+}
+
+export async function ensurePaymentReturnViewedAnalytics(input: {
+  orderPublicId: string;
+  orderId: string;
+  paymentAttemptPublicId?: string;
+  returnResult: "returned" | "cancelled";
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({
+      orderPublicId: input.orderPublicId,
+      ...(input.paymentAttemptPublicId ? { paymentAttemptPublicId: input.paymentAttemptPublicId } : {})
+    });
+    return {
+      eventName: "payment_return_viewed",
+      transitionKey: `commercial-payment-return-viewed:${input.orderId}`,
+      occurredAt: new Date(),
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        return_result: input.returnResult
+      }
+    };
+  }, writer);
+}
+
 async function recoverPaidAnalyticsFromExactDuplicate(input: {
   notification: ProviderNotification;
   provider: CommercialPaymentProvider;
@@ -888,6 +991,22 @@ export async function createCommercialPaymentSession(input: {
     throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
   }
 
+  await ensurePaymentSessionCreatedAnalytics({
+    occurredAt: decision.attempt.createdAt,
+    provider: input.provider.provider,
+    orderPublicId: decision.order.publicId,
+    paymentAttemptId: decision.attempt.id,
+    paymentAttemptPublicId: decision.attempt.publicId,
+    amount: decision.order.priceMinor,
+    currency: decision.order.currency
+  }, input.analyticsWriter);
+  await ensurePaymentPendingAnalytics({
+    occurredAt: decision.attempt.createdAt,
+    provider: input.provider.provider,
+    orderPublicId: decision.order.publicId,
+    paymentAttemptPublicId: decision.attempt.publicId
+  }, input.analyticsWriter);
+
   let checkout;
   try {
     const returnQuery = new URLSearchParams({ commercialOrder: decision.order.publicId, paymentReturn: "1" }).toString();
@@ -1371,12 +1490,26 @@ export async function processCommercialProviderNotification(input: {
             }
           } satisfies PaidAnalyticsFacts
         : undefined;
-      return { duplicate: false, grantedAccess, rejected: false, paid };
+      return { duplicate: false, grantedAccess, rejected: false, paid, terminalAttempt: nextAttemptStatus !== "PAID" ? { status: nextAttemptStatus, occurredAt: now, provider: input.provider, orderPublicId: current.order.publicId, paymentAttemptId: current.id, paymentAttemptPublicId: current.publicId, failureCode: nextAttemptStatus === "FAILED" ? "payment_failed" as const : undefined } : undefined };
     });
     if (outcome.validation) await writePaymentValidationFailed(outcome.validation, input.analyticsWriter);
     if (outcome.paid) await ensurePaidAnalytics(outcome.paid, input.analyticsWriter);
     if (outcome.paidWithoutAccessAnalytics) {
       await ensurePaidWithoutAccessAnalytics(outcome.paidWithoutAccessAnalytics, input.analyticsWriter);
+    }
+    if (outcome.terminalAttempt) {
+      const eventName = outcome.terminalAttempt.status === "FAILED" ? "payment_failed" as const
+        : outcome.terminalAttempt.status === "CANCELLED" ? "payment_cancelled" as const
+        : "payment_expired" as const;
+      await ensurePaymentTerminalAnalytics({
+        eventName,
+        occurredAt: outcome.terminalAttempt.occurredAt,
+        provider: outcome.terminalAttempt.provider,
+        orderPublicId: outcome.terminalAttempt.orderPublicId,
+        paymentAttemptId: outcome.terminalAttempt.paymentAttemptId,
+        paymentAttemptPublicId: outcome.terminalAttempt.paymentAttemptPublicId,
+        failureCode: outcome.terminalAttempt.failureCode
+      }, input.analyticsWriter);
     }
     return { duplicate: outcome.duplicate, grantedAccess: outcome.grantedAccess, rejected: outcome.rejected };
   } catch (error) {
