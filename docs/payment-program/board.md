@@ -40,17 +40,17 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | Статус | Количество |
 |---|---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 9 |
+| `BACKLOG` | 8 |
 | `READY` | 1 |
 | `IN_PROGRESS` | 1 |
 | `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 24 |
+| `DONE` | 25 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Последняя принятая feature-карточка: C-01 — `DONE` (pending consolidated C review).
+Последняя принятая feature-карточка: C-02 — `DONE` (pending consolidated C review).
 B2-02..B2-07 приняты в consolidated B2 milestone review;
 B3-01..B3-05 приняты в consolidated B3 security milestone review (T-08). A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
@@ -87,8 +87,8 @@ B3-01..B3-05 приняты в consolidated B3 security milestone review (T-08).
 | [D-02](tasks/D-02.md) | D — UX и Figma | Создать payment-only Figma package | `READY` | `HIGH` | `D-01` |
 | [D-03](tasks/D-03.md) | D — UX и Figma | Собрать Figma accessibility evidence | `BACKLOG` | `HIGH` | `D-02` |
 | [C-01](tasks/C-01.md) | C — Frontend | Реализовать checkout hierarchy | `DONE` | `HIGH` | `B1-04`, `D-01` |
-| [C-02](tasks/C-02.md) | C — Frontend | Реализовать Order/session/redirect handoff | `READY` | `HIGH` | `B1-05`, `C-01` |
-| [C-03](tasks/C-03.md) | C — Frontend | Отрисовать все payment return states | `BACKLOG` | `HIGH` | `B2-02`, `B2-03`, `B2-06`, `D-02` |
+| [C-02](tasks/C-02.md) | C — Frontend | Реализовать Order/session/redirect handoff | `DONE` | `HIGH` | `B1-05`, `C-01` |
+| [C-03](tasks/C-03.md) | C — Frontend | Отрисовать все payment return states | `READY` | `HIGH` | `B2-02`, `B2-03`, `B2-06`, `C-01`, `C-02` |
 | [C-04](tasks/C-04.md) | C — Frontend | Реализовать polling и manual cooldown | `BACKLOG` | `HIGH` | `B2-02`, `B3-02`, `D-02` |
 | [C-05](tasks/C-05.md) | C — Frontend | Восстанавливать state после browser/mobile transitions | `BACKLOG` | `HIGH` | `B1-05`, `B2-07`, `D-02` |
 | [C-06](tasks/C-06.md) | C — Frontend | Реализовать responsive и accessibility требования | `BACKLOG` | `HIGH` | `D-03`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05` |
@@ -137,6 +137,7 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B3-05 | `6574f75` | `reviews/B3-security-milestone.md` | `DONE` |
 | D-01 | `098293c` | SELF_CHECKED | `DONE` |
 | C-01 | `7fe9edc` | pending consolidated C review | `DONE` |
+| C-02 | `ff397a6` | pending consolidated C review | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 

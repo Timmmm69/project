@@ -26,17 +26,18 @@ B3 security block принят consolidated review `reviews/B3-security-mileston
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|---|
-| **C-02** | `READY` | `6574f75` | Реализовать Order/session/redirect handoff per `tasks/C-02.md` |
+| **C-03** | `READY` | `47b1a5e` | Отрисовать все payment return states per `tasks/C-03.md` |
 
 ## Последний завершённый шаг
 
-C-01: реализован public checkout hierarchy.
-- Recovery email verification (OTP) перед Order (B1-04 enforcement).
-- Checkout UI: product price/one-attempt → constraints → WEBPAY redirect notice → legal checkboxes (2, not preselected) → «Перейти к оплате картой».
-- Redirect loader с fallback «Открыть страницу WEBPAY» (10 сек).
-- Post-payment: status restore, refresh, «Попробовать оплатить снова» (terminal retry), «Перейти к началу теста» (paid).
+C-02: реализован Order/session/redirect handoff.
+- Машина состояний redirect: `idle` → `creating_order` → `creating_session` → `redirecting` / `fallback` / `session_error`.
+- Idempotency keys (orderKey, paymentKey, checkoutFlowId) — создаются один раз, передаются в `Idempotency-Key` header.
+- Same-tab redirect через `form.submit()`. Fallback через 10 сек с «Открыть страницу WEBPAY» без повторного API-вызова.
+- Session error: «Не удалось открыть страницу оплаты» + retry через resolver перед повторной попыткой.
+- Provider data не хранится в localStorage (только useRef в памяти).
 - Gates: typecheck/lint clean, 503 tests PASS.
-- Следующая READY-карточка: C-02 (Order/session/redirect handoff).
+- Следующая READY-карточка: C-03 (payment return states).
 
 ## Состояние рабочей копии
 
