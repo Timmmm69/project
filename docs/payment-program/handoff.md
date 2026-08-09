@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `931f7f9` | Production: `NO-GO`
+2026-08-09 | HEAD: `681d8ee` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -25,36 +25,23 @@ B1, B2-02..B2-07, B3-01 — смотри `board.md` раздел 4.1 для SHA 
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|
-| **B3-03** | `READY` | `931f7f9` | `tasks/B3-03.md` — приватный cache/referrer policy |
+| **B3-03** | `READY` | `681d8ee` | `tasks/B3-03.md` — приватный cache/referrer policy |
 
 ## Последний завершённый шаг
 
-B3-02 реализован: Work-in-progress на `931f7f9` (не закоммичен).
-- Process-memory limiter заменён на PostgreSQL-based (`CommercialRateLimitEvent` + advisory locks).
-- Trusted identity: `deriveCommercialClientKey()` через B3-01 trusted proxy policy.
+B3-02 закоммичен: `681d8ee` — `feat(payment): persist commercial rate limits and cooldowns`.
+- PostgreSQL-based `CommercialRateLimitEvent` + advisory locks.
+- `deriveCommercialClientKey()` через trusted proxy.
 - Namespace: ORDER_CREATE, PAYMENT_SESSION_CREATE, STATUS_REFRESH, CHECKOUT_FLOW, BRUTE_FORCE.
 - `Retry-After` в 429 ответах.
-- 11 новых unit тестов; lint + typecheck + 452 тестов — PASS.
+- 11 unit тестов; lint + typecheck + 452 тестов — PASS.
 - Миграция: `20260809082143_add_commercial_rate_limits`.
-
-## После реализации B3-02
-
-1. ~~Заменить process-memory limiter на PostgreSQL-based.~~
-2. ~~Trusted client identity через B3-01 trusted proxy policy.~~
-3. ~~Разнести по namespace.~~
-4. ~~Retry-After в ответах.~~
-5. ~~Тесты.~~
-6. ~~Обновить карточку, board, handoff.~~
-7. Закоммитить с сообщением `feat(payment): persist commercial rate limits and cooldowns`.
-8. `docs(payment): accept B3-02 ...` — после commit.
 
 ## Состояние рабочей копии
 
-Modified (B3-02 implementation): `prisma/schema.prisma`, `src/lib/api-response.ts`, `src/lib/commercial/rate-limit.ts`, `src/lib/commercial/route-helpers.ts`, `src/app/api/commercial/checkout-flows/route.ts`, `src/app/api/commercial/orders/route.ts`, `src/app/api/commercial/orders/[publicId]/payment-session/route.ts`, `src/app/api/commercial/orders/[publicId]/refresh-status/route.ts`, `tests/unit/commercial-rate-limit.test.ts`, `tests/unit/commercial-order-verified-authority.test.ts`, `tests/unit/commercial-payment-status-projection.test.ts`, `docs/payment-program/board.md`, `docs/payment-program/handoff.md`, `docs/payment-program/tasks/B3-02.md`.
+Clean. B3-02 committed at `681d8ee`.
 
-New: `prisma/migrations/20260809082143_add_commercial_rate_limits/`.
-
-Unrelated: `next-env.d.ts`, `pnpm-workspace.yaml`.
+Unrelated (не коммитить): `next-env.d.ts`, `pnpm-workspace.yaml`.
 
 ## Блокеры
 
