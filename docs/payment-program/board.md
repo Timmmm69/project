@@ -1,6 +1,6 @@
 # Payment Program Board
 
-Последнее обновление: **2026-08-01**
+Последнее обновление: **2026-08-09**
 Planning/current baseline at board creation: `80c6838ce54e8e0768b4264698343e98be7cbaea`  
 Historical audit baseline: `adf23554a1bac5a6f751fa4fc9a80f2bf64371f2`  
 Production verdict: **NO-GO**
@@ -43,16 +43,16 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | `BACKLOG` | 11 |
 | `READY` | 6 |
 | `IN_PROGRESS` | 1 |
-| `IN_REVIEW` | 5 |
+| `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 12 |
+| `DONE` | 17 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Последняя принятая feature-карточка: B2-01 — `DONE` (implementation SHA
-`20adce9`, review `reviews/B2-01.md`). B2-02, B2-03 и B2-06 ожидают consolidated B2 review;
-следующая implementation-карточка — B2-05. A-07
+Последняя принятая feature-карточка: B2-07 — `DONE` (implementation SHA
+`64fa1b9`, consolidated review `reviews/B2-payment-state-milestone.md`). B2-02, B2-03, B2-05, B2-06 и B2-07 приняты в consolidated B2 milestone review;
+следующая implementation-карточка — B3-01. A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -72,12 +72,12 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B1-04](tasks/B1-04.md) | B1 — Verified authority и recovery | Требовать verified email до Order | `DONE` | `CRITICAL` | `B1-01`, `B1-03` |
 | [B1-05](tasks/B1-05.md) | B1 — Verified authority и recovery | Восстанавливать Existing Order/Access/Attempt/Result | `DONE` | `CRITICAL` | `B1-03`, `B1-04` |
 | [B2-01](tasks/B2-01.md) | B2 — Payment state и восстановление | Дополнить immutable commercial snapshot | `DONE` | `HIGH` | `A-03`, `A-04` |
-| [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `IN_REVIEW` | `HIGH` | `A-03` |
-| [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `IN_REVIEW` | `CRITICAL` | `B2-02`, `B2-06` |
+| [B2-02](tasks/B2-02.md) | B2 — Payment state и восстановление | Добавить payment_status_unknown projection | `DONE` | `HIGH` | `A-03` |
+| [B2-03](tasks/B2-03.md) | B2 — Payment state и восстановление | Добавить paid_without_access reconciliation | `DONE` | `CRITICAL` | `B2-02`, `B2-06` |
 | [B2-04](tasks/B2-04.md) | B2 — Payment state и восстановление | Восстанавливать provider session после crash | `BLOCKED_EXTERNAL` | `HIGH` | `A-03`, `E-02` |
-| [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `IN_REVIEW` | `HIGH` | `A-03` |
-| [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `IN_REVIEW` | `HIGH` | `A-03` |
-| [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `IN_REVIEW` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
+| [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `DONE` | `HIGH` | `A-03` |
+| [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `DONE` | `HIGH` | `A-03` |
+| [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `DONE` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
 | [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `READY` | `CRITICAL` | `A-03` |
 | [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `READY` | `HIGH` | `A-03` |
 | [B3-03](tasks/B3-03.md) | B3 — Security и analytics | Добавить private cache/referrer policy | `READY` | `HIGH` | `A-03` |
@@ -125,6 +125,11 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B1-04 | `df106dd` | `reviews/B1-04.md` | `DONE` |
 | B1-05 | `4a6a013` | `reviews/B1-05.md` | `DONE` |
 | B2-01 | `20adce9` | `reviews/B2-01.md` | `DONE` |
+| B2-02 | `a86d4f6` | `reviews/B2-payment-state-milestone.md` | `DONE` |
+| B2-03 | `fb1f926` | `reviews/B2-payment-state-milestone.md` | `DONE` |
+| B2-05 | `5f8ba76` | `reviews/B2-payment-state-milestone.md` | `DONE` |
+| B2-06 | `0a7c69e` | `reviews/B2-payment-state-milestone.md` | `DONE` |
+| B2-07 | `64fa1b9` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 
