@@ -4,7 +4,9 @@
 
 ## Активная карточка
 
-- Feature-карточка: `B2-05`
+- Feature-карточка: `B2-07`
+- Статус B2-07: `IN_REVIEW` до consolidated B2 milestone review
+- B2-07 base SHA: `5f8ba76deb9a705dd22bb7e5f995d6bc243681c0`
 - Статус B2-05: `IN_REVIEW` до consolidated B2 milestone review
 - B2-05 base SHA: `fb1f926f73ee6ef4031b897072f7988f3d0f91a5`
 - Статус B2-03: `IN_REVIEW` до consolidated B2 milestone review
@@ -26,6 +28,13 @@
 
 ## Последний завершённый шаг
 
+- B2-07 добавляет verified `payment_pending`/`paid_without_access` recovery
+  outcomes с `VIEW_PAYMENT_STATUS`, без identifiers и без расширения
+  ACC-01A PRE/ATT/RES destination authority.
+- Recovery integration на fresh 15-migration schema: 20/20 PASS; восемь
+  concurrent pending reads не создают business records; test schema удалена.
+- Manual authoritative refresh работает с `grantAccess: false`: commercial DB
+  concurrency 17/17 доказывает 0 новых Order/PaymentAttempt/Access.
 - B2-05 разрешает новую PaymentAttempt в существующем Order только из
   FAILED/CANCELLED/EXPIRED; PENDING/unknown/PAID/PWA не открывают terminal retry.
 - Dedicated PostgreSQL matrix и concurrency: 16/16 PASS, во всех гонках не
@@ -57,9 +66,9 @@
 
 ## Точное продолжение
 
-1. Сделать атомарный implementation commit B2-05 от `fb1f926`.
-2. Claim B2-07 от нового HEAD и расширить verified recovery на pending payment.
-3. B2-02/B2-03/B2-05/B2-06 оставить `IN_REVIEW` до consolidated review.
+1. Сделать атомарный implementation commit B2-07 от `5f8ba76`.
+2. Провести один consolidated independent B2 payment-state milestone review.
+3. При PASS перевести B2-02/B2-03/B2-05/B2-06/B2-07 в DONE и перейти к B3-01.
 
 ## Другие READY-карточки
 

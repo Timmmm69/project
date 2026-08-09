@@ -148,9 +148,10 @@ function terminalAttempt(
 }
 
 describe("ACC-01A recovery state decision table", () => {
-  it("exposes exactly the canonical six success states", () => {
+  it("exposes the canonical entitlement and payment recovery states", () => {
     expect(RECOVERY_RESOLVED_STATES).toEqual([
       "access_unstarted", "attempt_active", "result_available",
+      "payment_pending", "paid_without_access",
       "start_window_expired", "no_access", "support_required"
     ]);
   });
@@ -284,18 +285,35 @@ describe("ACC-01A recovery state decision table", () => {
     }), now).state).toBe("support_required");
   });
 
-  it("never maps PAID without Access to no_access", () => {
-    expect(resolveRecoveryStateSnapshot(baseSnapshot({ accesses: [], attempts: [] }), now).state)
-      .toBe("support_required");
+  it("maps consistent PAID without Access to a safe payment continuation", () => {
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({ accesses: [], attempts: [] }), now))
+      .toEqual({
+        state: "paid_without_access",
+        screen: "REC-01",
+        nextAction: "VIEW_PAYMENT_STATUS"
+      });
   });
 
   it.each(["CREATED", "PENDING"] as const)(
-    "maps %s Order without Access to support_required",
+    "maps %s Order without Access to payment_pending",
     (status) => {
-      const order = { ...baseSnapshot().orders[0]!, status, paymentAttempts: [] };
+      const order = {
+        ...baseSnapshot().orders[0]!,
+        status,
+        paidAt: null,
+        paymentAttempts: status === "PENDING" ? [{
+          ...baseSnapshot().orders[0]!.paymentAttempts[0]!,
+          status: "PENDING" as const,
+          paidAt: null
+        }] : []
+      };
       expect(resolveRecoveryStateSnapshot(baseSnapshot({
         orders: [order], accesses: [], attempts: []
-      }), now).state).toBe("support_required");
+      }), now)).toEqual({
+        state: "payment_pending",
+        screen: "REC-01",
+        nextAction: "VIEW_PAYMENT_STATUS"
+      });
     }
   );
 
@@ -460,14 +478,16 @@ describe("ACC-01A recovery state decision table", () => {
     const responses = RECOVERY_RESOLVED_STATES.map((value) => recoveryStateResponseSchema.parse({
       state: value,
       screen: "REC-01",
-      nextAction: ["access_unstarted", "attempt_active", "result_available"].includes(value)
-        ? "CONTINUE"
-        : null
+      nextAction: ["payment_pending", "paid_without_access"].includes(value)
+        ? "VIEW_PAYMENT_STATUS"
+        : ["access_unstarted", "attempt_active", "result_available"].includes(value)
+          ? "CONTINUE"
+          : null
     }));
     for (const response of responses) {
       expect(Object.keys(response).sort()).toEqual(["nextAction", "screen", "state"]);
       expect(JSON.stringify(response)).not.toMatch(
-        /email|userId|productId|testId|order|payment|provider|accessId|attemptId|resultId|startedAt|endsAt|finishedAt|remaining|answer|question|correct|accepted|explanation|primaryScore|scaledScore|lookup|token|digest/i
+        /email|userId|productId|testId|orderReference|provider|accessId|attemptId|resultId|startedAt|endsAt|finishedAt|remaining|answer|question|correct|accepted|explanation|primaryScore|scaledScore|lookup|token|digest/i
       );
     }
     expect(() => recoveryStateResponseSchema.parse({
