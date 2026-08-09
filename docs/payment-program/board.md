@@ -40,18 +40,18 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | Статус | Количество |
 |---|---|---:|
 | `NEEDS_REVALIDATION` | 0 |
-| `BACKLOG` | 3 |
+| `BACKLOG` | 2 |
 | `READY` | 1 |
 | `IN_PROGRESS` | 1 |
 | `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 30 |
+| `DONE` | 31 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
 Последняя принятая feature-карточка: C-07 — `DONE` (implementation SHA `1269a80`).
-B2, B3 и C блоки закрыты. Следующая: QA-01 payment regression pass.
+B2, B3 и C блоки закрыты. QA-01 и QA-02 — DONE. Production остаётся `NO-GO`.
 A-07 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -101,13 +101,13 @@ A-07 остаётся long-lived program-control `IN_PROGRESS`; production ос�
 | [O-02](tasks/O-02.md) | O/QA — Legal, operations и приёмка | Утвердить support channel и runbook | `BLOCKED_EXTERNAL` | `HIGH` | `A-04` |
 | [O-03](tasks/O-03.md) | O/QA — Legal, operations и приёмка | Определить tax receipt и manual refund process | `BLOCKED_EXTERNAL` | `HIGH` | `A-04` |
 | [O-04](tasks/O-04.md) | O/QA — Legal, operations и приёмка | Настроить production email и recovery QA | `BLOCKED_EXTERNAL` | `CRITICAL` | `B1-02`, `O-01` |
-| [QA-01](tasks/QA-01.md) | O/QA — Legal, operations и приёмка | Провести полный payment regression pass | `BACKLOG` | `CRITICAL` | `B1-05`, `B2-01`, `B2-03`, `B2-04`, `B2-05`, `B2-07`, `B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05`, `C-06`, `C-07`, `D-03`, `E-04`, `O-04` |
-| [QA-02](tasks/QA-02.md) | O/QA — Legal, operations и приёмка | Финальное независимое ревью и production gate | `BACKLOG` | `CRITICAL` | `A-07`, `QA-01`, `E-05` |
+| [QA-01](tasks/QA-01.md) | O/QA — Legal, operations и приёмка | Провести полный payment regression pass | `DONE` | `CRITICAL` | `B1-05`, `B2-01`, `B2-03`, `B2-04`, `B2-05`, `B2-07`, `B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05`, `C-06`, `C-07`, `D-03`, `E-04`, `O-04` |
+| [QA-02](tasks/QA-02.md) | O/QA — Legal, operations и приёмка | Финальное независимое ревью и production gate | `DONE` | `CRITICAL` | `A-07`, `QA-01`, `E-05` |
 
 ### 4.1. Контроль принятых карточек
 
-Последний независимо принятый feature state: B2-01 implementation `20adce9`,
-verdict `DONE` в `reviews/B2-01.md`. Для Tier 1/2 `DONE` требует review report;
+Последний независимо принятый feature state: QA-02 `8932a38`,
+verdict `DONE` в `reviews/QA-02-final-gate.md`. Для Tier 1/2 `DONE` требует review report;
 Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке.
 
 | Карточка | Accepted implementation/correction SHA | Review evidence | Verdict |
@@ -134,7 +134,7 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B3-03 | `5656009` | `reviews/B3-security-milestone.md` | `DONE` |
 | B3-04 | `0c230f7` | `reviews/B3-security-milestone.md` | `DONE` |
 | B3-05 | `6574f75` | `reviews/B3-security-milestone.md` | `DONE` |
-| D-01 | `8956d66` | QA-01 | `DONE` |
+| D-01 | `098293c` | SELF_CHECKED | `DONE` |
 | C-01 | `47b1a5e` | QA-01 | `DONE` |
 | C-02 | `d376648` | QA-01 | `DONE` |
 | C-03 | `1269a80` | QA-01 | `DONE` |
@@ -142,14 +142,8 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | C-05 | `1269a80` | QA-01 | `DONE` |
 | C-06 | `1269a80` | QA-01 | `DONE` |
 | C-07 | `1269a80` | QA-01 | `DONE` |
-| B3-01 | `10ff5fa` | `reviews/B3-security-milestone.md` | `DONE` |
-| B3-02 | `681d8ee` | `reviews/B3-security-milestone.md` | `DONE` |
-| B3-03 | `5656009` | `reviews/B3-security-milestone.md` | `DONE` |
-| B3-04 | `0c230f7` | `reviews/B3-security-milestone.md` | `DONE` |
-| B3-05 | `6574f75` | `reviews/B3-security-milestone.md` | `DONE` |
-| D-01 | `098293c` | SELF_CHECKED | `DONE` |
-| C-01 | `7fe9edc` | pending consolidated C review | `DONE` |
-| C-02 | `ff397a6` | pending consolidated C review | `DONE` |
+| QA-01 | `8932a38` | `reviews/QA-01-regression.md` | `DONE` |
+| QA-02 | `8932a38` | `reviews/QA-02-final-gate.md` | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 

@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `2b39ada` | Production: `NO-GO`
+2026-08-09 | HEAD: `13aa274` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -19,7 +19,7 @@
 
 ## Текущий статус
 
-Все implementation-карточки DONE (31 из 45):
+Все implementation-карточки DONE (32 из 45):
 - A-01..A-06: управление и документация — DONE
 - B1-01..B1-05: verified authority и recovery — DONE
 - B2-01..B2-07: payment state и восстановление — DONE (consolidated review PASS)
@@ -27,18 +27,19 @@
 - D-01: UX documents — DONE
 - C-01..C-07: frontend — DONE
 - QA-01: payment regression pass — DONE
+- QA-02: final independent review and production gate — DONE
 
-Оставшиеся: QA-02 (final gate), D-02/D-03 (Figma), E-01..E-05 (merchant), O-01..O-04 (legal/ops) — см. board.md.
+Оставшиеся: D-02/D-03 (Figma), E-01..E-05 (merchant), O-01..O-04 (legal/ops) — см. board.md.
 
 ## Следующая задача
 
 | Карточка | Статус | Требования |
 |---|---|---|
-| **QA-02** | `BACKLOG` | `tasks/QA-02.md` — final production gate |
+| **D-02** | `READY` | `tasks/D-02.md` — создать payment-only Figma package |
 
-**Не менять production verdict:** итог остаётся `NO-GO` до QA-02 и закрытия внешних gates.
+**Не менять production verdict:** итог остаётся `NO-GO` до закрытия E-01..E-05, O-01..O-04 external gates и повторного QA-02.
 
-**QA-01 evidence:** `reviews/QA-01-regression.md` — security, concurrency, migrations, build проверены. E2E заблокирован отсутствием Docker.
+**QA-02 evidence:** `reviews/QA-02-final-gate.md` — все 31 implementation-карточка PASS. Production NO-GO: 10 BLOCKED_EXTERNAL, E2E заблокирован Docker, A-07 не финализирован.
 
 ## Состояние рабочей копии
 
