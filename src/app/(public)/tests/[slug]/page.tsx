@@ -141,7 +141,7 @@ export default async function PublicTestPage({ params }: PageProps) {
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
           {verifiedPreAuthorized || showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct?.priceMinor ?? publicTest.price} currency={commercialProduct?.currency ?? publicTest.currency} verifiedPreAuthorized={verifiedPreAuthorized} /> : null}
-          {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
+          {!showCommercialCheckout && !hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
         </aside>
       </section>
     </main>
