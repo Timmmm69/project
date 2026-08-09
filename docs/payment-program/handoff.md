@@ -26,15 +26,17 @@ B3 security block принят consolidated review `reviews/B3-security-mileston
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|---|
-| **D-02** | `READY` | `6574f75` | Создать payment-only Figma package per `tasks/D-02.md` |
+| **C-02** | `READY` | `6574f75` | Реализовать Order/session/redirect handoff per `tasks/C-02.md` |
 
 ## Последний завершённый шаг
 
-D-01 (Tier 3 SELF_CHECKED): обновлены payment UX documents.
-- Создан `docs/payment-program/sources/ux-state-contract-v1.md` — 9 состояний, точные CTA/retry/cooldown/support/copy контракты.
-- `payment-ux-contract-v1.md`: статус `APPROVED`. Backend states не переименованы.
-- Docs-only, код не менялся.
-- Следующая READY-карточка: D-02 (payment-only Figma package).
+C-01: реализован public checkout hierarchy.
+- Recovery email verification (OTP) перед Order (B1-04 enforcement).
+- Checkout UI: product price/one-attempt → constraints → WEBPAY redirect notice → legal checkboxes (2, not preselected) → «Перейти к оплате картой».
+- Redirect loader с fallback «Открыть страницу WEBPAY» (10 сек).
+- Post-payment: status restore, refresh, «Попробовать оплатить снова» (terminal retry), «Перейти к началу теста» (paid).
+- Gates: typecheck/lint clean, 503 tests PASS.
+- Следующая READY-карточка: C-02 (Order/session/redirect handoff).
 
 ## Состояние рабочей копии
 
