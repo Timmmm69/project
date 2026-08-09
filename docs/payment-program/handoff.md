@@ -4,24 +4,21 @@
 
 ## Активная карточка
 
-- Следующая implementation-карточка: `B3-01`
-- Статус B3-01: `READY`
-- B2-02…B2-07: `DONE` (consolidated B2 review `reviews/B2-payment-state-milestone.md`)
-- B2-07 implementation SHA: `64fa1b9`
+- Следующая implementation-карточка: `B3-02`
+- Статус B3-02: `READY`
+- B3-01: `DONE` (implementation SHA `10ff5fa`, ожидает consolidated B3 review)
 - Program-control A-07: `IN_PROGRESS`, traceability обновлена через B1-03
 - Production verdict: `NO-GO`
 
 ## Последний завершённый шаг
 
-- Consolidated B2 payment-state milestone review принят: B2-02, B2-03, B2-05, B2-06, B2-07 → `DONE`.
-- Review report: `reviews/B2-payment-state-milestone.md`.
-- Следующее действие: B3-01 (T-03) — strict Origin/Host/CSRF enforcement.
+- B3-01 реализован: implementation SHA `10ff5fa` от base `806c1c5`.
+- Следующее действие: B3-02 (T-04) — durable rate limits и cooldown.
 
 ## Точное продолжение
 
-1. ~~Сделать атомарный implementation commit B2-07 от `5f8ba76`.~~ Выполнено: `64fa1b9`.
-2. ~~Провести один consolidated independent B2 payment-state milestone review.~~ Выполнено: `reviews/B2-payment-state-milestone.md`, все B2-02..B2-07 → `DONE`.
-3. Реализовать B3-01 (strict Origin/Host/CSRF enforcement).
+1. ~~Реализовать B3-01 (strict Origin/Host/CSRF enforcement).~~ Выполнено: `10ff5fa`.
+2. Реализовать B3-02 (durable rate limits и cooldown).
 
 ## Другие READY-карточки
 

@@ -41,18 +41,18 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 |---|---:|
 | `NEEDS_REVALIDATION` | 0 |
 | `BACKLOG` | 11 |
-| `READY` | 6 |
+| `READY` | 5 |
 | `IN_PROGRESS` | 1 |
 | `IN_REVIEW` | 0 |
 | `CHANGES_REQUIRED` | 0 |
 | `BLOCKED_EXTERNAL` | 10 |
-| `DONE` | 17 |
+| `DONE` | 18 |
 | `SUPERSEDED` | 0 |
 | **Всего** | **45** |
 
-Последняя принятая feature-карточка: B2-07 — `DONE` (implementation SHA
-`64fa1b9`, consolidated review `reviews/B2-payment-state-milestone.md`). B2-02, B2-03, B2-05, B2-06 и B2-07 приняты в consolidated B2 milestone review;
-следующая implementation-карточка — B3-01. A-07
+Последняя принятая feature-карточка: B3-01 — `DONE` (implementation SHA
+`10ff5fa`). B2-02..B2-07 приняты в consolidated B2 milestone review; B3-01 реализован;
+следующая implementation-карточка — B3-02. A-07
 остаётся long-lived program-control `IN_PROGRESS`; production остаётся `NO-GO`.
 
 ## 4. Реестр задач
@@ -78,7 +78,7 @@ docs/test/hygiene шаги проходят `SELF_CHECKED` без отдельн
 | [B2-05](tasks/B2-05.md) | B2 — Payment state и восстановление | Формализовать terminal retry | `DONE` | `HIGH` | `A-03` |
 | [B2-06](tasks/B2-06.md) | B2 — Payment state и восстановление | Добавить safe support DTO | `DONE` | `HIGH` | `A-03` |
 | [B2-07](tasks/B2-07.md) | B2 — Payment state и восстановление | Расширить recovery на pending Order/payment | `DONE` | `HIGH` | `B1-02`, `B1-03`, `B1-05`, `B2-02` |
-| [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `READY` | `CRITICAL` | `A-03` |
+| [B3-01](tasks/B3-01.md) | B3 — Security и analytics | Усилить Origin/Host/CSRF enforcement | `DONE` | `CRITICAL` | `A-03` |
 | [B3-02](tasks/B3-02.md) | B3 — Security и analytics | Ввести durable rate limits и cooldown | `READY` | `HIGH` | `A-03` |
 | [B3-03](tasks/B3-03.md) | B3 — Security и analytics | Добавить private cache/referrer policy | `READY` | `HIGH` | `A-03` |
 | [B3-04](tasks/B3-04.md) | B3 — Security и analytics | Удалить raw provider payload persistence | `READY` | `CRITICAL` | `A-03` |
@@ -130,6 +130,7 @@ Tier 3 фиксирует `SELF_CHECKED` evidence прямо в карточке
 | B2-05 | `5f8ba76` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 | B2-06 | `0a7c69e` | `reviews/B2-payment-state-milestone.md` | `DONE` |
 | B2-07 | `64fa1b9` | `reviews/B2-payment-state-milestone.md` | `DONE` |
+| B3-01 | `10ff5fa` | `reviews/B3-01.md` (pending consolidated B3 review) | `DONE` |
 
 При каждом следующем принятом Tier 1/2 review reviewer обязан атомарно:
 
