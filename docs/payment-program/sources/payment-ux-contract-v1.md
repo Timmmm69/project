@@ -2,7 +2,7 @@
 
 **Версия:** 1.0  
 **Дата:** 18 июля 2026 года  
-**Статус:** `READY FOR PRODUCT OWNER REVIEW`  
+**Статус:** `APPROVED`  
 **Владелец:** Product Owner / Payments Product Lead  
 **Область:** checkout, передача пользователя на WEBPAY, возврат, локальные payment states, recovery и payment-specific trust/accessibility/analytics  
 **Launch boundary:** `PAY-01A = READY`; `PAY-01B = BLOCKED`; реальные платежи и production activation = `NO-GO`
@@ -1323,4 +1323,6 @@ Production activation = NO-GO
 
 # Final status
 
-`PAYMENT UX CONTRACT V1 — READY FOR PRODUCT OWNER REVIEW`
+`PAYMENT UX CONTRACT V1 — APPROVED`
+
+Уточнён implementation-aligned state contract: `ux-state-contract-v1.md`. Документ уточняет точные CTA, retry, cooldown и support thresholds для 9 payment UX-состояний на основе реализованного backend (B3).
