@@ -1,12 +1,13 @@
 # Payment Program Handoff
 
-Последнее обновление: 2026-08-02
+Последнее обновление: 2026-08-09
 
 ## Активная карточка
 
 - Feature-карточка: `B2-07`
 - Статус B2-07: `IN_REVIEW` до consolidated B2 milestone review
 - B2-07 base SHA: `5f8ba76deb9a705dd22bb7e5f995d6bc243681c0`
+- B2-07 implementation SHA: `64fa1b9`
 - Статус B2-05: `IN_REVIEW` до consolidated B2 milestone review
 - B2-05 base SHA: `fb1f926f73ee6ef4031b897072f7988f3d0f91a5`
 - Статус B2-03: `IN_REVIEW` до consolidated B2 milestone review
@@ -28,45 +29,12 @@
 
 ## Последний завершённый шаг
 
-- B2-07 добавляет verified `payment_pending`/`paid_without_access` recovery
-  outcomes с `VIEW_PAYMENT_STATUS`, без identifiers и без расширения
-  ACC-01A PRE/ATT/RES destination authority.
-- Recovery integration на fresh 15-migration schema: 20/20 PASS; восемь
-  concurrent pending reads не создают business records; test schema удалена.
-- Manual authoritative refresh работает с `grantAccess: false`: commercial DB
-  concurrency 17/17 доказывает 0 новых Order/PaymentAttempt/Access.
-- B2-05 разрешает новую PaymentAttempt в существующем Order только из
-  FAILED/CANCELLED/EXPIRED; PENDING/unknown/PAID/PWA не открывают terminal retry.
-- Dedicated PostgreSQL matrix и concurrency: 16/16 PASS, во всех гонках не
-  более одной active PaymentAttempt; full unit 417 PASS, lint/typecheck PASS.
-- B2-03 добавляет PAID-only reconciliation с Order row lock, snapshot-based
-  Access grant и exactly-one invariant; provider paid replay разрешает anomaly.
-- PostgreSQL concurrency 12/12 PASS: восемь параллельных reconciliation дают
-  ровно один Access; canonical detected/resolved analytics PII-free; refund нет.
-- Full unit regression 417 PASS, 139 DB-gated skipped; lint/typecheck PASS.
-- B2-06 добавляет strict safe status/support DTO: opaque public reference,
-  category, safe timestamps/cooldown и allowlisted actions; internal/provider/
-  merchant IDs, email, payload, secrets, raw URLs/errors исключены.
-- DTO/unknown regression 12/12 PASS; full unit regression 416 PASS,
-  139 DB-gated skipped; lint/typecheck PASS.
-- B2-02 реализует transient `payment_status_unknown` без DB enum: timeout,
-  malformed/untrusted и unavailable provider outcome сохраняют последний
-  confirmed business state и запрещают retry/Access.
-- Route regression 6/6 PASS; full unit regression 410 PASS, 139 DB-gated
-  skipped; lint/typecheck PASS.
-- B2-01 принят независимым consolidated review: `DONE` для implementation
-  `20adce9` от accepted base `7068ad5`.
-- Order snapshot дополнен attempts/start-window/duration/retention/exam/display;
-  Access grant и existing entitlement recovery переведены с mutable Product на
-  immutable Order truth.
-- Совместимость проверена реальным old Order на isolated 14→15 migration;
-  snapshot backfill PASS, temporary `b201_ci` schema удалена.
-- Lint/typecheck — PASS; unit resolver 56/56; full regression 404 PASS;
-  commercial DB regression 15/15 PASS, включая Product mutation до callback.
+- B2-07 закоммичен: implementation SHA `64fa1b9` от base `5f8ba76`.
+- Следующее действие: consolidated B2 payment-state milestone review (T-02).
 
 ## Точное продолжение
 
-1. Сделать атомарный implementation commit B2-07 от `5f8ba76`.
+1. ~~Сделать атомарный implementation commit B2-07 от `5f8ba76`.~~ Выполнено: `64fa1b9`.
 2. Провести один consolidated independent B2 payment-state milestone review.
 3. При PASS перевести B2-02/B2-03/B2-05/B2-06/B2-07 в DONE и перейти к B3-01.
 
