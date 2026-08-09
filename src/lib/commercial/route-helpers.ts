@@ -1,6 +1,8 @@
 import { apiFailure } from "@/lib/api-response";
 import { CommercialError } from "@/lib/commercial/commercial-service";
 
+export { requireTrustedOrigin } from "@/lib/commercial/origin-policy";
+
 export function commercialErrorResponse(error: unknown) {
   if (error instanceof CommercialError) {
     const status = error.code === "EXISTING_ACCESS" || error.code === "ORDER_ALREADY_PENDING" || error.code === "PAYMENT_SESSION_ALREADY_ACTIVE"
@@ -35,11 +37,4 @@ function commercialMessage(code: string) {
     COMMERCIAL_PRODUCT_UNAVAILABLE: "Этот вариант временно недоступен для покупки."
   };
   return messages[code] ?? "Коммерческий checkout временно недоступен.";
-}
-
-export function isSameOriginRequest(request: Request) {
-  const origin = request.headers.get("origin");
-  if (!origin) return true;
-  const expected = process.env.APP_URL || new URL(request.url).origin;
-  return origin === expected;
 }

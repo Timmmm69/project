@@ -3,7 +3,7 @@ import { commercialOrderStatus, getCommercialOrder, processCommercialProviderNot
 import { requireCommercialOrderToken } from "@/lib/commercial/order-token";
 import { commercialProviderForRuntime } from "@/lib/commercial/providers";
 import { allowCommercialRefresh } from "@/lib/commercial/rate-limit";
-import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
+import { commercialErrorResponse, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
 import { logEvent } from "@/server/events/log-event";
 
 type Context = { params: Promise<{ publicId: string }> };
@@ -30,7 +30,7 @@ export function createCommercialRefreshStatusPostHandler(
   const writeEvent = dependencies.writeEvent ?? logEvent;
 
   return async function commercialRefreshStatusPost(request: Request, context: Context) {
-    if (!isSameOriginRequest(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
+    if (!requireTrustedOrigin(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
     const { publicId } = await context.params;
     const order = await requireOrderToken(publicId);
     if (!order) return apiFailure({ code: "ORDER_TOKEN_REQUIRED", message: "Заказ недоступен в этой сессии." }, 403);

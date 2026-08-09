@@ -2,7 +2,7 @@ import { apiFailure, apiSuccess } from "@/lib/api-response";
 import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
 import { CommercialError, createCommercialOrder } from "@/lib/commercial/commercial-service";
 import { setCommercialOrderToken } from "@/lib/commercial/order-token";
-import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
+import { commercialErrorResponse, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
 import { allowCommercialAction } from "@/lib/commercial/rate-limit";
 import {
   commercialIdempotencyKeySchema,
@@ -31,7 +31,7 @@ export function createCommercialOrderPostHandler(
   const createRecoveryRuntime = dependencies.createRecoveryRuntime ?? createRecoveryHttpRuntime;
 
   return async function commercialOrderPost(request: Request) {
-  if (!isSameOriginRequest(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
+  if (!requireTrustedOrigin(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
   const clientKey = request.headers.get("x-forwarded-for") ?? "local";
   if (!allowAction(`order:${clientKey}`, 5)) return apiFailure({ code: "RATE_LIMITED", message: "Try again later." }, 429);
   const unavailable = unavailableReason();
