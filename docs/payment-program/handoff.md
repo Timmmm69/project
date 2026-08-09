@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `681d8ee` | Production: `NO-GO`
+2026-08-09 | HEAD: `5656009` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -25,17 +25,15 @@ B1, B2-02..B2-07, B3-01 — смотри `board.md` раздел 4.1 для SHA 
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|
-| **B3-03** | `READY` | `681d8ee` | `tasks/B3-03.md` — приватный cache/referrer policy |
+| **B3-04** | `READY` | `5656009` | `tasks/B3-04.md` — удалить raw provider payload persistence |
 
 ## Последний завершённый шаг
 
-B3-02 закоммичен: `681d8ee` — `feat(payment): persist commercial rate limits and cooldowns`.
-- PostgreSQL-based `CommercialRateLimitEvent` + advisory locks.
-- `deriveCommercialClientKey()` через trusted proxy.
-- Namespace: ORDER_CREATE, PAYMENT_SESSION_CREATE, STATUS_REFRESH, CHECKOUT_FLOW, BRUTE_FORCE.
-- `Retry-After` в 429 ответах.
-- 11 unit тестов; lint + typecheck + 452 тестов — PASS.
-- Миграция: `20260809082143_add_commercial_rate_limits`.
+B3-03 закоммичен: `5656009` — `feat(payment): prevent cache and referrer leakage`.
+- `PAYMENT_RESPONSE_HEADERS` в `api-response.ts` — `Cache-Control: no-store` + `Referrer-Policy: no-referrer` на все `apiSuccess`/`apiFailure`.
+- 31 тест в `commercial-response-policy.test.ts`: positive/error headers, все статусы, Retry-After merge, no cacheable headers, no leak в body.
+- 483 tests PASS, typecheck/lint clean.
+- Recovery модуль уже имеет свои `RECOVERY_RESPONSE_HEADERS`.
 
 ## Состояние рабочей копии
 
