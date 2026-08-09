@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { serializePublicTest } from "@/lib/public-tests/serialize";
-import { commercialLegalConfig, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
+import { commercialLegalConfig, COMMERCIAL_PRODUCT_CODE, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
 import { CommercialCheckoutForm } from "./commercial-checkout-form";
 import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
@@ -11,7 +11,6 @@ import {
   type VerifiedStudentEntryResolution
 } from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
-import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
 import { PrestartAccessExpired, PrestartConfirmation } from "./prestart-confirmation";
 
 export const dynamic = "force-dynamic";
@@ -63,14 +62,6 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
     })
     : null;
   const showCommercialCheckout = Boolean(commercialProduct);
-  const recoveryAvailability = resolveRecoveryUiAvailability();
-  const recovery = authenticCommercialTest && commercialProduct && recoveryAvailability.available &&
-    recoveryAvailability.productCode === commercialProduct.code
-    ? {
-        productCode: recoveryAvailability.productCode,
-        supportEmail: legal.supportEmail
-      }
-    : null;
   isFullCeCt &&= !showCommercialCheckout;
   let hideLegacyPrivateControls = false;
   let entryResolution: VerifiedStudentEntryResolution | null = null;
@@ -217,7 +208,16 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
                 <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
                 <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
               </div>
-              {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} recovery={recovery} /> : null}
+              {showCommercialCheckout && commercialProduct ? (
+                <CommercialCheckoutForm
+                  legal={legal}
+                  testId={publicTest.id}
+                  productCode={COMMERCIAL_PRODUCT_CODE}
+                  priceMinor={commercialProduct.priceMinor}
+                  currency={commercialProduct.currency}
+                  verifiedPreAuthorized={false}
+                />
+              ) : null}
               {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
             </>
           )}

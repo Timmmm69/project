@@ -671,6 +671,58 @@ th {
   margin: 8px 0 0;
 }
 
+.checkbox-row {
+  align-items: flex-start;
+  color: var(--foreground);
+  cursor: pointer;
+  display: grid;
+  font-size: 14px;
+  gap: 8px;
+  grid-template-columns: auto 1fr;
+  min-height: 42px;
+}
+
+.checkbox-row input[type="checkbox"] {
+  cursor: pointer;
+  height: 18px;
+  margin-top: 3px;
+  min-height: auto;
+  width: 18px;
+}
+
+.checkout-section {
+  padding: 18px;
+}
+
+.checkout-loader {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.checkout-loader .spinner {
+  animation: spin 0.8s linear infinite;
+  border: 3px solid var(--border);
+  border-radius: 50%;
+  border-top-color: var(--accent);
+  height: 32px;
+  width: 32px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checkout-loader .spinner {
+    animation: none;
+    border-top-color: var(--border);
+  }
+}
+
 @media (max-width: 920px) {
   .admin-overview,
   .cards-grid,
