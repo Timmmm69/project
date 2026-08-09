@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-09 | HEAD: `0c230f7` | Production: `NO-GO`
+2026-08-09 | HEAD: `6574f75` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
@@ -19,29 +19,27 @@
 - После commit: обновить карточку, board, handoff.
 
 **DONE карточки (Tier 2, ждут consolidated B3 review):**
-B1, B2-02..B2-07, B3-01 — смотри `board.md` раздел 4.1 для SHA и review evidence.
+B1, B2-02..B2-07, B3-01..B3-05 — смотри `board.md` раздел 4.1 для SHA и review evidence.
 
 ## Следующая задача
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|
-| **B3-05** | `READY` | `0c230f7` | `tasks/B3-05.md` — authoritative analytics producers |
+| **B3 consolidated review (T-08)** | `READY` | `6574f75` | Consolidated security review B3-01..B3-05 per `reviews/README.md` |
 
 ## Последний завершённый шаг
 
-B3-04 закоммичен: `0c230f7` — `feat(payment): sanitize provider payload persistence`.
-- `payload-sanitizer.ts` — рекурсивный санитайзер forbidden ключей (PAN, CVV, expiry, 3DS, signature, secret, token, raw body/request/response, payment URL, credentials).
-- Применён к legacy `payment-service.ts`: `providerPayload`, `providerWebhookPayload`, event_logs.
-- Миграция: `UPDATE payments SET provider_payload_json = NULL, provider_webhook_payload_json = NULL`.
-- `containsForbiddenKeys()` для runtime privacy scan.
-- 16 тестов в `commercial-payload-sanitizer.test.ts`.
-- Canonical `redactedPayload` уже allowlisted; analytics защищены `forbidden-payload.ts`.
-- Legacy изолирован от canonical WEBPAY checkout.
-- 499 tests PASS, typecheck/lint clean.
+B3-05 закоммичен: `6574f75` — `feat(payment): emit authoritative payment analytics`.
+- 6 новых event schemas: `payment_session_created`, `payment_pending`, `payment_failed`, `payment_cancelled`, `payment_expired`, `payment_return_viewed`.
+- Producers только после commit: `ensurePaymentSessionCreatedAnalytics` + `ensurePaymentPendingAnalytics` (attempt creation), `ensurePaymentTerminalAnalytics` (notification processing), `ensurePaymentReturnViewedAnalytics` (UX-only из status route).
+- `safelyWriteAnalyticsEvent` гарантирует, что ошибка analytics не откатывает transaction.
+- `skipDuplicates` предотвращает duplicate/replay events.
+- Browser CTA/return не создаёт `payment_confirmed`.
+- 503 tests PASS, typecheck/lint clean.
 
 ## Состояние рабочей копии
 
-Clean. B3-02..B3-04 committed.
+Clean. B3-02..B3-05 committed.
 
 Unrelated (не коммитить): `next-env.d.ts`, `pnpm-workspace.yaml`.
 
