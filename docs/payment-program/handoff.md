@@ -26,15 +26,15 @@ B3 security block принят consolidated review `reviews/B3-security-mileston
 
 | Карточка | Статус | Base SHA | Требования |
 |---|---|---|---|---|
-| **D-01** | `READY` | `6574f75` | Обновить payment UX documents per `tasks/D-01.md` |
+| **D-02** | `READY` | `6574f75` | Создать payment-only Figma package per `tasks/D-02.md` |
 
 ## Последний завершённый шаг
 
-B3 consolidated security review (T-08): PASS (`reviews/B3-security-milestone.md`).
-- B3-01..B3-05 все PASS, приняты консолидированным review: 24 критерия, 0 findings.
-- Origin/Host/CSRF enforcement (10ff5fa), Durable rate limits (681d8ee), Cache/referrer policy (5656009), Payload sanitization (0c230f7), Analytics producers (6574f75).
-- Gates: typecheck/lint clean, 503 tests PASS.
-- Следующая READY-карточка: D-01 (обновить payment UX documents).
+D-01 (Tier 3 SELF_CHECKED): обновлены payment UX documents.
+- Создан `docs/payment-program/sources/ux-state-contract-v1.md` — 9 состояний, точные CTA/retry/cooldown/support/copy контракты.
+- `payment-ux-contract-v1.md`: статус `APPROVED`. Backend states не переименованы.
+- Docs-only, код не менялся.
+- Следующая READY-карточка: D-02 (payment-only Figma package).
 
 ## Состояние рабочей копии
 
