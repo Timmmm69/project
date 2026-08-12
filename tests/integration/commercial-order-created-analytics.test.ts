@@ -187,7 +187,7 @@ describeWithDatabase("ANA-02A commercial Order canonical analytics integration",
         officialYear: 2026,
         price: 1000,
         currency: "BYN",
-        durationMinutes: 60,
+        durationMinutes: 120,
         status: "PUBLISHED",
         publishedAt: new Date()
       }

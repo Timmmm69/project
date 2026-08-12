@@ -427,7 +427,9 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
   beforeEach(async () => {
     await cleanDatabase();
     nextCookieState.values.clear();
-    now = new Date("2026-07-14T12:00:00.000Z");
+    // Production routes use the real clock, so keep issued sessions current as well.
+    // A fixed historical timestamp makes this suite start failing once that date passes.
+    now = new Date();
     deliveries = [];
     testSlug = `acc01a-destination-${randomUUID()}`;
     const test = await prisma.test.create({

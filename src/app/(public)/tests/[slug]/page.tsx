@@ -11,6 +11,7 @@ import {
   type VerifiedStudentEntryResolution
 } from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
+import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
 import { PrestartAccessExpired, PrestartConfirmation } from "./prestart-confirmation";
 
 export const dynamic = "force-dynamic";
@@ -62,6 +63,14 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
     })
     : null;
   const showCommercialCheckout = Boolean(commercialProduct);
+  const recoveryAvailability = resolveRecoveryUiAvailability();
+  const recovery = authenticCommercialTest && commercialProduct && recoveryAvailability.available &&
+    recoveryAvailability.productCode === commercialProduct.code
+    ? {
+        productCode: recoveryAvailability.productCode,
+        supportEmail: legal.supportEmail
+      }
+    : null;
   isFullCeCt &&= !showCommercialCheckout;
   let hideLegacyPrivateControls = false;
   let entryResolution: VerifiedStudentEntryResolution | null = null;
@@ -215,7 +224,7 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
                   productCode={COMMERCIAL_PRODUCT_CODE}
                   priceMinor={commercialProduct.priceMinor}
                   currency={commercialProduct.currency}
-                  verifiedPreAuthorized={false}
+                  recovery={recovery}
                 />
               ) : null}
               {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}

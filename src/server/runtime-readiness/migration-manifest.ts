@@ -66,5 +66,17 @@ export const migrationManifest: readonly MigrationManifestEntry[] = Object.freez
   migration(
     "20260714190000_add_recovery_continuation_exchange",
     "6d6730ce25bfd437b6194b86203aadc2162995eae30eb97688967745c5d471c3"
+  ),
+  migration(
+    "20260801223000_add_immutable_commercial_order_snapshot",
+    "c72e11ffbf2e69c8312db0ad9a37940f14bac7c1d3846cac23c7f2206e010c89"
+  ),
+  migration(
+    "20260809082143_add_commercial_rate_limits",
+    "516bbbce41556a5fbd7509f1bc2bc723a52c1bd77795a543b2a98b7cb33c5ade"
+  ),
+  migration(
+    "20260809123000_sanitize_payment_payloads",
+    "4a53d85c732610a3173a103c2c022249780e7baab01cdb1517b94a60a30e45cf"
   )
 ]);

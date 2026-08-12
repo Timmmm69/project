@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { RecoveryAccessPanel } from "./recovery-access-panel";
 
 type LegalLinks = {
   version: string;
@@ -75,13 +76,13 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency, verifiedPreAuthorized }: {
+export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency, recovery }: {
   legal: LegalLinks;
   testId: string;
   productCode: string;
   priceMinor: number;
   currency: string;
-  verifiedPreAuthorized: boolean;
+  recovery: Readonly<{ productCode: string; supportEmail: string }> | null;
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -531,23 +532,10 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     if (!order) return;
     setBusy(true);
     const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, { method: "POST" });
-    const body = await response.json() as ApiResponse<{ nextAction: "START_TEST" | "RESUME_TEST" | "VIEW_RESULT"; nextUrl: string; testId: string }>;
+    const body = await response.json() as ApiResponse<{ nextAction: "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT"; nextUrl: string; testId: string }>;
     if (!body.success) {
       setBusy(false);
       setMessage(body.error.message);
-      return;
-    }
-    if (body.data.nextAction === "START_TEST") {
-      const start = await fetch(`/api/commercial/orders/${order.publicId}/start-attempt`, {
-        method: "POST",
-      });
-      const startBody = await start.json() as ApiResponse<{ nextUrl: string }>;
-      if (!startBody.success) {
-        setBusy(false);
-        setMessage(startBody.error.message);
-        return;
-      }
-      window.location.assign(startBody.data.nextUrl);
       return;
     }
     window.location.assign(body.data.nextUrl);
@@ -569,23 +557,6 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
   }
 
-  async function startVerifiedAttempt() {
-    setBusy(true);
-    setMessage(null);
-    const response = await fetch("/api/attempts/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ testId })
-    });
-    const body = await response.json() as ApiResponse<{ attempt: { attemptId: string } }>;
-    setBusy(false);
-    if (!body.success) {
-      setMessage(body.error.message);
-      return;
-    }
-    window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
-  }
-
   function handleEmailKeyUp(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter" && email && !otpSent) {
       void requestOtp();
@@ -596,17 +567,6 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     if (event.key === "Enter" && otp.length === 6 && verifyOperationId) {
       void verifyOtp();
     }
-  }
-
-  if (verifiedPreAuthorized) {
-    return (
-      <section className="subpanel stack compact">
-        {message ? <p className="form-message info">{message}</p> : null}
-        <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
-          Начать или продолжить тест
-        </button>
-      </section>
-    );
   }
 
   if (checkoutPhase === "creating_order") {
@@ -678,6 +638,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   }
 
   return (
+    <>
     <section className="subpanel stack compact">
       <div>
         <p className="eyebrow">Оформление покупки</p>
@@ -823,5 +784,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
         </section>
       ) : null}
     </section>
+    {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
+    </>
   );
 }

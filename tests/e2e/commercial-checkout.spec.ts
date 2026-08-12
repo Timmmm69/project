@@ -5,7 +5,6 @@ import { POST as webPayNotify } from "@/app/api/payments/webpay/notify/route";
 import type { CanonicalOrderCreatedEmitter } from "@/lib/analytics/order-created-callsite";
 import { createCommercialCheckoutFlow, createCommercialOrder, createCommercialPaymentSession, processCommercialProviderNotification, recordCommercialPaymentValidationFailure } from "@/lib/commercial/commercial-service";
 import { LocalFakeCommercialProvider, WebPaySandboxProvider } from "@/lib/commercial/providers";
-import { hashLookupToken } from "@/lib/commercial/security";
 import { assertNoForbiddenAnalyticsPayload } from "@/lib/analytics/forbidden-payload";
 import type { AnalyticsWriter } from "@/lib/analytics/analytics-service";
 import { hashLookupToken, lookupTokenMatches } from "@/lib/commercial/security";
@@ -106,6 +105,7 @@ async function fakeEvent(input: {
 }
 
 test.beforeAll(async () => {
+  (process.env as Record<string, string | undefined>).NODE_ENV = "development";
   process.env.LEGAL_BUNDLE_VERSION = "e2e-v1";
   process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY = "synthetic-e2e-commercial-order-token-key-32-bytes";
   process.env.ANALYTICS_ENABLED = "true";

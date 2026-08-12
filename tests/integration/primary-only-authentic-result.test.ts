@@ -169,6 +169,7 @@ async function createCommercialFixture(email = `prod03-${randomUUID()}@example.t
       testIdSnapshot: test.id,
       productNameSnapshot: product.name,
       priceMinor: product.priceMinor,
+      examModeSnapshot: "RIKZ_RUSSIAN_2026",
       currency: "BYN",
       emailOriginal: email,
       emailNormalized: email,
@@ -222,6 +223,7 @@ function commercialRequest(fixture: Fixture) {
     headers: {
       origin,
       host: "prod03-primary-result.test",
+      "x-test-internal-request": "true",
       "Idempotency-Key": randomUUID()
     }
   });
