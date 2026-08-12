@@ -632,6 +632,14 @@ function stableOrderLookupToken(order: {
   return token;
 }
 
+async function lockCommercialCheckoutFlow(tx: Tx, checkoutFlowId: string) {
+  const lockKey = `commercial-checkout-flow:${checkoutFlowId}`;
+  await tx.$queryRaw`
+    SELECT 1::integer AS "locked"
+    FROM (SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))) AS acquired
+  `;
+}
+
 export async function createCommercialOrder(input: {
   productCode: string;
   checkoutFlowId: string;
@@ -672,6 +680,9 @@ export async function createCommercialOrder(input: {
   let outcome;
   try {
     outcome = await prisma.$transaction(async (tx) => {
+    // Serialize one logical checkout flow before reading its Order. A transaction
+    // that waited here receives a fresh READ COMMITTED snapshot for later reads.
+    await lockCommercialCheckoutFlow(tx, input.checkoutFlowId);
     const verifiedAuthority = input.verifiedEmailAuthority
       ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority, tx)
       : null;
