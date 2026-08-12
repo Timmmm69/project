@@ -742,6 +742,14 @@ export async function createCommercialOrder(input: {
       orderBy: { createdAt: "desc" }
     });
     if (pending) {
+      // Under READ COMMITTED, a concurrent transaction can commit the Order after
+      // checkoutFlow.order was read but before this lookup. Treat that exact
+      // flow/key match as an idempotent replay instead of an unrelated pending Order.
+      if (pending.checkoutFlowId === input.checkoutFlowId &&
+          pending.idempotencyKey === input.idempotencyKey) {
+        const lookupToken = stableOrderLookupToken(pending, orderTokenSecret);
+        return { kind: "created" as const, order: pending, lookupToken, idempotent: true, product, newOrder: false };
+      }
       const [paidOrder, access, attempt] = await Promise.all([
         tx.commercialOrder.findFirst({
           where: {
