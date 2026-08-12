@@ -59,6 +59,12 @@ function baseSnapshot(overrides: Partial<RecoveryStateSnapshot> = {}): RecoveryS
       status: "PAID",
       priceMinor: 1000,
       currency: "BYN",
+      attemptLimitSnapshot: 1,
+      startWindowDaysSnapshot: 90,
+      durationMinutesSnapshot: 120,
+      resultRetentionDaysSnapshot: 365,
+      examModeSnapshot: "RIKZ_RUSSIAN_2026",
+      resultDisplayModeSnapshot: "PRIMARY_ONLY",
       paidAt: now,
       paymentAttempts: [{
         id: ids.payment,
@@ -142,9 +148,10 @@ function terminalAttempt(
 }
 
 describe("ACC-01A recovery state decision table", () => {
-  it("exposes exactly the canonical six success states", () => {
+  it("exposes the canonical entitlement and payment recovery states", () => {
     expect(RECOVERY_RESOLVED_STATES).toEqual([
       "access_unstarted", "attempt_active", "result_available",
+      "payment_pending", "paid_without_access",
       "start_window_expired", "no_access", "support_required"
     ]);
   });
@@ -261,10 +268,11 @@ describe("ACC-01A recovery state decision table", () => {
     }), now).state).toBe("support_required");
   });
 
-  it.each([0, 366])("rejects terminal Result retention configuration %i", (resultRetentionDays) => {
+  it.each([0, 366])("rejects purchased Result retention snapshot %i", (resultRetentionDaysSnapshot) => {
     const access = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    const order = { ...baseSnapshot().orders[0]!, resultRetentionDaysSnapshot };
     expect(resolveRecoveryStateSnapshot(baseSnapshot({
-      product: { ...baseSnapshot().product!, resultRetentionDays },
+      orders: [order],
       accesses: [access],
       attempts: [terminalAttempt()]
     }), now).state).toBe("support_required");
@@ -277,18 +285,35 @@ describe("ACC-01A recovery state decision table", () => {
     }), now).state).toBe("support_required");
   });
 
-  it("never maps PAID without Access to no_access", () => {
-    expect(resolveRecoveryStateSnapshot(baseSnapshot({ accesses: [], attempts: [] }), now).state)
-      .toBe("support_required");
+  it("maps consistent PAID without Access to a safe payment continuation", () => {
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({ accesses: [], attempts: [] }), now))
+      .toEqual({
+        state: "paid_without_access",
+        screen: "REC-01",
+        nextAction: "VIEW_PAYMENT_STATUS"
+      });
   });
 
   it.each(["CREATED", "PENDING"] as const)(
-    "maps %s Order without Access to support_required",
+    "maps %s Order without Access to payment_pending",
     (status) => {
-      const order = { ...baseSnapshot().orders[0]!, status, paymentAttempts: [] };
+      const order = {
+        ...baseSnapshot().orders[0]!,
+        status,
+        paidAt: null,
+        paymentAttempts: status === "PENDING" ? [{
+          ...baseSnapshot().orders[0]!.paymentAttempts[0]!,
+          status: "PENDING" as const,
+          paidAt: null
+        }] : []
+      };
       expect(resolveRecoveryStateSnapshot(baseSnapshot({
         orders: [order], accesses: [], attempts: []
-      }), now).state).toBe("support_required");
+      }), now)).toEqual({
+        state: "payment_pending",
+        screen: "REC-01",
+        nextAction: "VIEW_PAYMENT_STATUS"
+      });
     }
   );
 
@@ -384,6 +409,39 @@ describe("ACC-01A recovery state decision table", () => {
     }), now).state).toBe("result_available");
   });
 
+  it("uses the immutable Order snapshot after mutable Product terms change", () => {
+    const editedProduct = {
+      ...baseSnapshot().product!,
+      attemptLimit: 7,
+      resultRetentionDays: 1,
+      priceMinor: 7777,
+      currency: "USD"
+    };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({ product: editedProduct }), now).state)
+      .toBe("access_unstarted");
+
+    const consumedAccess = { ...baseSnapshot().accesses[0]!, attemptsAvailable: 0 };
+    expect(resolveRecoveryStateSnapshot(baseSnapshot({
+      product: editedProduct,
+      accesses: [consumedAccess],
+      attempts: [terminalAttempt()]
+    }), now).state).toBe("result_available");
+  });
+
+  it("fails closed when purchased snapshot terms are inconsistent", () => {
+    for (const order of [
+      { ...baseSnapshot().orders[0]!, attemptLimitSnapshot: 2 },
+      { ...baseSnapshot().orders[0]!, startWindowDaysSnapshot: 30 },
+      { ...baseSnapshot().orders[0]!, durationMinutesSnapshot: 60 },
+      { ...baseSnapshot().orders[0]!, resultRetentionDaysSnapshot: 30 },
+      { ...baseSnapshot().orders[0]!, examModeSnapshot: "GENERIC" as const },
+      { ...baseSnapshot().orders[0]!, resultDisplayModeSnapshot: "FULL" }
+    ]) {
+      expect(resolveRecoveryStateSnapshot(baseSnapshot({ orders: [order] }), now).state)
+        .toBe("support_required");
+    }
+  });
+
   it("maps revoked or zero-availability unstarted Access to support_required", () => {
     for (const access of [
       { ...baseSnapshot().accesses[0]!, revokedAt: now },
@@ -420,14 +478,16 @@ describe("ACC-01A recovery state decision table", () => {
     const responses = RECOVERY_RESOLVED_STATES.map((value) => recoveryStateResponseSchema.parse({
       state: value,
       screen: "REC-01",
-      nextAction: ["access_unstarted", "attempt_active", "result_available"].includes(value)
-        ? "CONTINUE"
-        : null
+      nextAction: ["payment_pending", "paid_without_access"].includes(value)
+        ? "VIEW_PAYMENT_STATUS"
+        : ["access_unstarted", "attempt_active", "result_available"].includes(value)
+          ? "CONTINUE"
+          : null
     }));
     for (const response of responses) {
       expect(Object.keys(response).sort()).toEqual(["nextAction", "screen", "state"]);
       expect(JSON.stringify(response)).not.toMatch(
-        /email|userId|productId|testId|order|payment|provider|accessId|attemptId|resultId|startedAt|endsAt|finishedAt|remaining|answer|question|correct|accepted|explanation|primaryScore|scaledScore|lookup|token|digest/i
+        /email|userId|productId|testId|orderReference|provider|accessId|attemptId|resultId|startedAt|endsAt|finishedAt|remaining|answer|question|correct|accepted|explanation|primaryScore|scaledScore|lookup|token|digest/i
       );
     }
     expect(() => recoveryStateResponseSchema.parse({

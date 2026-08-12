@@ -105,6 +105,7 @@ async function fakeEvent(input: {
 }
 
 test.beforeAll(async () => {
+  (process.env as Record<string, string | undefined>).NODE_ENV = "development";
   process.env.LEGAL_BUNDLE_VERSION = "e2e-v1";
   process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY = "synthetic-e2e-commercial-order-token-key-32-bytes";
   process.env.ANALYTICS_ENABLED = "true";
@@ -385,6 +386,18 @@ test("fake provider grants one access and replay is a no-op", async () => {
     idempotencyKey: `order-${suffix}-idempotency`
   });
   expect(created.order.priceMinor).toBe(1000);
+  expect(created.order).toMatchObject({
+    attemptLimitSnapshot: 1,
+    startWindowDaysSnapshot: 90,
+    durationMinutesSnapshot: 120,
+    resultRetentionDaysSnapshot: 365,
+    examModeSnapshot: "RIKZ_RUSSIAN_2026",
+    resultDisplayModeSnapshot: "PRIMARY_ONLY",
+    offerVersion: "e2e-v1",
+    privacyVersion: "e2e-v1",
+    refundPolicyVersion: "e2e-v1",
+    disclaimerVersion: "e2e-v1"
+  });
 
   const provider = new LocalFakeCommercialProvider();
   const payment = await createCommercialPaymentSession({
@@ -407,7 +420,14 @@ test("fake provider grants one access and replay is a no-op", async () => {
     adultBuyerConfirmed: true,
     legalBundleVersion: "e2e-v1",
     idempotencyKey: `order-${suffix}-different-key`
-  })).rejects.toMatchObject({ code: "ORDER_ALREADY_PENDING" });
+  })).rejects.toMatchObject({
+    code: "ORDER_ALREADY_PENDING",
+    nextAction: "WAIT_FOR_PAYMENT",
+    publicOrderReference: created.order.publicId
+  });
+  expect((await prisma.commercialOrder.findUniqueOrThrow({
+    where: { id: created.order.id }
+  })).lookupTokenHash).toBe(hashLookupToken(created.lookupToken));
 
   const raw = JSON.stringify({
     merchant_reference: payment.merchantReference,
@@ -421,8 +441,42 @@ test("fake provider grants one access and replay is a no-op", async () => {
   const notification = await provider.verifyNotification(raw);
   const providerMismatch = await processCommercialProviderNotification({ notification, rawBody: raw, provider: "WEBPAY_SANDBOX" });
   expect(providerMismatch.rejected).toBe(true);
-  const first = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
-  const replay = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
+  const product = await prisma.commercialProduct.findUniqueOrThrow({
+    where: { id: productId },
+    select: { testId: true }
+  });
+  await prisma.commercialProduct.update({
+    where: { id: productId },
+    data: { attemptLimit: 3, startWindowDays: 5, resultRetentionDays: 5 }
+  });
+  await prisma.test.update({
+    where: { id: product.testId },
+    data: { durationMinutes: 30 }
+  });
+
+  let first: Awaited<ReturnType<typeof processCommercialProviderNotification>>;
+  let replay: Awaited<ReturnType<typeof processCommercialProviderNotification>>;
+  try {
+    first = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
+    replay = await processCommercialProviderNotification({ notification, rawBody: raw, provider: provider.provider });
+
+    const immutableAccess = await prisma.access.findUniqueOrThrow({
+      where: { commercialOrderId: created.order.id }
+    });
+    const expectedStartDeadline = new Date(immutableAccess.grantedAt!);
+    expectedStartDeadline.setUTCDate(expectedStartDeadline.getUTCDate() + 90);
+    expect(immutableAccess).toMatchObject({ attemptsTotal: 1, attemptsAvailable: 1 });
+    expect(immutableAccess.startDeadlineAt).toEqual(expectedStartDeadline);
+  } finally {
+    await prisma.commercialProduct.update({
+      where: { id: productId },
+      data: { attemptLimit: 1, startWindowDays: 90, resultRetentionDays: 365 }
+    });
+    await prisma.test.update({
+      where: { id: product.testId },
+      data: { durationMinutes: 120 }
+    });
+  }
 
   expect(first.grantedAccess).toBe(true);
   expect(replay.duplicate).toBe(true);
@@ -444,25 +498,46 @@ test("fake provider grants one access and replay is a no-op", async () => {
 
   const access = await prisma.access.findUniqueOrThrow({ where: { commercialOrderId: created.order.id } });
   await prisma.access.update({ where: { id: access.id }, data: { attemptsAvailable: 0 } });
+  const resultFinishedAt = new Date();
+  const resultStartedAt = new Date(resultFinishedAt.getTime() - 60_000);
   await prisma.attempt.create({
     data: {
       userId: access.userId,
       testId: access.testId,
       accessId: access.id,
       status: "COMPLETED",
-      startedAt: new Date(),
-      finishedAt: new Date(),
-      testSnapshot: {}
+      startedAt: resultStartedAt,
+      finishedAt: resultFinishedAt,
+      durationSeconds: 60,
+      rawScore: 60,
+      maxRawScore: 80,
+      percent: 75,
+      testSnapshot: {
+        testId: access.testId,
+        subject: "russian",
+        mode: "ce_ct",
+        examMode: "rikz_russian_2026",
+        durationMinutes: 120,
+        maxRawScore: 80,
+        questions: Array.from({ length: 40 }, (_, index) => ({
+          snapshotQuestionId: `result-question-${index + 1}`,
+          orderIndex: index,
+          questionType: index < 18 ? "multi_select_five" : "short_answer_token",
+          points: 2
+        }))
+      }
     }
   });
-  const repurchase = await createCheckoutOrder({
+  await expect(createCheckoutOrder({
     productCode,
     email,
     adultBuyerConfirmed: true,
     legalBundleVersion: "e2e-v1",
     idempotencyKey: `order-${suffix}-after-completion`
-  });
-  expect(repurchase.order.id).not.toBe(created.order.id);
+  })).rejects.toMatchObject({ code: "EXISTING_ACCESS", nextAction: "VIEW_RESULT" });
+  expect(await prisma.commercialOrder.count({
+    where: { commercialProductId: productId, emailNormalized: email }
+  })).toBe(1);
 });
 
 test("forged WebPay callback cannot pay, while an exact status response grants one access", async () => {

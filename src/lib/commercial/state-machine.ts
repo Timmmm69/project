@@ -34,6 +34,14 @@ export function isActivePaymentAttempt(status: CommercialPaymentAttemptStatus) {
   return status === "CREATED" || status === "PENDING";
 }
 
+export function canRetryTerminalOrder(status: CommercialOrderStatus) {
+  return status === "FAILED" || status === "CANCELLED" || status === "EXPIRED";
+}
+
 export function canOpenNewPaymentAttempt(status: CommercialOrderStatus) {
-  return status !== "PAID";
+  return status === "CREATED" || canRetryTerminalOrder(status);
+}
+
+export function canTransitionOrderForNewPaymentAttempt(status: CommercialOrderStatus) {
+  return status === "CREATED" || canRetryTerminalOrder(status);
 }

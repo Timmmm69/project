@@ -153,7 +153,7 @@ export class WebPaySandboxProvider implements CommercialPaymentProviderAdapter {
     };
   }
 
-  async fetchPaymentStatus(input: { merchantReference: string; providerPaymentId: string | null }): Promise<ProviderNotification> {
+  async fetchPaymentStatus(input: Parameters<CommercialPaymentProviderAdapter["fetchPaymentStatus"]>[0]): Promise<ProviderNotification> {
     const value = config();
     requireConfig(value);
     if (!value.statusUrl) {

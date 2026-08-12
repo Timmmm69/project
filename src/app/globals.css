@@ -254,10 +254,7 @@ textarea {
   border-radius: 8px;
   color: var(--foreground);
   font: inherit;
-  min-height: 42px;
-  padding: 10px 12px;
-  transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
-  width: 100%;
+  min-height: 44px;
 }
 
 input:focus,
@@ -283,7 +280,8 @@ textarea {
   font: inherit;
   font-weight: 800;
   justify-content: center;
-  min-height: 42px;
+  min-height: 44px;
+  min-width: 44px;
   padding: 10px 15px;
   text-decoration: none;
   transition: background 140ms ease, border-color 140ms ease, color 140ms ease, transform 140ms ease;
@@ -298,6 +296,24 @@ textarea {
 .button:disabled {
   cursor: not-allowed;
   opacity: 0.55;
+}
+
+.button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+
+a:focus-visible,
+.text-link:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
+}
+
+.checkbox-row:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+  border-radius: 4px;
 }
 
 .button.secondary {
@@ -669,6 +685,68 @@ th {
 
 .result-mistake p {
   margin: 8px 0 0;
+}
+
+.checkbox-row {
+  align-items: flex-start;
+  color: var(--foreground);
+  cursor: pointer;
+  display: grid;
+  font-size: 14px;
+  gap: 8px;
+  grid-template-columns: auto 1fr;
+  min-height: 44px;
+}
+
+.checkbox-row input[type="checkbox"] {
+  cursor: pointer;
+  height: 18px;
+  margin-top: 3px;
+  min-height: auto;
+  width: 18px;
+}
+
+.checkout-section {
+  padding: 18px;
+}
+
+.checkout-loader {
+  align-items: center;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding: 28px 18px;
+  text-align: center;
+}
+
+.checkout-loader .spinner {
+  animation: spin 0.8s linear infinite;
+  border: 3px solid var(--border);
+  border-radius: 50%;
+  border-top-color: var(--accent);
+  height: 32px;
+  width: 32px;
+}
+
+@keyframes spin {
+  to { transform: rotate(360deg); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .checkout-loader .spinner {
+    animation: none;
+    border-top-color: var(--border);
+  }
+
+  .button {
+    transition: none;
+  }
+
+  input,
+  select,
+  textarea {
+    transition: none;
+  }
 }
 
 @media (max-width: 920px) {

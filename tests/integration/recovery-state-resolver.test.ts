@@ -503,7 +503,7 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
     expect((await (await handlers.resolveState(get(cookie))).json()).state).toBe("no_access");
   });
 
-  it("maps PAID-without-Access, revoked, zero availability and broken linkage to support_required", async () => {
+  it("recovers PAID-without-Access and fails broken entitlement linkage closed", async () => {
     const cases = [
       async (email: string) => {
         const fixture = await createPaidAccess(email);
@@ -521,7 +521,7 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
       const email = `support-${index}@example.test`;
       await cases[index]!(email);
       expect((await (await handlers.resolveState(get(await issueRecoveryCookie(email)))).json()).state)
-        .toBe("support_required");
+        .toBe(index === 0 ? "paid_without_access" : "support_required");
       await cleanDatabase();
       await prisma.test.create({ data: { id: testId, title: "reset", slug: `support-reset-${index}`, price: 1000, durationMinutes: 120, examMode: "RIKZ_RUSSIAN_2026", status: "PUBLISHED" } });
       await prisma.commercialProduct.create({ data: { id: productId, code: config.productCode, testId, name: "reset", priceMinor: 1000, attemptLimit: 1, resultRetentionDays: 365 } });
@@ -546,8 +546,8 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
       .toBe("support_required");
   });
 
-  it("keeps CREATED/PENDING or active PaymentAttempt out of no_access and permits terminal non-paid truth", async () => {
-    async function createOrder(email: string, status: "CREATED" | "PENDING" | "FAILED") {
+  it("recovers current payment truth and permits terminal non-paid truth", async () => {
+    async function createOrder(email: string, status: "CREATED" | "PENDING" | "FAILED" | "PAID") {
       return prisma.commercialOrder.create({
         data: {
           commercialProductId: productId,
@@ -563,16 +563,52 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
           disclaimerVersion: "v1",
           adultBuyerConfirmedAt: now,
           idempotencyKey: randomUUID(),
-          lookupTokenHash: randomUUID()
+          lookupTokenHash: randomUUID(),
+          ...(status === "PAID" ? { paidAt: now } : {})
         }
       });
     }
     for (const status of ["CREATED", "PENDING"] as const) {
       const email = `${status.toLowerCase()}-order@example.test`;
-      await createOrder(email, status);
-      expect((await (await handlers.resolveState(get(await issueRecoveryCookie(email)))).json()).state)
-        .toBe("support_required");
+      const order = await createOrder(email, status);
+      if (status === "PENDING") {
+        await prisma.commercialPaymentAttempt.create({
+          data: {
+            commercialOrderId: order.id,
+            provider: "LOCAL_FAKE",
+            merchantReference: randomUUID(),
+            status: "PENDING",
+            amountMinor: 1000
+          }
+        });
+      }
+      expect(await (await handlers.resolveState(get(await issueRecoveryCookie(email)))).json())
+        .toEqual({
+          state: "payment_pending",
+          screen: "REC-01",
+          nextAction: "VIEW_PAYMENT_STATUS"
+        });
     }
+    const paidEmail = "paid-without-access@example.test";
+    const paid = await createOrder(paidEmail, "PAID");
+    await prisma.commercialPaymentAttempt.create({
+      data: {
+        commercialOrderId: paid.id,
+        provider: "LOCAL_FAKE",
+        merchantReference: randomUUID(),
+        providerPaymentId: randomUUID(),
+        status: "PAID",
+        amountMinor: 1000,
+        paidAt: now,
+        verifiedAt: now
+      }
+    });
+    expect(await (await handlers.resolveState(get(await issueRecoveryCookie(paidEmail)))).json())
+      .toEqual({
+        state: "paid_without_access",
+        screen: "REC-01",
+        nextAction: "VIEW_PAYMENT_STATUS"
+      });
     const failedEmail = "failed-order@example.test";
     const failed = await createOrder(failedEmail, "FAILED");
     await prisma.commercialPaymentAttempt.create({
@@ -597,6 +633,50 @@ describeWithDatabase("ACC-01A recovery state resolver PostgreSQL integration", (
     expect(await Promise.all(responses.map((response) => response.json())))
       .toEqual(Array.from({ length: 8 }, () => ({
         state: "access_unstarted", screen: "REC-01", nextAction: "CONTINUE"
+      })));
+    expect(await businessSnapshot()).toEqual(before);
+  });
+
+  it("keeps repeated/concurrent pending-payment recovery read-only", async () => {
+    const email = "concurrent-pending@example.test";
+    const order = await prisma.commercialOrder.create({
+      data: {
+        commercialProductId: productId,
+        testIdSnapshot: testId,
+        productNameSnapshot: "product",
+        priceMinor: 1000,
+        emailOriginal: email,
+        emailNormalized: email,
+        status: "PENDING",
+        offerVersion: "v1",
+        privacyVersion: "v1",
+        refundPolicyVersion: "v1",
+        disclaimerVersion: "v1",
+        adultBuyerConfirmedAt: now,
+        idempotencyKey: randomUUID(),
+        lookupTokenHash: randomUUID()
+      }
+    });
+    await prisma.commercialPaymentAttempt.create({
+      data: {
+        commercialOrderId: order.id,
+        provider: "LOCAL_FAKE",
+        merchantReference: randomUUID(),
+        status: "PENDING",
+        amountMinor: 1000
+      }
+    });
+    const cookie = await issueRecoveryCookie(email);
+    const before = await businessSnapshot();
+    const responses = await Promise.all(Array.from(
+      { length: 8 },
+      () => handlers.resolveState(get(cookie))
+    ));
+    expect(await Promise.all(responses.map((response) => response.json())))
+      .toEqual(Array.from({ length: 8 }, () => ({
+        state: "payment_pending",
+        screen: "REC-01",
+        nextAction: "VIEW_PAYMENT_STATUS"
       })));
     expect(await businessSnapshot()).toEqual(before);
   });

@@ -7,8 +7,16 @@ import {
   backendOperationFailedPropertiesSchema,
   checkoutStartedPropertiesSchema,
   orderCreatedPropertiesSchema,
+  paidWithoutAccessDetectedPropertiesSchema,
+  paidWithoutAccessResolvedPropertiesSchema,
   parseAnalyticsEvent,
-  paymentConfirmedPropertiesSchema
+  paymentConfirmedPropertiesSchema,
+  paymentSessionCreatedPropertiesSchema,
+  paymentPendingPropertiesSchema,
+  paymentFailedPropertiesSchema,
+  paymentCancelledPropertiesSchema,
+  paymentExpiredPropertiesSchema,
+  paymentReturnViewedPropertiesSchema
 } from "@/lib/analytics/schemas";
 
 const hash = "a".repeat(64);
@@ -46,10 +54,14 @@ const access = {
 };
 
 describe("analytics event contracts", () => {
-  it("registers only the six implemented event names", () => {
+  it("registers all implemented event names", () => {
     expect(Object.keys(analyticsEventRegistry)).toEqual([
       "checkout_started", "order_created",
-      "payment_confirmed", "access_granted", "payment_validation_failed", "backend_operation_failed"
+      "payment_confirmed", "access_granted", "paid_without_access_detected",
+      "paid_without_access_resolved", "payment_validation_failed", "backend_operation_failed",
+      "payment_session_created", "payment_pending",
+      "payment_failed", "payment_cancelled", "payment_expired",
+      "payment_return_viewed"
     ]);
   });
 
@@ -82,6 +94,30 @@ describe("analytics event contracts", () => {
     expect(parseAnalyticsEvent({
       ...envelope,
       analytics_id_key_version: "v1",
+      event_name: "paid_without_access_detected",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        detection_source: "reconciliation",
+        age_bucket: "60s_to_5m",
+        support_required: true
+      }
+    }).event_name).toBe("paid_without_access_detected");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "paid_without_access_resolved",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        access_public_id_hash: "c".repeat(64),
+        resolution: "access_granted",
+        resolution_time_bucket: "60s_to_5m"
+      }
+    }).event_name).toBe("paid_without_access_resolved");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
       event_name: "payment_validation_failed",
       properties: {
         order_public_id_hash: hash,
@@ -103,6 +139,74 @@ describe("analytics event contracts", () => {
         severity: "sev1"
       }
     }).event_name).toBe("backend_operation_failed");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "payment_session_created",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        payment_provider: "webpay",
+        payment_environment: "sandbox",
+        amount: 1000,
+        currency: "BYN"
+      }
+    }).event_name).toBe("payment_session_created");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "payment_pending",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        payment_provider: "webpay",
+        payment_environment: "sandbox"
+      }
+    }).event_name).toBe("payment_pending");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "payment_failed",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        payment_provider: "webpay",
+        payment_environment: "sandbox",
+        terminal: true,
+        failure_code: "payment_failed"
+      }
+    }).event_name).toBe("payment_failed");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "payment_cancelled",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        payment_provider: "webpay",
+        payment_environment: "sandbox",
+        terminal: true
+      }
+    }).event_name).toBe("payment_cancelled");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      analytics_id_key_version: "v1",
+      event_name: "payment_expired",
+      properties: {
+        order_public_id_hash: hash,
+        payment_attempt_public_id_hash: otherHash,
+        payment_provider: "webpay",
+        payment_environment: "sandbox",
+        terminal: true
+      }
+    }).event_name).toBe("payment_expired");
+    expect(parseAnalyticsEvent({
+      ...envelope,
+      event_name: "payment_return_viewed",
+      properties: {
+        return_result: "returned"
+      }
+    }).event_name).toBe("payment_return_viewed");
   });
 
   it("rejects unknown properties and schema_version", () => {
@@ -174,6 +278,110 @@ describe("analytics event contracts", () => {
       severity: "sev1",
       message: "raw provider error"
     })).toThrow();
+  });
+
+  it("keeps paid_without_access analytics closed and PII-free", () => {
+    const detected = {
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      detection_source: "provider_replay",
+      age_bucket: "lt_60s",
+      support_required: false
+    };
+    const resolved = {
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      access_public_id_hash: "c".repeat(64),
+      resolution: "access_granted",
+      resolution_time_bucket: "lt_60s"
+    };
+    expect(paidWithoutAccessDetectedPropertiesSchema.parse(detected)).toEqual(detected);
+    expect(paidWithoutAccessResolvedPropertiesSchema.parse(resolved)).toEqual(resolved);
+    expect(() => paidWithoutAccessDetectedPropertiesSchema.parse({
+      ...detected,
+      email: "student@example.test"
+    })).toThrow();
+    expect(() => paidWithoutAccessResolvedPropertiesSchema.parse({
+      ...resolved,
+      provider_payment_id: "provider-secret"
+    })).toThrow();
+  });
+
+  it("keeps payment session analytics closed and PII-free", () => {
+    const session = {
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      payment_provider: "webpay" as const,
+      payment_environment: "sandbox" as const,
+      amount: 1000,
+      currency: "BYN"
+    };
+    expect(paymentSessionCreatedPropertiesSchema.parse(session)).toEqual(session);
+    expect(() => paymentSessionCreatedPropertiesSchema.parse({ ...session, email: "student@example.test" })).toThrow();
+    expect(() => paymentSessionCreatedPropertiesSchema.parse({ ...session, signature: "sig" })).toThrow();
+
+    const pending = {
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      payment_provider: "webpay" as const,
+      payment_environment: "sandbox" as const
+    };
+    expect(paymentPendingPropertiesSchema.parse(pending)).toEqual(pending);
+    expect(() => paymentPendingPropertiesSchema.parse({ ...pending, raw_body: "data" })).toThrow();
+  });
+
+  it("keeps payment terminal analytics closed and no-free-text", () => {
+    expect(() => paymentFailedPropertiesSchema.parse({
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      payment_provider: "webpay",
+      payment_environment: "sandbox",
+      terminal: true,
+      failure_code: "checkout_create_failed"
+    })).not.toThrow();
+    expect(() => paymentFailedPropertiesSchema.parse({
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      payment_provider: "webpay",
+      payment_environment: "sandbox",
+      terminal: true,
+      failure_code: "free_text_error"
+    })).toThrow();
+    expect(() => paymentCancelledPropertiesSchema.parse({
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      payment_provider: "webpay",
+      payment_environment: "sandbox",
+      terminal: true,
+      reason: "free text"
+    })).toThrow();
+    expect(() => paymentExpiredPropertiesSchema.parse({
+      order_public_id_hash: hash,
+      payment_attempt_public_id_hash: otherHash,
+      payment_provider: "webpay",
+      payment_environment: "sandbox",
+      terminal: true
+    })).not.toThrow();
+  });
+
+  it("keeps payment return viewed analytics closed", () => {
+    expect(paymentReturnViewedPropertiesSchema.parse({ return_result: "returned" })).toEqual({ return_result: "returned" });
+    expect(paymentReturnViewedPropertiesSchema.parse({ return_result: "cancelled" })).toEqual({ return_result: "cancelled" });
+    expect(() => paymentReturnViewedPropertiesSchema.parse({ return_result: "paid" })).toThrow();
+    expect(() => paymentReturnViewedPropertiesSchema.parse({ return_result: "returned", email: "test@example.test" })).toThrow();
+  });
+
+  it("produces payment_validation_failed without access hash", () => {
+    expect(() => parseAnalyticsEvent({
+      ...envelope,
+      event_name: "payment_validation_failed",
+      properties: {
+        payment_provider: "fake",
+        payment_environment: "test",
+        error_category: "payment_verification_error" as const,
+        validation_reason: "merchant_reference_mismatch" as const
+      }
+    })).not.toThrow();
   });
 });
 

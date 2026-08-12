@@ -9,8 +9,13 @@ import {
   type UserRole
 } from "@prisma/client";
 import {
+  COMMERCIAL_ATTEMPT_LIMIT,
   COMMERCIAL_CURRENCY,
-  COMMERCIAL_PRICE_MINOR
+  COMMERCIAL_DURATION_MINUTES,
+  COMMERCIAL_PRICE_MINOR,
+  COMMERCIAL_RESULT_DISPLAY_MODE,
+  COMMERCIAL_RESULT_RETENTION_DAYS,
+  COMMERCIAL_START_WINDOW_DAYS
 } from "@/lib/commercial/config";
 import {
   canOpenNewPaymentAttempt,
@@ -19,27 +24,29 @@ import {
 } from "@/lib/commercial/state-machine";
 import { z } from "zod";
 
-const AUTHENTIC_DURATION_MINUTES = 120;
+const AUTHENTIC_DURATION_MINUTES = COMMERCIAL_DURATION_MINUTES;
 const AUTHENTIC_MAX_RAW_SCORE = 80;
 const AUTHENTIC_QUESTION_COUNT = 40;
-const RESULT_RETENTION_DAYS = 365;
+const RESULT_RETENTION_DAYS = COMMERCIAL_RESULT_RETENTION_DAYS;
 
 export const RECOVERY_RESOLVED_STATES = [
   "access_unstarted",
   "attempt_active",
   "result_available",
+  "payment_pending",
+  "paid_without_access",
   "start_window_expired",
   "no_access",
   "support_required"
 ] as const;
 
 export type RecoveryResolvedState = (typeof RECOVERY_RESOLVED_STATES)[number];
-export type RecoveryNextAction = "CONTINUE" | null;
+export type RecoveryNextAction = "CONTINUE" | "VIEW_PAYMENT_STATUS" | null;
 
 export const recoveryStateResponseSchema = z.object({
   state: z.enum(RECOVERY_RESOLVED_STATES),
   screen: z.literal("REC-01"),
-  nextAction: z.literal("CONTINUE").nullable()
+  nextAction: z.enum(["CONTINUE", "VIEW_PAYMENT_STATUS"]).nullable()
 }).strict();
 
 export type RecoveryStateResponse = z.infer<typeof recoveryStateResponseSchema>;
@@ -92,6 +99,12 @@ type OrderCandidate = Readonly<{
   status: CommercialOrderStatus;
   priceMinor: number;
   currency: string;
+  attemptLimitSnapshot: number;
+  startWindowDaysSnapshot: number;
+  durationMinutesSnapshot: number;
+  resultRetentionDaysSnapshot: number;
+  examModeSnapshot: "GENERIC" | "RIKZ_RUSSIAN_2026";
+  resultDisplayModeSnapshot: string;
   paidAt: Date | null;
   paymentAttempts: readonly PaymentAttemptCandidate[];
 }>;
@@ -187,12 +200,62 @@ function state(state: RecoveryResolvedState): RecoveryStateResponse {
   return recoveryStateResponseSchema.parse({
     state,
     screen: "REC-01",
-    nextAction: state === "access_unstarted" ||
+    nextAction: state === "payment_pending" || state === "paid_without_access"
+      ? "VIEW_PAYMENT_STATUS"
+      : state === "access_unstarted" ||
       state === "attempt_active" ||
       state === "result_available"
       ? "CONTINUE"
       : null
   });
+}
+
+function orderMatchesRecoveryScope(order: OrderCandidate, snapshot: RecoveryStateSnapshot) {
+  return order.commercialProductId === snapshot.commercialProductId &&
+    order.testIdSnapshot === snapshot.testId &&
+    order.emailNormalized === snapshot.emailNormalized &&
+    order.priceMinor === COMMERCIAL_PRICE_MINOR &&
+    order.currency === COMMERCIAL_CURRENCY &&
+    order.attemptLimitSnapshot === COMMERCIAL_ATTEMPT_LIMIT &&
+    order.startWindowDaysSnapshot === COMMERCIAL_START_WINDOW_DAYS &&
+    order.durationMinutesSnapshot === COMMERCIAL_DURATION_MINUTES &&
+    order.resultRetentionDaysSnapshot === COMMERCIAL_RESULT_RETENTION_DAYS &&
+    order.examModeSnapshot === "RIKZ_RUSSIAN_2026" &&
+    order.resultDisplayModeSnapshot === COMMERCIAL_RESULT_DISPLAY_MODE;
+}
+
+function recoverablePaymentState(snapshot: RecoveryStateSnapshot):
+  "payment_pending" | "paid_without_access" | null {
+  if (snapshot.orders.length !== 1) return null;
+  const order = snapshot.orders[0]!;
+  if (!orderMatchesRecoveryScope(order, snapshot)) return null;
+
+  const paymentIds = new Set<string>();
+  for (const payment of order.paymentAttempts) {
+    if (paymentIds.has(payment.id) || payment.amountMinor !== order.priceMinor ||
+      payment.currency !== order.currency) return null;
+    paymentIds.add(payment.id);
+  }
+
+  if (order.status === "PAID") {
+    const paid = order.paymentAttempts.filter((payment) => payment.status === "PAID");
+    if (!order.paidAt || paid.length !== 1 || !paid[0]?.paidAt ||
+      order.paymentAttempts.some((payment) => isActivePaymentAttempt(payment.status))) return null;
+    return "paid_without_access";
+  }
+
+  if (order.paidAt || order.paymentAttempts.some((payment) =>
+    payment.status === "PAID" || payment.paidAt !== null
+  )) return null;
+  if (order.status === "CREATED" && order.paymentAttempts.length === 0) {
+    return "payment_pending";
+  }
+  if (order.status !== "PENDING") return null;
+  const active = order.paymentAttempts.filter((payment) => isActivePaymentAttempt(payment.status));
+  if (active.length !== 1 || order.paymentAttempts.some((payment) =>
+    !isActivePaymentAttempt(payment.status) && !isTerminalNonPaidPayment(payment.status)
+  )) return null;
+  return "payment_pending";
 }
 
 function uniqueById<T extends { id: string }>(values: readonly T[]) {
@@ -310,8 +373,7 @@ export function resolveRecoveryStateSnapshot(
   if (!product || product.id !== snapshot.commercialProductId ||
     product.code !== snapshot.configuredProductCode ||
     product.testId !== snapshot.testId || product.test.id !== snapshot.testId ||
-    product.test.deletedAt || product.test.examMode !== "RIKZ_RUSSIAN_2026" ||
-    product.attemptLimit !== 1) {
+    product.test.deletedAt || product.test.examMode !== "RIKZ_RUSSIAN_2026") {
     return state("support_required");
   }
 
@@ -330,9 +392,12 @@ export function resolveRecoveryStateSnapshot(
   const access = accesses[0] ?? null;
   const attempt = attempts[0] ?? null;
   if (!access) {
-    if (attempt || !freshCheckoutIsEligible(snapshot, product)) {
+    if (attempt) {
       return state("support_required");
     }
+    const paymentState = recoverablePaymentState(snapshot);
+    if (paymentState) return state(paymentState);
+    if (!freshCheckoutIsEligible(snapshot, product)) return state("support_required");
     return state("no_access");
   }
 
@@ -341,7 +406,6 @@ export function resolveRecoveryStateSnapshot(
     !access.commercialOrderId || !access.commercialPaymentAttemptId ||
     !access.grantedAt || !access.startDeadlineAt || access.revokedAt ||
     access.expiresAt.getTime() !== access.startDeadlineAt.getTime() ||
-    access.attemptsTotal !== product.attemptLimit ||
     access.attemptsAvailable < 0 || access.attemptsAvailable > access.attemptsTotal) {
     return state("support_required");
   }
@@ -356,7 +420,14 @@ export function resolveRecoveryStateSnapshot(
     linkedOrder.testIdSnapshot !== snapshot.testId ||
     linkedOrder.emailNormalized !== snapshot.emailNormalized ||
     linkedOrder.priceMinor !== COMMERCIAL_PRICE_MINOR ||
-    linkedOrder.currency !== COMMERCIAL_CURRENCY || !linkedOrder.paidAt) {
+    linkedOrder.currency !== COMMERCIAL_CURRENCY ||
+    linkedOrder.attemptLimitSnapshot !== COMMERCIAL_ATTEMPT_LIMIT ||
+    linkedOrder.startWindowDaysSnapshot !== COMMERCIAL_START_WINDOW_DAYS ||
+    linkedOrder.durationMinutesSnapshot !== COMMERCIAL_DURATION_MINUTES ||
+    linkedOrder.resultRetentionDaysSnapshot !== COMMERCIAL_RESULT_RETENTION_DAYS ||
+    linkedOrder.examModeSnapshot !== "RIKZ_RUSSIAN_2026" ||
+    linkedOrder.resultDisplayModeSnapshot !== COMMERCIAL_RESULT_DISPLAY_MODE ||
+    access.attemptsTotal !== linkedOrder.attemptLimitSnapshot || !linkedOrder.paidAt) {
     return state("support_required");
   }
   const linkedPayments = linkedOrder.paymentAttempts.filter(
@@ -389,7 +460,7 @@ export function resolveRecoveryStateSnapshot(
     return terminalProjectionIsReadable(
       attempt,
       snapshot.testId,
-      product.resultRetentionDays,
+      linkedOrder.resultRetentionDaysSnapshot,
       now
     ) ? state("result_available") : state("support_required");
   }
@@ -449,6 +520,12 @@ async function loadRecoveryStateSnapshot(input: {
         status: true,
         priceMinor: true,
         currency: true,
+        attemptLimitSnapshot: true,
+        startWindowDaysSnapshot: true,
+        durationMinutesSnapshot: true,
+        resultRetentionDaysSnapshot: true,
+        examModeSnapshot: true,
+        resultDisplayModeSnapshot: true,
         paidAt: true,
         paymentAttempts: {
           select: {

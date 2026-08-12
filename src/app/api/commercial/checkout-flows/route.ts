@@ -1,14 +1,14 @@
 import { apiFailure, apiSuccess } from "@/lib/api-response";
 import { commercialCheckoutUnavailableReason } from "@/lib/commercial/config";
 import { createCommercialCheckoutFlow } from "@/lib/commercial/commercial-service";
-import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
-import { allowCommercialAction } from "@/lib/commercial/rate-limit";
+import { commercialErrorResponse, commercialRateLimiter, commercialRateLimitedResponse, deriveCommercialClientKey, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
 import { commercialCheckoutFlowSchema } from "@/lib/commercial/schemas";
 
 export async function POST(request: Request) {
-  if (!isSameOriginRequest(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
-  const clientKey = request.headers.get("x-forwarded-for") ?? "local";
-  if (!allowCommercialAction(`checkout-flow:${clientKey}`, 5)) return apiFailure({ code: "RATE_LIMITED", message: "Try again later." }, 429);
+  if (!requireTrustedOrigin(request)) return apiFailure({ code: "CSRF_REJECTED", message: "Некорректный источник запроса." }, 403);
+  const clientKey = deriveCommercialClientKey(request);
+  const limitResult = await commercialRateLimiter.consume("CHECKOUT_FLOW", clientKey);
+  if (!limitResult.allowed) return commercialRateLimitedResponse(limitResult);
   const unavailable = commercialCheckoutUnavailableReason();
   if (unavailable) return apiFailure({ code: unavailable, message: "Checkout сейчас недоступен." }, 403);
   const body = commercialCheckoutFlowSchema.safeParse(await request.json().catch(() => null));

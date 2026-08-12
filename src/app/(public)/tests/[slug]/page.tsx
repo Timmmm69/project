@@ -1,7 +1,7 @@
 import Link from "next/link";
 import { notFound, redirect } from "next/navigation";
 import { serializePublicTest } from "@/lib/public-tests/serialize";
-import { commercialLegalConfig, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
+import { commercialLegalConfig, COMMERCIAL_PRODUCT_CODE, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
 import { CommercialCheckoutForm } from "./commercial-checkout-form";
 import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
@@ -217,7 +217,16 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
                 <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
                 <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
               </div>
-              {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} recovery={recovery} /> : null}
+              {showCommercialCheckout && commercialProduct ? (
+                <CommercialCheckoutForm
+                  legal={legal}
+                  testId={publicTest.id}
+                  productCode={COMMERCIAL_PRODUCT_CODE}
+                  priceMinor={commercialProduct.priceMinor}
+                  currency={commercialProduct.currency}
+                  recovery={recovery}
+                />
+              ) : null}
               {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
             </>
           )}

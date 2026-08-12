@@ -71,6 +71,69 @@ export const backendOperationFailedPropertiesSchema = z.object({
   severity: z.enum(["sev1", "sev2", "sev3"])
 }).strict();
 
+export const paidWithoutAccessDetectedPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  detection_source: z.enum(["provider_replay", "reconciliation"]),
+  age_bucket: z.enum(["lt_60s", "60s_to_5m", "gte_5m"]),
+  support_required: z.boolean()
+}).strict();
+
+export const paidWithoutAccessResolvedPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  access_public_id_hash: hash,
+  resolution: z.literal("access_granted"),
+  resolution_time_bucket: z.enum(["lt_60s", "60s_to_5m", "gte_5m"])
+}).strict();
+
+export const paymentSessionCreatedPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  payment_provider: provider,
+  payment_environment: paymentEnvironment,
+  amount: z.number().int().nonnegative(),
+  currency: z.string().regex(/^[A-Z]{3}$/)
+}).strict();
+
+export const paymentPendingPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  payment_provider: provider,
+  payment_environment: paymentEnvironment
+}).strict();
+
+export const paymentFailedPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  payment_provider: provider,
+  payment_environment: paymentEnvironment,
+  terminal: z.literal(true),
+  failure_code: z.enum(["checkout_create_failed", "payment_failed", "order_already_paid"])
+}).strict();
+
+export const paymentCancelledPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  payment_provider: provider,
+  payment_environment: paymentEnvironment,
+  terminal: z.literal(true)
+}).strict();
+
+export const paymentExpiredPropertiesSchema = z.object({
+  order_public_id_hash: hash,
+  payment_attempt_public_id_hash: hash,
+  payment_provider: provider,
+  payment_environment: paymentEnvironment,
+  terminal: z.literal(true)
+}).strict();
+
+export const paymentReturnViewedPropertiesSchema = z.object({
+  order_public_id_hash: hash.optional(),
+  payment_attempt_public_id_hash: hash.optional(),
+  return_result: z.enum(["returned", "cancelled"])
+}).strict();
+
 const envelope = {
   event_id: z.string().uuid(),
   event_version: z.literal(1),
@@ -99,8 +162,16 @@ export const analyticsEventRegistry = {
   order_created: eventSchema("order_created", orderCreatedPropertiesSchema),
   payment_confirmed: eventSchema("payment_confirmed", paymentConfirmedPropertiesSchema),
   access_granted: eventSchema("access_granted", accessGrantedPropertiesSchema),
+  paid_without_access_detected: eventSchema("paid_without_access_detected", paidWithoutAccessDetectedPropertiesSchema),
+  paid_without_access_resolved: eventSchema("paid_without_access_resolved", paidWithoutAccessResolvedPropertiesSchema),
   payment_validation_failed: eventSchema("payment_validation_failed", paymentValidationFailedPropertiesSchema),
-  backend_operation_failed: eventSchema("backend_operation_failed", backendOperationFailedPropertiesSchema)
+  backend_operation_failed: eventSchema("backend_operation_failed", backendOperationFailedPropertiesSchema),
+  payment_session_created: eventSchema("payment_session_created", paymentSessionCreatedPropertiesSchema),
+  payment_pending: eventSchema("payment_pending", paymentPendingPropertiesSchema),
+  payment_failed: eventSchema("payment_failed", paymentFailedPropertiesSchema),
+  payment_cancelled: eventSchema("payment_cancelled", paymentCancelledPropertiesSchema),
+  payment_expired: eventSchema("payment_expired", paymentExpiredPropertiesSchema),
+  payment_return_viewed: eventSchema("payment_return_viewed", paymentReturnViewedPropertiesSchema)
 } as const;
 
 export type AnalyticsEventName = keyof typeof analyticsEventRegistry;

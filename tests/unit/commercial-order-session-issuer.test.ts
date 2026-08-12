@@ -82,6 +82,7 @@ function request(operationId: string | null = ids.operation, surface: "claim-acc
     method: "POST",
     headers: {
       origin: "http://issuer.test",
+      "x-test-internal-request": "true",
       ...(operationId === null ? {} : { "Idempotency-Key": operationId })
     }
   });

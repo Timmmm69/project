@@ -6,7 +6,16 @@ import {
   type CanonicalOrderCreatedEmitter
 } from "@/lib/analytics/order-created-callsite";
 import { safelyWriteAnalyticsEvent, type AnalyticsWriteInput, type AnalyticsWriter } from "@/lib/analytics/analytics-service";
-import { COMMERCIAL_CURRENCY, COMMERCIAL_PRICE_MINOR, commercialLegalConfig } from "@/lib/commercial/config";
+import {
+  COMMERCIAL_ATTEMPT_LIMIT,
+  COMMERCIAL_CURRENCY,
+  COMMERCIAL_DURATION_MINUTES,
+  COMMERCIAL_PRICE_MINOR,
+  COMMERCIAL_RESULT_DISPLAY_MODE,
+  COMMERCIAL_RESULT_RETENTION_DAYS,
+  COMMERCIAL_START_WINDOW_DAYS,
+  commercialLegalConfig
+} from "@/lib/commercial/config";
 import { checkoutStartedProperties, createCheckoutFlowId } from "@/lib/commercial/checkout-flow";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
@@ -18,12 +27,37 @@ import {
   lookupTokenMatches,
   payloadHash
 } from "@/lib/commercial/security";
-import { canOpenNewPaymentAttempt, canTransitionOrder, canTransitionPaymentAttempt } from "@/lib/commercial/state-machine";
+import {
+  canOpenNewPaymentAttempt,
+  canRetryTerminalOrder,
+  canTransitionOrder,
+  canTransitionOrderForNewPaymentAttempt,
+  canTransitionPaymentAttempt
+} from "@/lib/commercial/state-machine";
+import {
+  serializeCommercialOrderStatus,
+  type CommercialPaymentStatusProjection
+} from "@/lib/commercial/status-dto";
 import { normalizeEmail } from "@/lib/validation/email";
 import { prisma } from "@/server/db/client";
 import { logEvent } from "@/server/events/log-event";
+import type { ValidateRecoverySessionResult } from "@/server/recovery/service";
+import { resolveRecoveryStateInTransaction } from "@/server/recovery/state-resolver";
 
 type Tx = Prisma.TransactionClient;
+
+export type CommercialVerifiedEmailAuthority = Readonly<{
+  rawToken: string;
+  validate: (
+    rawToken: string,
+    transaction?: Tx
+  ) => Promise<ValidateRecoverySessionResult>;
+}>;
+
+type ResolvedCommercialEmailAuthority = Extract<
+  ValidateRecoverySessionResult,
+  { status: "RESOLVED" }
+>;
 
 function analyticsPaymentProvider(provider: CommercialPaymentProvider) {
   return provider === "LOCAL_FAKE" ? "fake" as const : "webpay" as const;
@@ -130,6 +164,60 @@ async function ensurePaidAnalytics(facts: PaidAnalyticsFacts, writer?: Analytics
   }, writer);
 }
 
+type PaidWithoutAccessAnalyticsFacts = Readonly<{
+  source: "provider_replay" | "reconciliation";
+  orderId: string;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  accessPublicId: string;
+  paidAt: Date;
+  resolvedAt: Date;
+}>;
+
+function paidWithoutAccessAgeBucket(paidAt: Date, now: Date) {
+  const elapsedSeconds = Math.max(0, Math.floor((now.getTime() - paidAt.getTime()) / 1_000));
+  return elapsedSeconds < 60 ? "lt_60s" as const : elapsedSeconds < 300 ? "60s_to_5m" as const : "gte_5m" as const;
+}
+
+async function ensurePaidWithoutAccessAnalytics(
+  facts: PaidWithoutAccessAnalyticsFacts,
+  writer?: AnalyticsWriter
+) {
+  const hashes = analyticsHashes({
+    orderPublicId: facts.orderPublicId,
+    paymentAttemptPublicId: facts.paymentAttemptPublicId,
+    accessPublicId: facts.accessPublicId
+  });
+  const ageBucket = paidWithoutAccessAgeBucket(facts.paidAt, facts.resolvedAt);
+  await ensureAnalytics(() => ({
+    eventName: "paid_without_access_detected",
+    transitionKey: `commercial-paid-without-access-detected:${facts.orderId}`,
+    occurredAt: facts.resolvedAt,
+    analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+    properties: {
+      order_public_id_hash: hashes.properties.order_public_id_hash,
+      payment_attempt_public_id_hash: hashes.properties.payment_attempt_public_id_hash,
+      detection_source: facts.source,
+      age_bucket: ageBucket,
+      support_required: ageBucket !== "lt_60s"
+    }
+  }), writer);
+  await ensureAnalytics(() => ({
+    eventName: "paid_without_access_resolved",
+    transitionKey: `commercial-paid-without-access-resolved:${facts.orderId}`,
+    occurredAt: facts.resolvedAt,
+    analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+    properties: {
+      order_public_id_hash: hashes.properties.order_public_id_hash,
+      payment_attempt_public_id_hash: hashes.properties.payment_attempt_public_id_hash,
+      access_public_id_hash: hashes.properties.access_public_id_hash,
+      resolution: "access_granted",
+      resolution_time_bucket: ageBucket
+    }
+  }), writer);
+}
+
 async function ensureCheckoutStartedAnalytics(input: {
   checkoutFlowId: string;
   occurredAt: Date;
@@ -166,6 +254,109 @@ async function ensureCheckoutFailureAnalytics(input: { occurredAt: Date; orderPu
         error_code: "provider_unavailable",
         retryable: true,
         severity: "sev1"
+      }
+    };
+  }, writer);
+}
+
+async function ensurePaymentSessionCreatedAnalytics(input: {
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  amount: number;
+  currency: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    return {
+      eventName: "payment_session_created",
+      transitionKey: `commercial-payment-session-created:${input.paymentAttemptId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        payment_provider: analyticsPaymentProvider(input.provider),
+        payment_environment: analyticsPaymentEnvironment(input.provider),
+        amount: input.amount,
+        currency: input.currency
+      }
+    };
+  }, writer);
+}
+
+async function ensurePaymentPendingAnalytics(input: {
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderPublicId: string;
+  paymentAttemptPublicId: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    return {
+      eventName: "payment_pending",
+      transitionKey: `commercial-payment-pending:${input.paymentAttemptPublicId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        payment_provider: analyticsPaymentProvider(input.provider),
+        payment_environment: analyticsPaymentEnvironment(input.provider)
+      }
+    };
+  }, writer);
+}
+
+async function ensurePaymentTerminalAnalytics(input: {
+  eventName: "payment_failed" | "payment_cancelled" | "payment_expired";
+  occurredAt: Date;
+  provider: CommercialPaymentProvider;
+  orderPublicId: string;
+  paymentAttemptId: string;
+  paymentAttemptPublicId: string;
+  failureCode?: string;
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId, paymentAttemptPublicId: input.paymentAttemptPublicId });
+    const baseProperties = {
+      ...hashes.properties,
+      payment_provider: analyticsPaymentProvider(input.provider),
+      payment_environment: analyticsPaymentEnvironment(input.provider),
+      terminal: true as const
+    };
+    const properties = input.eventName === "payment_failed"
+      ? { ...baseProperties, failure_code: (input.failureCode ?? "payment_failed") as "checkout_create_failed" | "payment_failed" | "order_already_paid" }
+      : baseProperties;
+    return {
+      eventName: input.eventName,
+      transitionKey: `commercial-payment-terminal:${input.eventName}:${input.paymentAttemptId}`,
+      occurredAt: input.occurredAt,
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties
+    };
+  }, writer);
+}
+
+export async function ensurePaymentReturnViewedAnalytics(input: {
+  orderPublicId: string;
+  orderId: string;
+  paymentAttemptPublicId?: string;
+  returnResult: "returned" | "cancelled";
+}, writer?: AnalyticsWriter) {
+  return ensureAnalytics(() => {
+    const hashes = analyticsHashes({
+      orderPublicId: input.orderPublicId,
+      ...(input.paymentAttemptPublicId ? { paymentAttemptPublicId: input.paymentAttemptPublicId } : {})
+    });
+    return {
+      eventName: "payment_return_viewed",
+      transitionKey: `commercial-payment-return-viewed:${input.orderId}`,
+      occurredAt: new Date(),
+      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
+      properties: {
+        ...hashes.properties,
+        return_result: input.returnResult
       }
     };
   }, writer);
@@ -256,37 +447,42 @@ export class CommercialError extends Error {
   constructor(
     readonly code: string,
     message = code,
-    readonly nextAction?: CommercialNextAction
+    readonly nextAction?: CommercialNextAction,
+    readonly publicOrderReference?: string
   ) {
     super(message);
     this.name = "CommercialError";
   }
 }
 
-async function existingAccessAction(tx: Tx, email: string, testId: string, now: Date) {
-  const activeAttempt = await tx.attempt.findFirst({
-    where: {
-      user: { email, role: "STUDENT", deletedAt: null },
-      testId,
-      status: "STARTED",
-      access: { revokedAt: null, expiresAt: { gt: now } }
+async function existingStateAction(input: {
+  tx: Tx;
+  product: { id: string; code: string; testId: string };
+  emailNormalized: string;
+  now: Date;
+}) {
+  const resolution = await resolveRecoveryStateInTransaction({
+    transaction: input.tx,
+    productCode: input.product.code,
+    scope: {
+      emailNormalized: input.emailNormalized,
+      commercialProductId: input.product.id,
+      testId: input.product.testId
     },
-    select: { id: true }
+    now: input.now
   });
-  if (activeAttempt) return "RESUME_TEST" as const;
-
-  const unusedAccess = await tx.access.findFirst({
-    where: {
-      user: { email, role: "STUDENT", deletedAt: null },
-      testId,
-      revokedAt: null,
-      expiresAt: { gt: now },
-      attemptsAvailable: { gt: 0 }
-    },
-    select: { id: true }
-  });
-  if (unusedAccess) return "OPEN_PRE" as const;
-  return null;
+  switch (resolution.response.state) {
+    case "access_unstarted":
+      return "OPEN_PRE" as const;
+    case "attempt_active":
+      return "RESUME_TEST" as const;
+    case "result_available":
+      return "VIEW_RESULT" as const;
+    case "no_access":
+      return null;
+    default:
+      return "NONE" as const;
+  }
 }
 
 function legalVersionMatches(version: string) {
@@ -334,39 +530,88 @@ export async function createCommercialCheckoutFlow(input: {
   return flow;
 }
 
+async function resolveCommercialEmailAuthority(
+  authority: CommercialVerifiedEmailAuthority,
+  transaction?: Tx
+): Promise<ResolvedCommercialEmailAuthority> {
+  const result = await authority.validate(authority.rawToken, transaction);
+  if (result.status !== "RESOLVED") {
+    throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
+  }
+  return result;
+}
+
+function requireLegacyCommercialEmail(email: string | undefined) {
+  if (!email) throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
+  return normalizeEmail(email);
+}
+
+function verifiedAuthorityMatchesProduct(
+  authority: ResolvedCommercialEmailAuthority,
+  product: { id: string; testId: string },
+  emailNormalized: string
+) {
+  return authority.commercialProductId === product.id &&
+    authority.testId === product.testId &&
+    authority.emailNormalized === emailNormalized;
+}
+
 async function recoverConcurrentOrderCreation(input: {
   productCode: string;
   emailNormalized: string;
   idempotencyKey: string;
   checkoutFlowId: string;
   orderTokenSecret: string;
+  verifiedEmailAuthority?: CommercialVerifiedEmailAuthority;
 }, integrityError: Prisma.PrismaClientKnownRequestError) {
-  const product = await prisma.commercialProduct.findUnique({
-    where: { code: input.productCode },
-    include: { test: { select: { slug: true, examMode: true } } }
-  });
-  if (!product) throw integrityError;
-
-  const sameRequest = await prisma.commercialOrder.findUnique({ where: { checkoutFlowId: input.checkoutFlowId } });
-  if (sameRequest) {
-    if (sameRequest.commercialProductId !== product.id || sameRequest.emailNormalized !== input.emailNormalized ||
-        sameRequest.idempotencyKey !== input.idempotencyKey) {
-      throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
+  return prisma.$transaction(async (tx) => {
+    const verifiedAuthority = input.verifiedEmailAuthority
+      ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority, tx)
+      : null;
+    const product = await tx.commercialProduct.findUnique({
+      where: { code: input.productCode },
+      select: { id: true, testId: true }
+    });
+    if (!product) throw integrityError;
+    if (verifiedAuthority && !verifiedAuthorityMatchesProduct(
+      verifiedAuthority,
+      product,
+      input.emailNormalized
+    )) {
+      throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
     }
-    const lookupToken = stableOrderLookupToken(sameRequest, input.orderTokenSecret);
-    return { kind: "created" as const, order: sameRequest, lookupToken, idempotent: true, product };
-  }
 
-  const openOrder = await prisma.commercialOrder.findFirst({
-    where: {
-      commercialProductId: product.id,
-      emailNormalized: input.emailNormalized,
-      status: { in: ["CREATED", "PENDING"] }
-    },
-    select: { id: true }
+    const sameRequest = await tx.commercialOrder.findUnique({
+      where: { checkoutFlowId: input.checkoutFlowId }
+    });
+    if (sameRequest) {
+      if (sameRequest.commercialProductId !== product.id ||
+          sameRequest.emailNormalized !== input.emailNormalized ||
+          sameRequest.idempotencyKey !== input.idempotencyKey) {
+        throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
+      }
+      const lookupToken = stableOrderLookupToken(sameRequest, input.orderTokenSecret);
+      return { order: sameRequest, lookupToken, idempotent: true };
+    }
+
+    const openOrder = await tx.commercialOrder.findFirst({
+      where: {
+        commercialProductId: product.id,
+        emailNormalized: input.emailNormalized,
+        status: { in: ["CREATED", "PENDING"] }
+      },
+      select: { id: true, publicId: true }
+    });
+    if (openOrder) {
+      throw new CommercialError(
+        "ORDER_ALREADY_PENDING",
+        "Order already pending",
+        "WAIT_FOR_PAYMENT",
+        openOrder.publicId
+      );
+    }
+    throw integrityError;
   });
-  if (openOrder) throw new CommercialError("ORDER_ALREADY_PENDING");
-  throw integrityError;
 }
 
 function stableOrderLookupToken(order: {
@@ -390,10 +635,12 @@ function stableOrderLookupToken(order: {
 export async function createCommercialOrder(input: {
   productCode: string;
   checkoutFlowId: string;
-  email: string;
+  email?: string;
+  verifiedEmailAuthority?: CommercialVerifiedEmailAuthority;
   adultBuyerConfirmed: boolean;
   legalBundleVersion: string;
   idempotencyKey: string;
+  analyticsWriter?: AnalyticsWriter;
   orderCreatedAnalyticsEmitter?: CanonicalOrderCreatedEmitter;
 }) {
   if (!commercialCheckoutFlowIdSchema.safeParse(input.checkoutFlowId).success) {
@@ -407,7 +654,12 @@ export async function createCommercialOrder(input: {
   }
 
   const now = new Date();
-  const emailNormalized = normalizeEmail(input.email);
+  const initialVerifiedAuthority = input.verifiedEmailAuthority
+    ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority)
+    : null;
+  const emailNormalized = initialVerifiedAuthority?.emailNormalized ??
+    requireLegacyCommercialEmail(input.email);
+  const emailOriginal = initialVerifiedAuthority?.emailNormalized ?? input.email!.trim();
   const legal = commercialLegalConfig();
   const orderTokenSecret = commercialOrderTokenSecret();
   const orderId = randomUUID();
@@ -420,15 +672,41 @@ export async function createCommercialOrder(input: {
   let outcome;
   try {
     outcome = await prisma.$transaction(async (tx) => {
+    const verifiedAuthority = input.verifiedEmailAuthority
+      ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority, tx)
+      : null;
     const product = await tx.commercialProduct.findFirst({
       where: { code: input.productCode, isActive: true },
-      include: { test: { select: { id: true, slug: true, examMode: true, status: true, deletedAt: true } } }
+      include: {
+        test: {
+          select: {
+            id: true,
+            slug: true,
+            examMode: true,
+            status: true,
+            deletedAt: true,
+            durationMinutes: true
+          }
+        }
+      }
     });
     if (!product || product.test.deletedAt || product.test.status !== "PUBLISHED" || product.test.examMode !== "RIKZ_RUSSIAN_2026") {
       throw new CommercialError("COMMERCIAL_PRODUCT_UNAVAILABLE");
     }
-    if (product.priceMinor !== COMMERCIAL_PRICE_MINOR || product.currency !== COMMERCIAL_CURRENCY) {
+    if (product.priceMinor !== COMMERCIAL_PRICE_MINOR ||
+      product.currency !== COMMERCIAL_CURRENCY ||
+      product.attemptLimit !== COMMERCIAL_ATTEMPT_LIMIT ||
+      product.startWindowDays !== COMMERCIAL_START_WINDOW_DAYS ||
+      product.resultRetentionDays !== COMMERCIAL_RESULT_RETENTION_DAYS ||
+      product.test.durationMinutes !== COMMERCIAL_DURATION_MINUTES) {
       throw new CommercialError("COMMERCIAL_PRODUCT_CONFIGURATION_INVALID");
+    }
+    if (verifiedAuthority && !verifiedAuthorityMatchesProduct(
+      verifiedAuthority,
+      product,
+      emailNormalized
+    )) {
+      throw new CommercialError("VERIFIED_EMAIL_REQUIRED");
     }
 
     const checkoutFlow = await tx.commercialCheckoutFlow.findUnique({
@@ -445,12 +723,7 @@ export async function createCommercialOrder(input: {
         throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
       }
       const lookupToken = stableOrderLookupToken(checkoutFlow.order, orderTokenSecret);
-      return { kind: "created" as const, order: checkoutFlow.order, lookupToken, idempotent: true, product };
-    }
-
-    const nextAction = await existingAccessAction(tx, emailNormalized, product.testId, now);
-    if (nextAction) {
-      return { kind: "existing" as const, productId: product.id, productCode: product.code, nextAction };
+      return { kind: "created" as const, order: checkoutFlow.order, lookupToken, idempotent: true, product, newOrder: false };
     }
 
     const existingByKey = await tx.commercialOrder.findUnique({
@@ -461,7 +734,7 @@ export async function createCommercialOrder(input: {
         throw new CommercialError("IDEMPOTENCY_KEY_CONFLICT");
       }
       const lookupToken = stableOrderLookupToken(existingByKey, orderTokenSecret);
-      return { kind: "created" as const, order: existingByKey, lookupToken, idempotent: true, product };
+      return { kind: "created" as const, order: existingByKey, lookupToken, idempotent: true, product, newOrder: false };
     }
 
     const pending = await tx.commercialOrder.findFirst({
@@ -469,7 +742,60 @@ export async function createCommercialOrder(input: {
       orderBy: { createdAt: "desc" }
     });
     if (pending) {
-      return { kind: "pending" as const };
+      const [paidOrder, access, attempt] = await Promise.all([
+        tx.commercialOrder.findFirst({
+          where: {
+            id: { not: pending.id },
+            commercialProductId: product.id,
+            emailNormalized,
+            status: "PAID"
+          },
+          select: { id: true }
+        }),
+        tx.access.findFirst({
+          where: {
+            OR: [
+              { commercialProductId: product.id },
+              { testId: product.testId }
+            ],
+            user: { email: emailNormalized, role: "STUDENT", deletedAt: null }
+          },
+          select: { id: true }
+        }),
+        tx.attempt.findFirst({
+          where: {
+            testId: product.testId,
+            user: { email: emailNormalized, role: "STUDENT", deletedAt: null }
+          },
+          select: { id: true }
+        })
+      ]);
+      if (pending.testIdSnapshot !== product.testId ||
+        pending.priceMinor !== COMMERCIAL_PRICE_MINOR ||
+        pending.currency !== COMMERCIAL_CURRENCY ||
+        pending.attemptLimitSnapshot !== COMMERCIAL_ATTEMPT_LIMIT ||
+        pending.startWindowDaysSnapshot !== COMMERCIAL_START_WINDOW_DAYS ||
+        pending.durationMinutesSnapshot !== COMMERCIAL_DURATION_MINUTES ||
+        pending.resultRetentionDaysSnapshot !== COMMERCIAL_RESULT_RETENTION_DAYS ||
+        pending.examModeSnapshot !== product.test.examMode ||
+        pending.resultDisplayModeSnapshot !== COMMERCIAL_RESULT_DISPLAY_MODE ||
+        paidOrder || access || attempt) {
+        return { kind: "support" as const };
+      }
+      return { kind: "pending" as const, publicOrderReference: pending.publicId };
+    }
+
+    const nextAction = await existingStateAction({
+      tx,
+      product,
+      emailNormalized,
+      now
+    });
+    if (nextAction === "NONE") {
+      return { kind: "support" as const };
+    }
+    if (nextAction) {
+      return { kind: "existing" as const, productId: product.id, productCode: product.code, nextAction };
     }
 
     const order = await tx.commercialOrder.create({
@@ -480,7 +806,13 @@ export async function createCommercialOrder(input: {
         productNameSnapshot: product.name,
         priceMinor: product.priceMinor,
         currency: product.currency,
-        emailOriginal: input.email.trim(),
+        attemptLimitSnapshot: product.attemptLimit,
+        startWindowDaysSnapshot: product.startWindowDays,
+        durationMinutesSnapshot: product.test.durationMinutes,
+        resultRetentionDaysSnapshot: product.resultRetentionDays,
+        examModeSnapshot: product.test.examMode,
+        resultDisplayModeSnapshot: COMMERCIAL_RESULT_DISPLAY_MODE,
+        emailOriginal,
         emailNormalized,
         status: "CREATED",
         offerVersion: legal.version,
@@ -496,20 +828,20 @@ export async function createCommercialOrder(input: {
     await tx.eventLog.create({
       data: { eventType: "order_created", entityType: "commercial_order", entityId: order.id, payload: { productCode: product.code, priceMinor: product.priceMinor, currency: product.currency } }
     });
-    return { kind: "created" as const, order, lookupToken: token, idempotent: false, product };
+    return { kind: "created" as const, order, lookupToken: token, idempotent: false, product, newOrder: true };
     });
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002") {
-      outcome = await recoverConcurrentOrderCreation({
+      return recoverConcurrentOrderCreation({
         productCode: input.productCode,
         emailNormalized,
         idempotencyKey: input.idempotencyKey,
         checkoutFlowId: input.checkoutFlowId,
-        orderTokenSecret
+        orderTokenSecret,
+        verifiedEmailAuthority: input.verifiedEmailAuthority
       }, error);
-    } else {
-      throw error;
     }
+    throw error;
   }
 
   if (outcome.kind === "existing") {
@@ -522,19 +854,25 @@ export async function createCommercialOrder(input: {
     throw new CommercialError("EXISTING_ACCESS", "Existing access found", outcome.nextAction);
   }
   if (outcome.kind === "pending") {
-    throw new CommercialError("ORDER_ALREADY_PENDING");
+    throw new CommercialError(
+      "ORDER_ALREADY_PENDING",
+      "Order already pending",
+      "WAIT_FOR_PAYMENT",
+      outcome.publicOrderReference
+    );
+  }
+  if (outcome.kind === "support") {
+    throw new CommercialError("RECOVERY_SUPPORT_REQUIRED", "Recovery requires support", "NONE");
   }
   try {
-    if (outcome.order.checkoutFlowId) {
-      await (input.orderCreatedAnalyticsEmitter ?? emitCanonicalOrderCreated)({
-        checkoutFlowId: outcome.order.checkoutFlowId,
-        orderPublicId: outcome.order.publicId,
-        occurredAt: outcome.order.createdAt,
-        productId: outcome.product.code,
-        testId: outcome.product.test.slug,
-        examMode: outcome.product.test.examMode
-      });
-    }
+    await (input.orderCreatedAnalyticsEmitter ?? emitCanonicalOrderCreated)({
+      checkoutFlowId: input.checkoutFlowId,
+      orderPublicId: outcome.order.publicId,
+      occurredAt: outcome.order.createdAt,
+      productId: outcome.product.code,
+      testId: outcome.product.test.slug,
+      examMode: outcome.product.test.examMode
+    });
   } catch {
     // Analytics is post-commit and must never replace a successful Order result.
   }
@@ -545,7 +883,7 @@ export async function getCommercialOrder(publicId: string) {
   const order = await prisma.commercialOrder.findUnique({
     where: { publicId },
     include: {
-      product: { include: { test: { select: { slug: true } } } },
+      product: { include: { test: { select: { slug: true, examMode: true } } } },
       paymentAttempts: { orderBy: { createdAt: "desc" }, take: 1 },
       access: { include: { attempts: { orderBy: { createdAt: "desc" }, take: 1 } } }
     }
@@ -594,7 +932,24 @@ export async function createCommercialPaymentSession(input: {
         if (current.paymentUrl && current.providerFields) return { attempt: current, order, created: false as const };
         throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
       }
-      if (!canOpenNewPaymentAttempt(order.status)) throw new CommercialError("ORDER_ALREADY_PAID");
+      if (!canOpenNewPaymentAttempt(order.status)) {
+        throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
+      }
+
+      const latestAttempt = await tx.commercialPaymentAttempt.findFirst({
+        where: { commercialOrderId: order.id },
+        orderBy: [{ createdAt: "desc" }, { id: "desc" }],
+        select: { status: true }
+      });
+      if (order.status === "CREATED" && latestAttempt) {
+        throw new CommercialError("PAYMENT_STATE_CHANGED");
+      }
+      if (canRetryTerminalOrder(order.status) && latestAttempt?.status !== order.status) {
+        throw new CommercialError("PAYMENT_STATE_CHANGED");
+      }
+      if (!canTransitionOrderForNewPaymentAttempt(order.status)) {
+        throw new CommercialError("PAYMENT_STATE_CHANGED");
+      }
 
       const attempt = await tx.commercialPaymentAttempt.create({
         data: {
@@ -634,6 +989,22 @@ export async function createCommercialPaymentSession(input: {
     if (decision.attempt.paymentUrl && decision.attempt.providerFields) return decision.attempt;
     throw new CommercialError("PAYMENT_SESSION_ALREADY_ACTIVE");
   }
+
+  await ensurePaymentSessionCreatedAnalytics({
+    occurredAt: decision.attempt.createdAt,
+    provider: input.provider.provider,
+    orderPublicId: decision.order.publicId,
+    paymentAttemptId: decision.attempt.id,
+    paymentAttemptPublicId: decision.attempt.publicId,
+    amount: decision.order.priceMinor,
+    currency: decision.order.currency
+  }, input.analyticsWriter);
+  await ensurePaymentPendingAnalytics({
+    occurredAt: decision.attempt.createdAt,
+    provider: input.provider.provider,
+    orderPublicId: decision.order.publicId,
+    paymentAttemptPublicId: decision.attempt.publicId
+  }, input.analyticsWriter);
 
   let checkout;
   try {
@@ -733,12 +1104,199 @@ function isCommercialPaymentEventUniqueConflict(error: Prisma.PrismaClientKnownR
   return /commercial_payment_events|payload_?hash|provider_?event_?key/i.test(value);
 }
 
+type PaidOrderAccessInput = Readonly<{
+  id: string;
+  publicId: string;
+  emailNormalized: string;
+  commercialProductId: string;
+  testIdSnapshot: string;
+  attemptLimitSnapshot: number;
+  startWindowDaysSnapshot: number;
+}>;
+
+async function ensurePaidOrderAccess(
+  tx: Tx,
+  input: {
+    order: PaidOrderAccessInput;
+    paymentAttemptId: string;
+    now: Date;
+  }
+) {
+  const existing = await tx.access.findUnique({
+    where: { commercialOrderId: input.order.id }
+  });
+  if (existing) return { access: existing, created: false as const };
+
+  const student = await tx.user.findUnique({
+    where: { email: input.order.emailNormalized }
+  });
+  const user = student ?? await tx.user.create({
+    data: { email: input.order.emailNormalized, role: "STUDENT" }
+  });
+  if (user.role !== "STUDENT" || user.deletedAt) {
+    throw new CommercialError("EMAIL_NOT_AVAILABLE");
+  }
+
+  const deadline = addDays(input.now, input.order.startWindowDaysSnapshot);
+  const access = await tx.access.create({
+    data: {
+      userId: user.id,
+      testId: input.order.testIdSnapshot,
+      source: "COMMERCIAL",
+      attemptsTotal: input.order.attemptLimitSnapshot,
+      attemptsAvailable: input.order.attemptLimitSnapshot,
+      expiresAt: deadline,
+      commercialProductId: input.order.commercialProductId,
+      commercialOrderId: input.order.id,
+      commercialPaymentAttemptId: input.paymentAttemptId,
+      grantedAt: input.now,
+      startDeadlineAt: deadline
+    }
+  });
+  await tx.eventLog.create({
+    data: {
+      eventType: "access_granted",
+      actorUserId: user.id,
+      entityType: "commercial_order",
+      entityId: input.order.id,
+      payload: { source: "commercial", attempts: input.order.attemptLimitSnapshot }
+    }
+  });
+  return { access, created: true as const };
+}
+
+function paidWithoutAccessSupportRequired(paidAt: Date, now: Date) {
+  return now.getTime() - paidAt.getTime() >= 60_000;
+}
+
+async function recordPaidWithoutAccessDetected(
+  tx: Tx,
+  input: { orderId: string; paidAt: Date; now: Date; source: "provider_replay" | "reconciliation" }
+) {
+  await tx.eventLog.create({
+    data: {
+      eventType: "paid_without_access_detected",
+      entityType: "commercial_order",
+      entityId: input.orderId,
+      payload: {
+        detectionSource: input.source,
+        supportRequired: paidWithoutAccessSupportRequired(input.paidAt, input.now)
+      }
+    }
+  });
+}
+
+async function recordPaidWithoutAccessResolved(
+  tx: Tx,
+  input: { orderId: string; accessId: string; paidAt: Date; now: Date }
+) {
+  const elapsedSeconds = Math.max(0, Math.floor((input.now.getTime() - input.paidAt.getTime()) / 1_000));
+  await tx.eventLog.create({
+    data: {
+      eventType: "paid_without_access_resolved",
+      entityType: "commercial_order",
+      entityId: input.orderId,
+      payload: {
+        resolution: "access_granted",
+        resolutionTimeBucket: elapsedSeconds < 60 ? "lt_60s" : elapsedSeconds < 300 ? "60s_to_5m" : "gte_5m"
+      }
+    }
+  });
+}
+
+export async function reconcilePaidCommercialOrderAccess(
+  publicId: string,
+  analyticsWriter?: AnalyticsWriter
+) {
+  const outcome = await prisma.$transaction(async (tx) => {
+    const locked = await tx.$queryRaw<Array<{ id: string }>>(Prisma.sql`
+      SELECT "id" FROM "commercial_orders" WHERE "public_id" = ${publicId} FOR UPDATE
+    `);
+    if (locked.length !== 1) throw new CommercialError("ORDER_NOT_FOUND");
+
+    const order = await tx.commercialOrder.findUniqueOrThrow({
+      where: { publicId },
+      include: {
+        access: true,
+        paymentAttempts: { orderBy: { createdAt: "desc" } }
+      }
+    });
+    if (order.status !== "PAID" || !order.paidAt) {
+      return {
+        result: { state: "not_applicable" as const, access: order.access },
+        analytics: undefined
+      };
+    }
+    if (order.access) {
+      return {
+        result: { state: "already_resolved" as const, access: order.access },
+        analytics: undefined
+      };
+    }
+
+    const paidAttempts = order.paymentAttempts.filter((attempt) => attempt.status === "PAID");
+    const activeAttempts = order.paymentAttempts.filter((attempt) =>
+      attempt.status === "CREATED" || attempt.status === "PENDING"
+    );
+    const paidAttempt = paidAttempts[0];
+    if (paidAttempts.length !== 1 || activeAttempts.length !== 0 || !paidAttempt?.paidAt ||
+        paidAttempt.amountMinor !== order.priceMinor || paidAttempt.currency !== order.currency) {
+      throw new CommercialError("PAID_WITHOUT_ACCESS_INCONSISTENT");
+    }
+
+    const now = new Date();
+    await recordPaidWithoutAccessDetected(tx, {
+      orderId: order.id,
+      paidAt: order.paidAt,
+      now,
+      source: "reconciliation"
+    });
+    const granted = await ensurePaidOrderAccess(tx, {
+      order,
+      paymentAttemptId: paidAttempt.id,
+      now
+    });
+    if (granted.created) {
+      await recordPaidWithoutAccessResolved(tx, {
+        orderId: order.id,
+        accessId: granted.access.id,
+        paidAt: order.paidAt,
+        now
+      });
+    }
+    return {
+      result: {
+        state: granted.created ? "resolved" as const : "already_resolved" as const,
+        access: granted.access
+      },
+      analytics: granted.created
+        ? {
+            source: "reconciliation" as const,
+            orderId: order.id,
+            orderPublicId: order.publicId,
+            paymentAttemptId: paidAttempt.id,
+            paymentAttemptPublicId: paidAttempt.publicId,
+            accessPublicId: granted.access.publicId,
+            paidAt: order.paidAt,
+            resolvedAt: now
+          }
+        : undefined
+    };
+  });
+  if (outcome.analytics) {
+    await ensurePaidWithoutAccessAnalytics(outcome.analytics, analyticsWriter);
+  }
+  return outcome.result;
+}
+
 export async function processCommercialProviderNotification(input: {
   notification: ProviderNotification;
   rawBody: string;
   provider: CommercialPaymentProvider;
   analyticsWriter?: AnalyticsWriter;
+  grantAccess?: boolean;
 }) {
+  const grantAccess = input.grantAccess ?? true;
   const hash = payloadHash(input.rawBody);
   const attempt = await prisma.commercialPaymentAttempt.findUnique({
     where: { merchantReference: input.notification.merchantReference },
@@ -811,11 +1369,49 @@ export async function processCommercialProviderNotification(input: {
         return { duplicate: false, grantedAccess: false, rejected: true, validation: { transitionKey: `payment-validation:${event.id}`, provider: input.provider, reason: "provider_payment_id_conflict" as const, orderPublicId: current.order.publicId, paymentAttemptPublicId: current.publicId } };
       }
       if (current.status === nextAttemptStatus && current.order.status === nextOrderStatus) {
+        let access = current.order.access;
+        let reconciledPaidWithoutAccess = false;
+        let paidWithoutAccessAnalytics: PaidWithoutAccessAnalyticsFacts | undefined;
+        if (nextAttemptStatus === "PAID" && !access && grantAccess) {
+          const paidAt = current.order.paidAt ?? current.paidAt;
+          if (!paidAt) throw new CommercialError("PAID_WITHOUT_ACCESS_INCONSISTENT");
+          await recordPaidWithoutAccessDetected(tx, {
+            orderId: current.order.id,
+            paidAt,
+            now,
+            source: "provider_replay"
+          });
+          const granted = await ensurePaidOrderAccess(tx, {
+            order: current.order,
+            paymentAttemptId: current.id,
+            now
+          });
+          access = granted.access;
+          reconciledPaidWithoutAccess = granted.created;
+          if (granted.created) {
+            await recordPaidWithoutAccessResolved(tx, {
+              orderId: current.order.id,
+              accessId: granted.access.id,
+              paidAt,
+              now
+            });
+            paidWithoutAccessAnalytics = {
+              source: "provider_replay",
+              orderId: current.order.id,
+              orderPublicId: current.order.publicId,
+              paymentAttemptId: current.id,
+              paymentAttemptPublicId: current.publicId,
+              accessPublicId: granted.access.publicId,
+              paidAt,
+              resolvedAt: now
+            };
+          }
+        }
         await tx.commercialPaymentEvent.update({
           where: { id: event.id },
           data: { providerEventKey: processedEventKey, processingStatus: "PROCESSED", processedAt: now }
         });
-        const paid = nextAttemptStatus === "PAID" && current.order.access
+        const paid = nextAttemptStatus === "PAID" && access
           ? {
               occurredAt: current.paidAt ?? current.verifiedAt ?? now,
               provider: input.provider,
@@ -824,15 +1420,21 @@ export async function processCommercialProviderNotification(input: {
               paymentAttemptId: current.id,
               paymentAttemptPublicId: current.publicId,
               access: {
-                publicId: current.order.access.publicId,
-                occurredAt: current.order.access.grantedAt ?? current.order.access.createdAt,
+                publicId: access.publicId,
+                occurredAt: access.grantedAt ?? access.createdAt,
                 productCode: current.order.product.code,
                 testSlug: current.order.product.test.slug,
                 examMode: current.order.product.test.examMode
               }
             } satisfies PaidAnalyticsFacts
           : undefined;
-        return { duplicate: false, grantedAccess: Boolean(current.order.access), rejected: false, paid };
+        return {
+          duplicate: false,
+          grantedAccess: reconciledPaidWithoutAccess || Boolean(access),
+          rejected: false,
+          paid,
+          paidWithoutAccessAnalytics
+        };
       }
       if (!canTransitionPaymentAttempt(current.status, nextAttemptStatus) || !canTransitionOrder(current.order.status, nextOrderStatus)) {
         await tx.commercialPaymentEvent.update({ where: { id: event.id }, data: { processingStatus: "REJECTED", processingErrorCode: "ILLEGAL_STATUS_TRANSITION", processedAt: now } });
@@ -856,31 +1458,14 @@ export async function processCommercialProviderNotification(input: {
 
       let grantedAccess = false;
       let grantedAccessRecord = current.order.access;
-      if (nextAttemptStatus === "PAID") {
-        const student = await tx.user.findUnique({ where: { email: current.order.emailNormalized } });
-        const user = student ?? await tx.user.create({ data: { email: current.order.emailNormalized, role: "STUDENT" } });
-        if (user.role !== "STUDENT" || user.deletedAt) throw new CommercialError("EMAIL_NOT_AVAILABLE");
-        const existing = await tx.access.findUnique({ where: { commercialOrderId: current.order.id } });
-        if (!existing) {
-          const deadline = addDays(now, current.order.product.startWindowDays);
-          grantedAccessRecord = await tx.access.create({
-            data: {
-              userId: user.id,
-              testId: current.order.testIdSnapshot,
-              source: "COMMERCIAL",
-              attemptsTotal: current.order.product.attemptLimit,
-              attemptsAvailable: current.order.product.attemptLimit,
-              expiresAt: deadline,
-              commercialProductId: current.order.commercialProductId,
-              commercialOrderId: current.order.id,
-              commercialPaymentAttemptId: current.id,
-              grantedAt: now,
-              startDeadlineAt: deadline
-            }
-          });
-          grantedAccess = true;
-          await tx.eventLog.create({ data: { eventType: "access_granted", actorUserId: user.id, entityType: "commercial_order", entityId: current.order.id, payload: { source: "commercial", attempts: current.order.product.attemptLimit } } });
-        }
+      if (nextAttemptStatus === "PAID" && grantAccess) {
+        const granted = await ensurePaidOrderAccess(tx, {
+          order: current.order,
+          paymentAttemptId: current.id,
+          now
+        });
+        grantedAccessRecord = granted.access;
+        grantedAccess = granted.created;
       }
       await tx.commercialPaymentEvent.update({
         where: { id: event.id },
@@ -904,10 +1489,27 @@ export async function processCommercialProviderNotification(input: {
             }
           } satisfies PaidAnalyticsFacts
         : undefined;
-      return { duplicate: false, grantedAccess, rejected: false, paid };
+      return { duplicate: false, grantedAccess, rejected: false, paid, terminalAttempt: nextAttemptStatus !== "PAID" ? { status: nextAttemptStatus, occurredAt: now, provider: input.provider, orderPublicId: current.order.publicId, paymentAttemptId: current.id, paymentAttemptPublicId: current.publicId, failureCode: nextAttemptStatus === "FAILED" ? "payment_failed" as const : undefined } : undefined };
     });
     if (outcome.validation) await writePaymentValidationFailed(outcome.validation, input.analyticsWriter);
     if (outcome.paid) await ensurePaidAnalytics(outcome.paid, input.analyticsWriter);
+    if (outcome.paidWithoutAccessAnalytics) {
+      await ensurePaidWithoutAccessAnalytics(outcome.paidWithoutAccessAnalytics, input.analyticsWriter);
+    }
+    if (outcome.terminalAttempt) {
+      const eventName = outcome.terminalAttempt.status === "FAILED" ? "payment_failed" as const
+        : outcome.terminalAttempt.status === "CANCELLED" ? "payment_cancelled" as const
+        : "payment_expired" as const;
+      await ensurePaymentTerminalAnalytics({
+        eventName,
+        occurredAt: outcome.terminalAttempt.occurredAt,
+        provider: outcome.terminalAttempt.provider,
+        orderPublicId: outcome.terminalAttempt.orderPublicId,
+        paymentAttemptId: outcome.terminalAttempt.paymentAttemptId,
+        paymentAttemptPublicId: outcome.terminalAttempt.paymentAttemptPublicId,
+        failureCode: outcome.terminalAttempt.failureCode
+      }, input.analyticsWriter);
+    }
     return { duplicate: outcome.duplicate, grantedAccess: outcome.grantedAccess, rejected: outcome.rejected };
   } catch (error) {
     if (error instanceof Prisma.PrismaClientKnownRequestError && error.code === "P2002" && isCommercialPaymentEventUniqueConflict(error)) {
@@ -957,32 +1559,12 @@ export async function recordCommercialPaymentValidationFailure(input: {
   }
 }
 
-export async function commercialOrderStatus(publicId: string) {
+export async function commercialOrderStatus(
+  publicId: string,
+  projection?: Readonly<{ paymentStatus?: CommercialPaymentStatusProjection }>
+) {
   const order = await getCommercialOrder(publicId);
-  const payment = order.paymentAttempts[0] ?? null;
-  const attempt = order.access?.attempts[0] ?? null;
-  const nextAction: CommercialNextAction = order.access
-    ? attempt?.status === "STARTED"
-      ? "RESUME_TEST"
-      : attempt
-        ? "VIEW_RESULT"
-        : "OPEN_PRE"
-    : order.status === "PENDING"
-      ? "WAIT_FOR_PAYMENT"
-      : "NONE";
-  return {
-    orderStatus: order.status.toLowerCase(),
-    paymentStatus: payment?.status.toLowerCase() ?? null,
-    accessStatus: order.access ? "granted" : "none",
-    nextAction,
-    nextUrl: nextAction === "RESUME_TEST" && attempt
-      ? `/attempts/${attempt.id}`
-      : nextAction === "VIEW_RESULT" && attempt
-        ? `/results/${attempt.id}`
-        : nextAction === "OPEN_PRE"
-          ? `/tests/${order.product.test.slug}`
-          : null
-  };
+  return serializeCommercialOrderStatus(order, projection?.paymentStatus);
 }
 
 export async function claimCommercialOrderAccess(publicId: string) {
@@ -993,7 +1575,7 @@ export async function claimCommercialOrderAccess(publicId: string) {
       include: {
         product: {
           include: {
-            test: { select: { id: true, slug: true, examMode: true } }
+            test: { select: { id: true, slug: true } }
           }
         }
       }
@@ -1057,7 +1639,7 @@ export async function claimCommercialOrderAccess(publicId: string) {
       : "OPEN_PRE";
   return {
     orderId: order.id,
-    examMode: order.product.test.examMode,
+    examMode: order.examModeSnapshot,
     student: { userId: access.user.id, email: access.user.email, role: "STUDENT" as const },
     accessId: access.id,
     commercialProductId: order.commercialProductId,

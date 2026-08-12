@@ -1,7 +1,7 @@
 import { apiFailure, apiSuccess } from "@/lib/api-response";
 import { claimCommercialOrderAccess } from "@/lib/commercial/commercial-service";
 import { requireCommercialOrderToken } from "@/lib/commercial/order-token";
-import { commercialErrorResponse, isSameOriginRequest } from "@/lib/commercial/route-helpers";
+import { commercialErrorResponse, requireTrustedOrigin } from "@/lib/commercial/route-helpers";
 import { commercialPublicIdSchema } from "@/lib/commercial/schemas";
 import { setStudentSessionCookie } from "@/server/auth/student-session";
 import {
@@ -29,7 +29,7 @@ export function createCommercialClaimAccessHandler(
   dependencies: CommercialClaimAccessRouteDependencies = defaultDependencies
 ) {
   return async function commercialClaimAccessHandler(request: Request, context: Context) {
-    if (!isSameOriginRequest(request)) {
+    if (!requireTrustedOrigin(request)) {
       return finalizeCommercialOrderSessionResponse(
         apiFailure({ code: "CSRF_REJECTED", message: "Invalid request origin." }, 403)
       );
