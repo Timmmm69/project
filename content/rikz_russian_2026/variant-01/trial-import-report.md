@@ -51,19 +51,22 @@ Technical normalizations required by the current importer:
 
 ## Local Trial Import Result
 
-- Local test ID: `14ec4d54-1488-46c5-8def-2739b5b38708`.
-- Local import job ID: `3c26ae54-307b-4261-b5aa-c34a201a842e`.
+- Verified on: `2026-08-13`.
+- Local test ID: `80c98adb-f8f3-46c5-9fb9-efa7a4f2d0ab`.
+- Local import job ID: `51d17a3e-1fe0-42bf-a287-242c607faf6d`.
+- Admin location: `/admin`, test slug `russian_training_variant_01_corrected`.
 - Created with `examMode=rikz_russian_2026`, `mode=ce_ct`, `subjectCode=russian`, `officialYear=2026`, and 120 minutes.
 - Import validation: 40 valid rows, 0 errors, 0 warnings.
 - Import commit: 40 questions.
-- Database verification: 18 Part A, 22 Part B, 80 primary points, full A1-A18 and B1-B22 ranges, correct types, Part A options A-E, and Part B accepted-answer arrays.
+- Database verification: 18 Part A, 22 Part B, 80 primary points, full A1-A18 and B1-B22 ranges, correct types, Part A options A-E, and Part B accepted-answer arrays. A row-by-row comparison against `source/questions.final.json` found no option, key, accepted-answer, or point mismatches.
 - Confirmed B14 accepted answer: `лексикология`.
 - Confirmed final versions of A10, A18, B16, B19, B20, B21, and B22.
 - Confirmed shared text is available to A17, A18, and B1-B9.
-- Publish validation passed with an active 80-point scoring scheme; the local test was published only to verify the local flow.
-- Minimal student smoke passed: A1 exposes five choices, B1 accepts a numeric token, and the active-attempt payload does not expose answer keys.
+- The test remains `DRAFT`; `publishedAt` is null. No commercial product, payment, access, access code, or attempt was created.
+- The draft is absent from the public catalog and public detail API. Active-attempt serialization excludes `correctAnswer` and `acceptedAnswers` before completion.
 
 ## Risks And Next Step
 
 - The shared text is repeated inside 11 question texts because the current schema has no shared-context entity. This is correct for the current MVP flow but is a future content-maintenance consideration.
-- Public release still requires a human methodological review. This import verification does not raise the content package publication status.
+- Public release still requires a human methodological review of all prompts, options, keys, accepted answers, explanations, and the repeated shared text. This import verification does not raise the content package publication status.
+- Production remains `NO-GO`. Do not publish the test or attach an active commercial product until methodological approval is recorded.
