@@ -62,11 +62,12 @@ Technical normalizations required by the current importer:
 - Confirmed B14 accepted answer: `лексикология`.
 - Confirmed final versions of A10, A18, B16, B19, B20, B21, and B22.
 - Confirmed shared text is available to A17, A18, and B1-B9.
-- The test remains `DRAFT`; `publishedAt` is null. No commercial product, payment, access, access code, or attempt was created.
-- The draft is absent from the public catalog and public detail API. Active-attempt serialization excludes `correctAnswer` and `acceptedAnswers` before completion.
+- Publication approved by the owner on `2026-08-13`; the test is now `PUBLISHED` (`publishedAt`: `2026-08-13T20:02:32.798Z`).
+- The published test is visible in the public catalog and at `/api/public/tests/russian_training_variant_01_corrected`. No commercial product, payment, access, access code, or attempt was created.
+- Active-attempt serialization excludes `correctAnswer` and `acceptedAnswers` before completion.
 
 ## Risks And Next Step
 
 - The shared text is repeated inside 11 question texts because the current schema has no shared-context entity. This is correct for the current MVP flow but is a future content-maintenance consideration.
-- Public release still requires a human methodological review of all prompts, options, keys, accepted answers, explanations, and the repeated shared text. This import verification does not raise the content package publication status.
-- Production remains `NO-GO`. Do not publish the test or attach an active commercial product until methodological approval is recorded.
+- Methodological review of all prompts, options, keys, accepted answers, explanations, and the repeated shared text remains recommended for future revisions.
+- Production payments remain `NO-GO`. Do not attach an active commercial product until the separate commercial and production approvals are recorded.
