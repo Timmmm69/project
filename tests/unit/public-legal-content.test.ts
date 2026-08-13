@@ -1,4 +1,5 @@
 import { describe, expect, it } from "vitest";
+import { readFileSync } from "node:fs";
 import { LEGAL_DOCUMENT_VERSION, PUBLIC_LEGAL_LINKS, SELLER, SERVICE_TERMS } from "@/content/legal";
 
 describe("public WEBPAY legal content", () => {
@@ -28,5 +29,10 @@ describe("public WEBPAY legal content", () => {
     for (const route of Object.values(PUBLIC_LEGAL_LINKS)) {
       expect(route).toMatch(/^\/[a-z-]+$/);
     }
+  });
+
+  it("keeps the example checkout legal version aligned with the published documents", () => {
+    const exampleEnvironment = readFileSync(".env.example", "utf8");
+    expect(exampleEnvironment).toContain(`LEGAL_BUNDLE_VERSION="${LEGAL_DOCUMENT_VERSION}"`);
   });
 });
