@@ -3,7 +3,7 @@
 Версия: 1.0
 Дата: 2026-07-30
 Владелец: Merchant onboarding owner / Product Owner
-Статус: `BLOCKED_EXTERNAL`
+Статус: `IN_PROGRESS / BLOCKED_EXTERNAL`
 
 Этот dossier — реестр необходимых authoritative inputs. Он не является merchant agreement или технической документацией WEBPAY.
 
@@ -28,6 +28,18 @@
 | Поддерживаемые card schemes | Merchant-specific provider docs | `MISSING` |
 | 3-D Secure и mobile rules | Merchant-specific provider docs | `MISSING` |
 | Brand/logo/copy rules | WEBPAY brand package | `MISSING` |
+
+### Подтверждённые seller/site inputs, 2026-08-13
+
+- Seller: `Колюгова Софья Игоревна`.
+- Legal/tax status: физическое лицо, применяющее налог на профессиональный доход.
+- УНП: `EE8047957`.
+- Контакты: `+375293768988`, `kolyugova42@icloud.com`.
+- Support: Пн-Пт 10:00-18:00 Europe/Minsk, ответ в течение двух рабочих дней.
+- Acquiring route для самозанятого со слов onboarding: WEBPAY / МТБанк;
+  merchant-specific agreement всё ещё `MISSING`.
+- Domain, domain ownership и публичный почтовый адрес: `MISSING`.
+- Official MTBank logo package из URL PDF получен и использован без ЕРИП.
 
 При невозможности подключения выбранного статуса продавца Product Owner отдельно утверждает ИП/юрлицо; код не должен угадывать это решение.
 
@@ -69,6 +81,16 @@ External source: `C:\Users\novik\Downloads\требования к сайту (8
 - сведения о чеке/квитанции;
 - официальные WEBPAY/payment logos и корректная provider copy;
 - применимые требования регистрации сайта/хостинга в Беларуси.
+
+Реализовано в public site pass 2026-08-13: `/seller`, `/offer`, `/payment`,
+`/refunds`, `/privacy`, `/service-delivery`, `/support`, site-wide footer,
+BYN price, card-only WEBPAY copy, payment safety, service receipt/control,
+manual refund и НПД receipt disclosure.
+
+Tax correction: WEBPAY payment confirmation не заменяет чек НПД. По
+authoritative разъяснениям МНС плательщик НПД формирует чек приложения по
+каждому факту расчёта и обеспечивает его передачу покупателю. Кассовое
+оборудование при этом не требуется.
 
 PDF не определяет callback/signature/status API; технические assumptions из него запрещены.
 
