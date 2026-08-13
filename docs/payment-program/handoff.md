@@ -1,6 +1,6 @@
 # Payment Program Handoff — единая точка входа
 
-2026-08-13 | Base HEAD: `8ccb32b` | Production: `NO-GO`
+2026-08-13 | Implementation: `76f8231` | Production: `NO-GO`
 
 ## Протокол для нового агента
 
