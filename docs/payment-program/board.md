@@ -97,9 +97,9 @@ A-07 остаётся long-lived program-control `IN_PROGRESS`; production ос�
 | [E-03](tasks/E-03.md) | E — Merchant dependencies | Заменить assumed sandbox adapter | `BLOCKED_EXTERNAL` | `CRITICAL` | `E-02`, `B2-04` |
 | [E-04](tasks/E-04.md) | E — Merchant dependencies | Выполнить настоящую sandbox matrix | `BLOCKED_EXTERNAL` | `CRITICAL` | `E-03` |
 | [E-05](tasks/E-05.md) | E — Merchant dependencies | Подтвердить production configuration и rollback | `BLOCKED_EXTERNAL` | `CRITICAL` | `E-04`, `O-01`, `O-02`, `O-03`, `O-04`, `QA-01` |
-| [O-01](tasks/O-01.md) | O/QA — Legal, operations и приёмка | Утвердить seller и legal public copy | `BLOCKED_EXTERNAL` | `CRITICAL` | `A-04` |
-| [O-02](tasks/O-02.md) | O/QA — Legal, operations и приёмка | Утвердить support channel и runbook | `BLOCKED_EXTERNAL` | `HIGH` | `A-04` |
-| [O-03](tasks/O-03.md) | O/QA — Legal, operations и приёмка | Определить tax receipt и manual refund process | `BLOCKED_EXTERNAL` | `HIGH` | `A-04` |
+| [O-01](tasks/O-01.md) | O/QA — Legal, operations и приёмка | Утвердить seller и legal public copy | `IN_PROGRESS` | `CRITICAL` | `A-04` |
+| [O-02](tasks/O-02.md) | O/QA — Legal, operations и приёмка | Утвердить support channel и runbook | `IN_PROGRESS` | `HIGH` | `A-04` |
+| [O-03](tasks/O-03.md) | O/QA — Legal, operations и приёмка | Определить tax receipt и manual refund process | `IN_PROGRESS` | `HIGH` | `A-04` |
 | [O-04](tasks/O-04.md) | O/QA — Legal, operations и приёмка | Настроить production email и recovery QA | `BLOCKED_EXTERNAL` | `CRITICAL` | `B1-02`, `O-01` |
 | [QA-01](tasks/QA-01.md) | O/QA — Legal, operations и приёмка | Провести полный payment regression pass | `DONE` | `CRITICAL` | `B1-05`, `B2-01`, `B2-03`, `B2-04`, `B2-05`, `B2-07`, `B3-01`, `B3-02`, `B3-03`, `B3-04`, `B3-05`, `C-01`, `C-02`, `C-03`, `C-04`, `C-05`, `C-06`, `C-07`, `D-03`, `E-04`, `O-04` |
 | [QA-02](tasks/QA-02.md) | O/QA — Legal, operations и приёмка | Финальное независимое ревью и production gate | `DONE` | `CRITICAL` | `A-07`, `QA-01`, `E-05` |

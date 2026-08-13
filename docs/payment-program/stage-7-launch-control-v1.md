@@ -33,8 +33,8 @@ Production verdict: `NO-GO`
 | Merchant protocol | `E-02`, `E-03` | Confirmed fields/signatures/callback/status/expiry/retry contract and implemented adapter | `BLOCKED_EXTERNAL` | Да |
 | Real sandbox | `E-04` | Evidence matrix from real merchant sandbox | `BLOCKED_EXTERNAL` | Да |
 | Production acquiring/config | `E-05` | Settlement, production credentials/config, rollback approval | `BLOCKED_EXTERNAL` | Да |
-| Seller/legal/privacy/refund | `O-01`, `O-03` | Approved public copy and manual refund/receipt process | `BLOCKED_EXTERNAL` | Да |
-| Support/runbook | `O-02` | Support email/hours and incident runbooks | `BLOCKED_EXTERNAL` | Да |
+| Seller/legal/privacy/refund | `O-01`, `O-03` | Approved public copy and manual refund/receipt process | `IN_PROGRESS / BLOCKED_EXTERNAL` | Да |
+| Support/runbook | `O-02` | Support email/hours and incident runbooks | `IN_PROGRESS / BLOCKED_EXTERNAL` | Да |
 | Production email | `O-04` | SMTP delivery, recovery/deliverability QA | `BLOCKED_EXTERNAL` | Да |
 | Hosting/site registration | `E-01`, `O-01`, `E-05` | Applicable Belarus hosting/registration evidence, including WEBPAY site requirements | `BLOCKED_EXTERNAL` | Да |
 | Final regression | `QA-01` | Security/concurrency/browser/payment matrix | `OPEN` | Да |
