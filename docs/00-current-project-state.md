@@ -1,9 +1,9 @@
 # Текущее состояние проекта
 
-Дата среза: 2026-08-21  
-Ветка release-кандидата: `codex/release-integration`  
-Baseline `main`: `f3f818b7d186b188a696880f97bedb06e7ff2571`  
-UX-линия: `c074582c010a0f3ac253cf7e171e3e7d9b0185a0`  
+Дата среза: 2026-08-21
+Ветка release-кандидата: `codex/release-integration`
+Baseline `main`: `f3f818b7d186b188a696880f97bedb06e7ff2571`
+UX-линия: `c074582c010a0f3ac253cf7e171e3e7d9b0185a0`
 Проверенный implementation/config SHA до документирующего коммита: `1132de3bb244ae0fe5d29adae43b845a00b73b02`.
 
 ## Статус

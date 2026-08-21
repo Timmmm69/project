@@ -1,10 +1,10 @@
 # Release Candidate Integration Report
 
-Дата: 2026-08-21  
-Ветка: `codex/release-integration`  
-Baseline: `f3f818b7d186b188a696880f97bedb06e7ff2571` (`main`)  
-UX source: `c074582c010a0f3ac253cf7e171e3e7d9b0185a0`  
-Implementation/config SHA: `1132de3bb244ae0fe5d29adae43b845a00b73b02`  
+Дата: 2026-08-21
+Ветка: `codex/release-integration`
+Baseline: `f3f818b7d186b188a696880f97bedb06e7ff2571` (`main`)
+UX source: `c074582c010a0f3ac253cf7e171e3e7d9b0185a0`
+Implementation/config SHA: `1132de3bb244ae0fe5d29adae43b845a00b73b02`
 Production verdict: **NO-GO**.
 
 Документирующий commit не может содержать собственный SHA; поэтому окончательный release SHA фиксируется в PR и в handoff, а этот отчёт привязан к проверенному implementation/config SHA и ветке.
