@@ -211,15 +211,23 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
         </div>
 
         <aside className="panel stack">
-          <div>
-            <p className="eyebrow">Доступ к тесту</p>
-            <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
-            <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
-          </div>
-          {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} recovery={recovery} /> : null}
-          {!showCommercialCheckout && !hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
-
-
+          {verifiedProductView ? (
+            <div className="stack compact">
+              <p className="eyebrow">Доступ к тесту</p>
+              <h2 className="section-title">Доступ готов. Попытка ещё не начата.</h2>
+              <Link className="button" href={`/tests/${slug}`}>Перейти к началу</Link>
+            </div>
+          ) : (
+            <>
+              <div>
+                <p className="eyebrow">Доступ к тесту</p>
+                <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
+                <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
+              </div>
+              {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} recovery={recovery} /> : null}
+              {!showCommercialCheckout && !hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
+            </>
+          )}
         </aside>
       </section>
     </main>
