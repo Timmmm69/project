@@ -224,6 +224,7 @@ function commercialRequest(fixture: Fixture) {
     headers: {
       origin,
       host: "prod03-primary-result.test",
+      "x-test-internal-request": "true",
       "Idempotency-Key": randomUUID()
     }
   });
