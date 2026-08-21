@@ -104,7 +104,7 @@ jobs:
           RUN_ACC01A_HTTP_INTEGRATION: "true"
           RUN_ACC01A_STATE_RESOLVER_INTEGRATION: "true"
           RUN_ACC01A_DESTINATION_GUARDS_INTEGRATION: "true"
-        run: pnpm test -- --maxWorkers=1 --no-file-parallelism
+        run: pnpm test --maxWorkers=1 --no-file-parallelism
 
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
