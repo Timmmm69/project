@@ -118,6 +118,7 @@ async function createCommercialFixture(input: {
     data: {
       commercialProductId: product.id,
       testIdSnapshot: test.id,
+      examModeSnapshot: test.examMode,
       productNameSnapshot: product.name,
       priceMinor: product.priceMinor,
       currency: "BYN",
