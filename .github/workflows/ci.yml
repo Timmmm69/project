@@ -91,4 +91,11 @@ jobs:
         run: |
           pnpm prisma migrate deploy
           pnpm exec vitest run tests/integration/commercial-order-verified-session-issuer.test.ts
+      - name: Run PROD-03 primary-only authentic Result PostgreSQL integration tests
+        env:
+          RUN_PROD03_PRIMARY_RESULT_INTEGRATION: "true"
+          DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=prod03_primary_result_ci
+        run: |
+          pnpm prisma migrate deploy
+          pnpm exec vitest run tests/integration/primary-only-authentic-result.test.ts
       - run: pnpm build

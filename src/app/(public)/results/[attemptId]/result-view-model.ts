@@ -1,3 +1,5 @@
+import type { AuthenticStudentResultPayload as ServerAuthenticStudentResultPayload } from "@/lib/scoring/result-serialize";
+
 export type ResultQuestionType =
   | "single_choice"
   | "multiple_choice"
@@ -23,20 +25,24 @@ export type ResultAnswerDetail = {
   explanation: string | null;
 };
 
-export type ResultPayload = {
+export type GenericResultPayload = {
   attempt_id: string;
   test_title: string;
   status: "completed" | "expired" | "cancelled";
   mode: "training" | "ce_ct";
-  exam_mode: "generic" | "rikz_russian_2026";
+  exam_mode: "generic";
   raw_score: number;
   max_raw_score: number;
-  scaled_score: number | null;
-  max_scaled_score: number | null;
-  scaled_score_note: string | null;
+  scaled_score?: number | null;
+  max_scaled_score?: number | null;
+  scaled_score_note?: string | null;
   answer_details: ResultAnswerDetail[];
   mistakes: ResultAnswerDetail[];
 };
+
+export type AuthenticStudentResultPayload = ServerAuthenticStudentResultPayload;
+
+export type ResultPayload = AuthenticStudentResultPayload | GenericResultPayload;
 
 export type PartBreakdown = {
   part: "A" | "B";
@@ -45,20 +51,177 @@ export type PartBreakdown = {
   maxScore: number;
 };
 
-export function isAuthenticRikzRussianResult(result: Pick<ResultPayload, "exam_mode">) {
+export type AuthenticResultSummary = Readonly<{
+  status: "completed" | "expired";
+  completedAt: string;
+  primaryScore: number;
+  primaryMax: number;
+  partA: Readonly<{ score: number; maxScore: number }>;
+  partB: Readonly<{ score: number; maxScore: number }>;
+}>;
+
+export function isAuthenticRikzRussianResult(
+  result: ResultPayload
+): result is AuthenticStudentResultPayload {
   return result.exam_mode === "rikz_russian_2026";
 }
 
+function isRecord(value: unknown): value is Record<string, unknown> {
+  return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
+function isFiniteNonNegativeNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
+const authenticResultKeys = new Set([
+  "status",
+  "mode",
+  "exam_mode",
+  "raw_score",
+  "max_raw_score",
+  "part_a_score",
+  "part_a_max_score",
+  "part_b_score",
+  "part_b_max_score",
+  "completed_at"
+]);
+
+const canonicalUtcIsoPattern = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}Z$/;
+
+function isCanonicalUtcIso(value: unknown): value is string {
+  if (typeof value !== "string" || !canonicalUtcIsoPattern.test(value)) return false;
+  const milliseconds = Date.parse(value);
+  return Number.isFinite(milliseconds) && new Date(milliseconds).toISOString() === value;
+}
+
+export function formatAuthenticResultCompletedAt(value: string): string | null {
+  if (!isCanonicalUtcIso(value)) return null;
+  try {
+    const parts = new Intl.DateTimeFormat("ru-RU", {
+      timeZone: "Europe/Minsk",
+      year: "numeric",
+      month: "long",
+      day: "numeric",
+      hour: "2-digit",
+      minute: "2-digit",
+      hourCycle: "h23"
+    }).formatToParts(new Date(value));
+    const part = (type: Intl.DateTimeFormatPartTypes) =>
+      parts.find((candidate) => candidate.type === type)?.value;
+    const day = part("day");
+    const month = part("month");
+    const year = part("year");
+    const hour = part("hour");
+    const minute = part("minute");
+    if (!day || !month || !year || !hour || !minute) return null;
+    return `${day} ${month} ${year}, ${hour}:${minute} (Минск)`;
+  } catch {
+    return null;
+  }
+}
+
+function hasValidAuthenticAggregates(result: Record<string, unknown>) {
+  const values = [
+    result.raw_score,
+    result.max_raw_score,
+    result.part_a_score,
+    result.part_a_max_score,
+    result.part_b_score,
+    result.part_b_max_score
+  ];
+  if (!values.every(isFiniteNonNegativeNumber)) return false;
+  const rawScore = result.raw_score as number;
+  const maxRawScore = result.max_raw_score as number;
+  const partAScore = result.part_a_score as number;
+  const partAMaxScore = result.part_a_max_score as number;
+  const partBScore = result.part_b_score as number;
+  const partBMaxScore = result.part_b_max_score as number;
+  return rawScore <= maxRawScore
+    && partAScore <= partAMaxScore
+    && partBScore <= partBMaxScore
+    && partAScore + partBScore === rawScore
+    && partAMaxScore + partBMaxScore === maxRawScore
+    && maxRawScore === 80;
+}
+
+export function parseAuthenticStudentResultPayload(value: unknown): AuthenticStudentResultPayload | null {
+  if (!isRecord(value)) return null;
+  const keys = Object.keys(value);
+  if (keys.length !== authenticResultKeys.size || keys.some((key) => !authenticResultKeys.has(key))) {
+    return null;
+  }
+  if (
+    (value.status !== "completed" && value.status !== "expired")
+    || value.mode !== "ce_ct"
+    || value.exam_mode !== "rikz_russian_2026"
+    || !isCanonicalUtcIso(value.completed_at)
+    || !hasValidAuthenticAggregates(value)
+  ) {
+    return null;
+  }
+  return value as AuthenticStudentResultPayload;
+}
+
+export function parseResultPayload(value: unknown): ResultPayload | null {
+  if (!isRecord(value)) return null;
+  if (value.exam_mode === "rikz_russian_2026") {
+    return parseAuthenticStudentResultPayload(value);
+  }
+  return value as GenericResultPayload;
+}
+
+export function buildAuthenticResultSummary(
+  result: AuthenticStudentResultPayload
+): AuthenticResultSummary | null {
+  if (result.status !== "completed" && result.status !== "expired") return null;
+  if (!hasValidAuthenticAggregates(result as unknown as Record<string, unknown>)) return null;
+  const completedAt = formatAuthenticResultCompletedAt(result.completed_at);
+  if (completedAt === null) return null;
+
+  return {
+    status: result.status,
+    completedAt,
+    primaryScore: result.raw_score,
+    primaryMax: result.max_raw_score,
+    partA: { score: result.part_a_score, maxScore: result.part_a_max_score },
+    partB: { score: result.part_b_score, maxScore: result.part_b_max_score }
+  };
+}
+
 export function getScaledScoreDisplay(
-  result: Pick<ResultPayload, "scaled_score" | "max_scaled_score">
+  result: Pick<GenericResultPayload, "exam_mode"> & {
+    scaled_score?: unknown;
+    max_scaled_score?: unknown;
+  }
 ) {
-  if (result.scaled_score === null) {
+  if (
+    typeof result.scaled_score !== "number" ||
+    !Number.isFinite(result.scaled_score) ||
+    result.scaled_score < 0
+  ) {
+    return null;
+  }
+
+  if (result.max_scaled_score === undefined || result.max_scaled_score === null) {
+    return {
+      score: result.scaled_score,
+      maxScore: 100
+    };
+  }
+
+  if (
+    typeof result.max_scaled_score !== "number" ||
+    !Number.isFinite(result.max_scaled_score) ||
+    result.max_scaled_score <= 0 ||
+    result.scaled_score > result.max_scaled_score
+  ) {
     return null;
   }
 
   return {
     score: result.scaled_score,
-    maxScore: result.max_scaled_score ?? 100
+    maxScore: result.max_scaled_score
   };
 }
 

@@ -64,6 +64,7 @@ export default defineConfig({
         ? { VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING }
         : {}),
       ...recoveryUiEnvironment
+
     }
   }
 });
