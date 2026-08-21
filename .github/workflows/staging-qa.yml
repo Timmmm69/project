@@ -38,7 +38,7 @@ jobs:
           --health-timeout 5s
           --health-retries 10
     env:
-      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/staging_release_qa?schema=public
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/staging_release_qa?schema=acc01a_recovery_ci
       SESSION_SECRET: synthetic_ci_session_secret_0123456789abcdef
       ACCESS_CODE_HASH_PEPPER: synthetic_ci_access_pepper_0123456789abcdef
       COMMERCIAL_ORDER_TOKEN_HMAC_KEY: synthetic_ci_order_token_key_0123456789abcdef
