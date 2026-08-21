@@ -2,6 +2,7 @@
 
 import { useEffect, useRef, useState } from "react";
 import { useSearchParams } from "next/navigation";
+import { RecoveryAccessPanel } from "./recovery-access-panel";
 
 type LegalLinks = {
   version: string;
@@ -79,12 +80,15 @@ function isSafeVerifiedDestination(value: string) {
   return /^\/(?:attempts|results)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
 }
 
-export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency }: {
+export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency, recovery }: {
+
   legal: LegalLinks;
   testId: string;
   productCode: string;
   priceMinor: number;
   currency: string;
+  recovery: Readonly<{ productCode: string; supportEmail: string }> | null;
+
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -586,6 +590,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
 
         </div>
       </section>
+
     );
   }
 
@@ -646,7 +651,8 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   }
 
   return (
-    <section className="subpanel stack compact">
+    <>
+    <section className="subpanel stack compact" id="commercial-checkout">
       <div>
         <p className="eyebrow">Оформление покупки</p>
         <h3 className="subsection-title">Одна попытка тренировочного онлайн-теста по русскому языку</h3>
@@ -791,5 +797,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
         </section>
       ) : null}
     </section>
+    {recovery ? <RecoveryAccessPanel {...recovery} /> : null}
+    </>
   );
 }

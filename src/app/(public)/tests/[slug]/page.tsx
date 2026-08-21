@@ -12,6 +12,8 @@ import {
 } from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import { PrestartAccessExpired, PrestartConfirmation } from "./prestart-confirmation";
+import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
+
 
 
 export const dynamic = "force-dynamic";
@@ -44,14 +46,33 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
   }
 
   const publicTest = serializePublicTest(test);
+  const legal = commercialLegalConfig();
+  const authenticCommercialTest = isAuthenticRikzRussianExamMode(
+    test.examMode,
+    "CURRENT_TEST"
+  );
   let isFullCeCt = publicTest.mode === "ce_ct" && publicTest.maxRawScore === 80;
   const commercialProduct = isCommercialCheckoutEnabled()
     ? await prisma.commercialProduct.findFirst({
       where: { code: "russian-training-variant-01", testId: test.id, isActive: true },
-      select: { priceMinor: true, currency: true, attemptLimit: true, startWindowDays: true }
+      select: {
+        code: true,
+        priceMinor: true,
+        currency: true,
+        attemptLimit: true,
+        startWindowDays: true
+      }
     })
     : null;
   const showCommercialCheckout = Boolean(commercialProduct);
+  const recoveryAvailability = resolveRecoveryUiAvailability();
+  const recovery = authenticCommercialTest && commercialProduct && recoveryAvailability.available &&
+    recoveryAvailability.productCode === commercialProduct.code
+    ? {
+        productCode: recoveryAvailability.productCode,
+        supportEmail: legal.supportEmail
+      }
+    : null;
   isFullCeCt &&= !showCommercialCheckout;
   let hideLegacyPrivateControls = false;
   let entryResolution: VerifiedStudentEntryResolution | null = null;
@@ -191,8 +212,9 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
             <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
-          {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} /> : null}
+          {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} recovery={recovery} /> : null}
           {!showCommercialCheckout && !hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
+
 
         </aside>
       </section>
