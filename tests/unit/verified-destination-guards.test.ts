@@ -44,8 +44,8 @@ function resolved(overrides: Partial<Resolved> = {}): Resolved {
     sourceReferenceId: ids.recovery,
     issuanceOperationId: ids.operation,
     tokenGeneration: 1,
-    issuedAt: new Date("2026-07-14T10:00:00.000Z"),
-    expiresAt: new Date("2026-07-21T10:00:00.000Z"),
+    issuedAt: new Date("2027-07-14T10:00:00.000Z"),
+    expiresAt: new Date("2027-07-21T10:00:00.000Z"),
     ...overrides
   };
 }
@@ -58,7 +58,7 @@ function access(overrides: Record<string, unknown> = {}) {
     source: "COMMERCIAL",
     commercialProductId: ids.product,
     revokedAt: null,
-    expiresAt: new Date("2026-08-14T10:00:00.000Z"),
+    expiresAt: new Date("2027-08-14T10:00:00.000Z"),
     user: {
       id: ids.user,
       email: "student@example.test",
@@ -155,11 +155,11 @@ function fakeClient(input: {
     verifiedRecoverySession: {
       findUnique: vi.fn(async () => input.recoveryRow === undefined ? {
         status: "REVOKED",
-        revokedAt: new Date("2026-07-14T11:00:00.000Z"),
+        revokedAt: new Date("2027-07-14T11:00:00.000Z"),
         revocationCode: "CONTINUED",
         continuationVerifiedStudentSessionId: ids.session,
         continuationOperationId: ids.operation,
-        continuedAt: new Date("2026-07-14T11:00:00.000Z")
+        continuedAt: new Date("2027-07-14T11:00:00.000Z")
       } : input.recoveryRow)
     }
   } as unknown as PrismaClient;
@@ -456,7 +456,7 @@ describe("ACC-01A verified destination guard", () => {
     const decision = await authorizePre({ resolution: resolved({ expiresAt: originalExpiry }) });
     const response = finalizeVerifiedDestinationResponse(NextResponse.json({ ok: true }), decision);
     expect(response.headers.get("set-cookie")).toBeNull();
-    expect(originalExpiry.toISOString()).toBe("2026-07-21T10:00:00.000Z");
+    expect(originalExpiry.toISOString()).toBe("2027-07-21T10:00:00.000Z");
   });
 
   it("33. raw token is absent from logs and rejection responses", async () => {
@@ -482,8 +482,12 @@ describe("ACC-01A verified destination guard", () => {
     expect(page).toContain("if (verifiedOpenPre && !verifiedProductView)");
     expect(page).toContain("<PrestartConfirmation");
     expect(page).toContain("<h1 className=\"page-title\">{publicTest.title}</h1>");
-    expect(page).toContain("Доступ готов. Попытка ещё не начата.");
-    expect(page).toContain("Перейти к началу");
+    const prestart = readFileSync(
+      join(process.cwd(), "src/app/(public)/tests/[slug]/prestart-confirmation.tsx"),
+      "utf8"
+    );
+    expect(prestart).toContain("Перед началом попытки");
+    expect(prestart).toContain("Начать попытку");
     expect(page).not.toContain("verifiedPreAuthorized");
     expect(page).not.toContain("Начать или продолжить тест");
   });

@@ -77,12 +77,14 @@ function newKey() {
 }
 
 export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency, recovery }: {
+
   legal: LegalLinks;
   testId: string;
   productCode: string;
   priceMinor: number;
   currency: string;
   recovery: Readonly<{ productCode: string; supportEmail: string }> | null;
+
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -101,6 +103,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   const orderKey = useRef<string | null>(null);
   const checkoutFlowId = useRef<string | null>(null);
   const paymentKey = useRef<string | null>(null);
+  const claimKey = useRef<string | null>(null);
   const challengeKey = useRef<string | null>(null);
   const paymentFormRef = useRef<{ action: string; fields: Record<string, string> } | null>(null);
   const redirectingOrderId = useRef<string | null>(null);
@@ -531,8 +534,12 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   async function claimAndContinue() {
     if (!order) return;
     setBusy(true);
-    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, { method: "POST" });
-    const body = await response.json() as ApiResponse<{ nextAction: "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT"; nextUrl: string; testId: string }>;
+    claimKey.current ??= newKey();
+    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, {
+      method: "POST",
+      headers: { "Idempotency-Key": claimKey.current }
+    });
+    const body = await response.json() as ApiResponse<{ nextAction: "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT"; nextUrl: string }>;
     if (!body.success) {
       setBusy(false);
       setMessage(body.error.message);
@@ -576,8 +583,10 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
           <div className="spinner" aria-hidden="true" />
           <p className="subsection-title">Создаём заказ…</p>
           <p className="muted">Фиксируем цену {price}, состав покупки и данные для перехода к оплате.</p>
+
         </div>
       </section>
+
     );
   }
 
@@ -639,7 +648,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
 
   return (
     <>
-    <section className="subpanel stack compact">
+    <section className="subpanel stack compact" id="commercial-checkout">
       <div>
         <p className="eyebrow">Оформление покупки</p>
         <h3 className="subsection-title">Одна попытка тренировочного онлайн-теста по русскому языку</h3>
@@ -650,7 +659,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
           <p className="subsection-title">{price}</p>
           <span className="badge">Разовый платёж</span>
         </div>
-        <p className="muted">Без подписки, автоматического продления и повторных списаний. Одна покупка — одна попытка.</p>
+        <p className="muted">Без подписки, автоматического продления и повторных списаний. Одна покупка, одна попытка.</p>
         <ul className="muted">
           <li>Начать попытку можно в течение 90 дней после подтверждения оплаты.</li>
           <li>После начала даётся 120 минут без паузы.</li>

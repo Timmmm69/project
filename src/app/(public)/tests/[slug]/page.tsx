@@ -11,8 +11,10 @@ import {
   type VerifiedStudentEntryResolution
 } from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
-import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
 import { PrestartAccessExpired, PrestartConfirmation } from "./prestart-confirmation";
+import { resolveRecoveryUiAvailability } from "@/server/recovery/ui-availability";
+
+
 
 export const dynamic = "force-dynamic";
 
@@ -27,6 +29,10 @@ type PageProps = {
 
 function formatPrice(price: number, currency: string) {
   return `${(price / 100).toFixed(2)} ${currency}`;
+}
+
+function formatVisibleText(value: string) {
+  return value.replace(/[—–]/g, "-");
 }
 
 export default async function PublicTestPage({ params, searchParams }: PageProps) {
@@ -117,6 +123,7 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
     );
   }
 
+
   if (verifiedOpenPre && !verifiedProductView) {
     return (
       <main className="page-shell prestart-page stack">
@@ -149,8 +156,8 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
                 {isFullCeCt ? <span className="badge">шкала РИКЗ 0-100</span> : null}
               </div>
               <h1 className="page-title">{publicTest.title}</h1>
-              {publicTest.shortDescription ? <p className="lead">{publicTest.shortDescription}</p> : null}
-              {publicTest.fullDescription ? <p className="muted">{publicTest.fullDescription}</p> : null}
+              {publicTest.shortDescription ? <p className="lead">{formatVisibleText(publicTest.shortDescription)}</p> : null}
+              {publicTest.fullDescription ? <p className="muted">{formatVisibleText(publicTest.fullDescription)}</p> : null}
             </div>
           </section>
 
@@ -217,17 +224,8 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
                 <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
                 <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
               </div>
-              {showCommercialCheckout && commercialProduct ? (
-                <CommercialCheckoutForm
-                  legal={legal}
-                  testId={publicTest.id}
-                  productCode={COMMERCIAL_PRODUCT_CODE}
-                  priceMinor={commercialProduct.priceMinor}
-                  currency={commercialProduct.currency}
-                  recovery={recovery}
-                />
-              ) : null}
-              {!hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
+              {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={legal} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} recovery={recovery} /> : null}
+              {!showCommercialCheckout && !hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
             </>
           )}
         </aside>

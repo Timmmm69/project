@@ -46,11 +46,11 @@ jobs:
 
       - run: pnpm install --frozen-lockfile
       - name: Validate Prisma schema
-        run: pnpm prisma validate
+        run: pnpm exec prisma validate
       - name: Generate Prisma client
-        run: pnpm prisma generate
+        run: pnpm exec prisma generate
       - name: Apply migrations for ACC-01A integration
-        run: pnpm prisma migrate deploy
+        run: pnpm exec prisma migrate deploy
       - run: pnpm typecheck
       - run: pnpm lint
       - name: Run unit tests
@@ -60,14 +60,14 @@ jobs:
           RUN_INF01B_READINESS_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=inf01b_readiness_ci
         run: |
-          pnpm prisma migrate deploy
+          pnpm exec prisma migrate deploy
           pnpm exec vitest run tests/integration/runtime-readiness.test.ts
       - name: Run INF-01C migration compatibility PostgreSQL integration tests
         env:
           RUN_INF01C_MIGRATION_COMPATIBILITY_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=inf01c_migration_compatibility_ci
         run: |
-          pnpm prisma migrate deploy
+          pnpm exec prisma migrate deploy
           pnpm exec vitest run tests/integration/runtime-migration-compatibility.test.ts
       - name: Run verified student session PostgreSQL integration tests
         env:
@@ -104,13 +104,13 @@ jobs:
           RUN_ACC01A_ORDER_ISSUER_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=acc01a_order_issuer_ci
         run: |
-          pnpm prisma migrate deploy
+          pnpm exec prisma migrate deploy
           pnpm exec vitest run tests/integration/commercial-order-verified-session-issuer.test.ts
       - name: Run PROD-03 primary-only authentic Result PostgreSQL integration tests
         env:
           RUN_PROD03_PRIMARY_RESULT_INTEGRATION: "true"
           DATABASE_URL: postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=prod03_primary_result_ci
         run: |
-          pnpm prisma migrate deploy
+          pnpm exec prisma migrate deploy
           pnpm exec vitest run tests/integration/primary-only-authentic-result.test.ts
       - run: pnpm build

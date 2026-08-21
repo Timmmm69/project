@@ -45,6 +45,10 @@ function formatAttempts(attempts: number) {
   return `${attempts} ${noun}`;
 }
 
+function formatVisibleText(value: string) {
+  return value.replace(/[—–]/g, "-");
+}
+
 function ProductCard({ test }: Readonly<{ test: CatalogTest }>) {
   const authentic = test.isAuthentic;
   const productUrl = `/tests/${test.slug}`;
@@ -53,7 +57,7 @@ function ProductCard({ test }: Readonly<{ test: CatalogTest }>) {
     <article className={styles.card} data-catalog-kind={authentic ? "authentic" : "generic"}>
       <div className={styles.cardHeader}>
         {authentic ? <p className={styles.badge}>Оригинальный тренировочный вариант</p> : null}
-        <h2 className={styles.cardTitle}>{test.title}</h2>
+        <h2 className={styles.cardTitle}>{formatVisibleText(test.title)}</h2>
         <p className={styles.availability}>
           <span aria-hidden="true" className={styles.availabilityDot} />
           Доступен для покупки
@@ -77,7 +81,7 @@ function ProductCard({ test }: Readonly<{ test: CatalogTest }>) {
         </Link>
       </div>
 
-      {test.shortDescription ? <p className={styles.description}>{test.shortDescription}</p> : null}
+      {test.shortDescription ? <p className={styles.description}>{formatVisibleText(test.shortDescription)}</p> : null}
 
       {authentic ? (
         <p className={styles.disclaimer}>Не является официальным материалом ЦЭ/ЦТ.</p>

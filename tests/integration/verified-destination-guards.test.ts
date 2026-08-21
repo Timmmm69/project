@@ -427,8 +427,8 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
   beforeEach(async () => {
     await cleanDatabase();
     nextCookieState.values.clear();
-    // Production routes use the real clock, so keep issued sessions current as well.
-    // A fixed historical timestamp makes this suite start failing once that date passes.
+    // Route handlers intentionally use the production clock. Keep issued
+    // sessions current so this integration suite does not become date-expired.
     now = new Date();
     deliveries = [];
     testSlug = `acc01a-destination-${randomUUID()}`;

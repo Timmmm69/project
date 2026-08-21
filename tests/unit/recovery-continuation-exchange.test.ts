@@ -217,7 +217,7 @@ describe("ACC-01A recovery continuation HTTP boundary", () => {
     expect(cookie).toContain("SameSite=lax");
     expect(cookie).toContain("Path=/");
     expect(cookie).toContain("Expires=Tue, 21 Jul 2026 12:00:00 GMT");
-    expect(cookie).not.toContain("Max-Age=");
+    expect(cookie).toContain("Max-Age=604800");
     expect(cookie).not.toContain("Domain=");
     expect(cookie).not.toContain("acc01a_recovery=;");
     expect(response.headers.get("cache-control")).toBe("no-store");

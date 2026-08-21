@@ -62,7 +62,9 @@ function decodeCanonicalBase64Url(value: string) {
   return decoded;
 }
 
-function productionLike(env: Record<string, string | undefined>) {
+export function isVerifiedStudentSessionProductionLikeEnvironment(
+  env: Record<string, string | undefined> = process.env
+) {
   return [env.NODE_ENV, env.VERCEL_ENV, env.DEPLOYMENT_ENV, env.APP_ENV]
     .some((value) => value !== undefined && productionLikeValues.has(value.trim().toLowerCase()));
 }
@@ -109,7 +111,7 @@ export function parseVerifiedStudentSessionConfig(
 
   const keys = new Map<string, Buffer>();
   const keyValues: Buffer[] = [];
-  const isProductionLike = productionLike(env);
+  const isProductionLike = isVerifiedStudentSessionProductionLikeEnvironment(env);
   const externalSecrets = forbiddenSecretNames.flatMap((name) => {
     const value = env[name];
     return value ? externalSecretCandidates(value) : [];
