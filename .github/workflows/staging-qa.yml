@@ -109,6 +109,52 @@ jobs:
       - name: Install Playwright Chromium
         run: pnpm exec playwright install --with-deps chromium
 
+      - name: Seed isolated browser prerequisite
+        run: |
+          node --input-type=module <<'NODE'
+          import { PrismaClient } from "@prisma/client";
+
+          const prisma = new PrismaClient();
+          try {
+            const seededTest = await prisma.test.upsert({
+              where: { slug: "staging-release-browser-fixture" },
+              create: {
+                title: "Synthetic browser QA fixture",
+                slug: "staging-release-browser-fixture",
+                examMode: "RIKZ_RUSSIAN_2026",
+                price: 1000,
+                durationMinutes: 120,
+                status: "PUBLISHED",
+                publishedAt: new Date()
+              },
+              update: {
+                examMode: "RIKZ_RUSSIAN_2026",
+                status: "PUBLISHED",
+                publishedAt: new Date(),
+                deletedAt: null
+              }
+            });
+
+            await prisma.commercialProduct.upsert({
+              where: { code: "russian-training-variant-01" },
+              create: {
+                code: "russian-training-variant-01",
+                testId: seededTest.id,
+                name: "Synthetic browser QA product",
+                priceMinor: 1000
+              },
+              update: {
+                testId: seededTest.id,
+                name: "Synthetic browser QA product",
+                priceMinor: 1000,
+                isActive: true
+              }
+            });
+          } finally {
+            await prisma.$disconnect();
+          }
+          NODE
+
       - name: Full browser suite
         env:
           RUN_E2E_WITH_DB: "true"
