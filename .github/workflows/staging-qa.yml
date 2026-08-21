@@ -1,0 +1,126 @@
+name: Staging release QA
+
+on:
+  push:
+    branches:
+      - codex/render-staging
+  workflow_dispatch:
+    inputs:
+      release_sha:
+        description: Immutable Git SHA to validate
+        required: true
+        default: f5320568f732a82f4850284032d10e0af8182a9d
+
+permissions:
+  contents: read
+
+concurrency:
+  group: staging-release-qa-${{ inputs.release_sha || 'f5320568f732a82f4850284032d10e0af8182a9d' }}
+  cancel-in-progress: false
+
+jobs:
+  full-qa:
+    name: Full QA on disposable PostgreSQL
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    services:
+      postgres:
+        image: postgres:16-alpine
+        env:
+          POSTGRES_USER: postgres
+          POSTGRES_PASSWORD: postgres
+          POSTGRES_DB: staging_release_qa
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U postgres -d staging_release_qa"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+    env:
+      DATABASE_URL: postgresql://postgres:postgres@localhost:5432/staging_release_qa?schema=public
+      SESSION_SECRET: synthetic_ci_session_secret_0123456789abcdef
+      ACCESS_CODE_HASH_PEPPER: synthetic_ci_access_pepper_0123456789abcdef
+      COMMERCIAL_ORDER_TOKEN_HMAC_KEY: synthetic_ci_order_token_key_0123456789abcdef
+      CI: "true"
+
+    steps:
+      - name: Record immutable release metadata
+        shell: bash
+        run: |
+          {
+            echo "## Staging release QA"
+            echo "- Release SHA: \`${{ inputs.release_sha || 'f5320568f732a82f4850284032d10e0af8182a9d' }}\`"
+            echo "- Requested at: \`$(date --utc --iso-8601=seconds)\`"
+            echo "- Requested by: \`${{ github.actor }}\`"
+            echo "- CI run: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Checkout immutable release
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.release_sha || 'f5320568f732a82f4850284032d10e0af8182a9d' }}
+
+      - name: Set up pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 11.7.0
+
+      - name: Set up Node.js 24
+        uses: actions/setup-node@v4
+        with:
+          node-version: 24.x
+          cache: pnpm
+
+      - name: Install dependencies
+        run: pnpm install --frozen-lockfile
+
+      - name: Generate Prisma client
+        run: pnpm exec prisma generate
+
+      - name: Apply all migrations to disposable database
+        run: pnpm exec prisma migrate deploy
+
+      - name: Verify migration status
+        run: pnpm exec prisma migrate status
+
+      - name: Lint
+        run: pnpm lint
+
+      - name: Typecheck
+        run: pnpm typecheck
+
+      - name: Unit suite
+        run: pnpm test
+
+      - name: Production build
+        run: pnpm build
+
+      - name: Full DB integration suite
+        env:
+          RUN_ACC01A_INTEGRATION: "true"
+          RUN_ACC01A_CONTINUATION_INTEGRATION: "true"
+          RUN_ACC01A_RECOVERY_INTEGRATION: "true"
+          RUN_ACC01A_HTTP_INTEGRATION: "true"
+          RUN_ACC01A_STATE_RESOLVER_INTEGRATION: "true"
+          RUN_ACC01A_DESTINATION_GUARDS_INTEGRATION: "true"
+        run: pnpm test
+
+      - name: Install Playwright Chromium
+        run: pnpm exec playwright install --with-deps chromium
+
+      - name: Full browser suite
+        env:
+          RUN_E2E_WITH_DB: "true"
+        run: pnpm test:e2e
+
+      - name: Upload browser diagnostics
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: staging-release-qa-${{ inputs.release_sha || 'f5320568f732a82f4850284032d10e0af8182a9d' }}
+          path: |
+            playwright-report/
+            test-results/
+          if-no-files-found: ignore
+          retention-days: 14
