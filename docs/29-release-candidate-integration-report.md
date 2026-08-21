@@ -5,6 +5,7 @@
 Baseline: `f3f818b7d186b188a696880f97bedb06e7ff2571` (`main`)
 UX source: `c074582c010a0f3ac253cf7e171e3e7d9b0185a0`
 Implementation/config SHA: `1132de3bb244ae0fe5d29adae43b845a00b73b02`
+Remote-main reconciliation SHA: `a52fa15c5835717ef75e634104f4b8b52d15e0ed` (second parent `099523c8804d8848d8598c37fc9b5150a1ef210b`)
 Production verdict: **NO-GO**.
 
 Документирующий commit не может содержать собственный SHA; поэтому окончательный release SHA фиксируется в PR и в handoff, а этот отчёт привязан к проверенному implementation/config SHA и ветке.
@@ -19,6 +20,7 @@ Production verdict: **NO-GO**.
 | Catalog/UI | `8682107`, `1132de3` | Канонический каталог совмещён с подтверждённым дизайном и public assets. |
 | Analytics | `d0e0776` | Интегрированы canonical contracts, persistence и privacy scans. |
 | Tests/CI/readiness/docs | `1132de3` | Сохранён disposable-DB CI, добавлены UX-тесты и readiness-документы. |
+| Remote-main drift | `a52fa15` | Сохранены runtime config/readiness, deterministic order-token replay, checkout locking и content publication docs из нового `main`; проверенный UI/auth/result слой оставлен без регрессии. |
 
 ## Change matrix и решения по пересечениям
 
@@ -68,6 +70,8 @@ Production verdict: **NO-GO**.
 - `pnpm test` — PASS: 45 files / 1147 tests; 8 DB integration files / 171 tests skipped без opt-in.
 - `pnpm build` — PASS.
 - `git diff --check` — PASS.
+
+После появления нового remote `main` merge validation прошла для Prisma generate/validate, lint, typecheck и build. Unit suite в старом Windows checkout дала 1352 PASS и один line-ending checksum mismatch; migration blobs не менялись, а authoritative повтор выполняется в clean checkout с repository `.gitattributes eol=lf`.
 
 Clean-checkout прогон `e60a5ff327c46f9b2a664240229700b4f776a034` выполнен с синтетическими CI-переменными и завершился PASS для frozen install, Prisma generate/validate, lint, typecheck, unit tests, build и `git diff --check`. Authoritative remote status финального SHA — GitHub CI check suite в PR.
 

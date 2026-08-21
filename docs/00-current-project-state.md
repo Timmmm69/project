@@ -5,6 +5,7 @@
 Baseline `main`: `f3f818b7d186b188a696880f97bedb06e7ff2571`
 UX-линия: `c074582c010a0f3ac253cf7e171e3e7d9b0185a0`
 Проверенный implementation/config SHA до документирующего коммита: `1132de3bb244ae0fe5d29adae43b845a00b73b02`.
+Remote `main` на момент открытия PR продвинулся до `099523c8804d8848d8598c37fc9b5150a1ef210b`; drift объединён обычным merge-коммитом `a52fa15c5835717ef75e634104f4b8b52d15e0ed` без переписывания истории.
 
 ## Статус
 
@@ -30,6 +31,7 @@ Release-кандидат не является разрешением production
 - Authentic result с первичными агрегатами; правильные ответы и scoring details не выдаются ученику.
 - Backend analytics с каноническими контрактами и privacy-проверками.
 - CI с frozen lockfile, Prisma generate/validate/migrate на disposable PostgreSQL, lint, typecheck, unit tests, integration slices и build.
+- Runtime configuration/readiness boundary и deterministic concurrent order replay из обновлённого remote `main`.
 
 ## Данные и миграции
 
