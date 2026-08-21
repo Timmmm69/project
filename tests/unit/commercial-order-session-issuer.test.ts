@@ -32,8 +32,8 @@ const ids = {
 } as const;
 
 const rawToken = `vs1.v1.${Buffer.alloc(32, 7).toString("base64url")}`;
-const issuedAt = new Date("2026-07-15T10:00:00.000Z");
-const expiresAt = new Date("2026-07-22T10:00:00.000Z");
+const issuedAt = new Date("2027-07-15T10:00:00.000Z");
+const expiresAt = new Date("2027-07-22T10:00:00.000Z");
 
 type Claim = CommercialOrderSessionClaim & Readonly<{
   attemptId: string | null;
@@ -82,6 +82,7 @@ function request(operationId: string | null = ids.operation, surface: "claim-acc
     method: "POST",
     headers: {
       origin: "http://issuer.test",
+      "x-test-internal-request": "true",
       ...(operationId === null ? {} : { "Idempotency-Key": operationId })
     }
   });

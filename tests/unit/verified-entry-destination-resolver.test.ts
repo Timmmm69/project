@@ -526,8 +526,8 @@ describe("authentic final-start route entry resolution", () => {
     });
     const response = await createAttemptStartHandler(dependencies)(routeRequest("student@example.test"));
     expect(response.status).toBe(200);
-    expect(response.headers.get("cache-control")).toBeNull();
-    expect(response.headers.get("referrer-policy")).toBeNull();
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
     expect(response.headers.get("set-cookie")).toBeNull();
     expect(startAttempt).toHaveBeenCalledOnce();
     expect(await response.json()).toEqual({

@@ -5,9 +5,9 @@
 .page {
   min-height: 100vh;
   overflow-x: clip;
-  background: #f5f7fa;
-  color: #182230;
-  font-family: Inter, "Segoe UI", Roboto, Arial, sans-serif;
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-manrope), "Segoe UI", sans-serif;
 }
 
 .container {
@@ -17,8 +17,7 @@
 }
 
 .header {
-  border-bottom: 1px solid #e1e7ed;
-  padding-bottom: 20px;
+  padding-bottom: 12px;
 }
 
 .brand {
@@ -27,8 +26,8 @@
   max-width: 100%;
   align-items: center;
   gap: 10px;
-  color: #182230;
-  font-weight: 700;
+  color: var(--foreground);
+  font-weight: 600;
   text-decoration: none;
 }
 
@@ -75,10 +74,10 @@
   max-width: 680px;
   gap: 24px;
   padding: 28px;
-  border: 1px solid #b8c4d0;
-  border-radius: 12px;
-  background: #fff;
-  box-shadow: 0 14px 34px rgba(24, 34, 48, 0.06);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
+  box-shadow: none;
 }
 
 .cardHeader {
@@ -91,10 +90,10 @@
   max-width: 100%;
   margin: 0;
   padding: 6px 10px;
-  border: 1px solid #b7dacf;
-  border-radius: 999px;
-  background: #e7f4f0;
-  color: #0f4f45;
+  border: 1px solid var(--border-strong);
+  border-radius: 9px;
+  background: var(--panel-soft);
+  color: var(--foreground);
   font-size: 13px;
   font-weight: 600;
   line-height: 1.4;
@@ -114,7 +113,7 @@
   margin: 0;
   align-items: center;
   gap: 8px;
-  color: #334155;
+  color: var(--muted);
   font-size: 14px;
   font-weight: 500;
   line-height: 1.57;
@@ -125,7 +124,7 @@
   height: 8px;
   flex: 0 0 8px;
   border-radius: 50%;
-  background: #176b5b;
+  background: var(--foreground);
 }
 
 .facts {
@@ -133,12 +132,12 @@
   margin: 0;
   padding: 0;
   list-style: none;
-  border-top: 1px solid #e1e7ed;
+  border-top: 1px solid var(--border);
 }
 
 .facts li {
   padding: 10px 0;
-  border-bottom: 1px solid #e1e7ed;
+  border-bottom: 1px solid var(--border);
   font-size: 16px;
   line-height: 1.5;
 }
@@ -165,10 +164,10 @@
   align-items: center;
   justify-content: center;
   padding: 13px 18px;
-  border: 1px solid #176b5b;
-  border-radius: 8px;
-  background: #176b5b;
-  color: #fff;
+  border: 1px solid var(--foreground);
+  border-radius: var(--radius-control);
+  background: var(--foreground);
+  color: #fcfbf8;
   font: inherit;
   font-size: 16px;
   font-weight: 600;
@@ -180,8 +179,9 @@
 
 .primaryAction:hover,
 .retryButton:hover {
-  border-color: #145c50;
-  background: #145c50;
+  border-color: var(--foreground);
+  background: var(--foreground);
+  opacity: 0.83;
 }
 
 .secondaryAction {
@@ -189,7 +189,7 @@
   min-height: 44px;
   width: fit-content;
   align-items: center;
-  color: #176b5b;
+  color: var(--foreground);
   font-size: 16px;
   font-weight: 600;
   line-height: 1.5;
@@ -201,7 +201,7 @@
   max-width: 68ch;
   margin: 0;
   overflow-wrap: anywhere;
-  color: #526070;
+  color: var(--muted);
   font-size: 14px;
   line-height: 1.57;
 }
@@ -212,7 +212,7 @@
 
 .disclaimer {
   padding-top: 16px;
-  border-top: 1px solid #e1e7ed;
+  border-top: 1px solid var(--border);
 }
 
 .stateSurface,
@@ -221,9 +221,9 @@
   max-width: 680px;
   gap: 14px;
   padding: 28px;
-  border: 1px solid #b8c4d0;
-  border-radius: 12px;
-  background: #fff;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-panel);
+  background: var(--panel);
 }
 
 .errorSurface {
@@ -242,13 +242,13 @@
 .stateLabel {
   max-width: 60ch;
   margin: 0;
-  color: #526070;
+  color: var(--muted);
   font-size: 16px;
   line-height: 1.625;
 }
 
 .stateLabel {
-  color: #182230;
+  color: var(--foreground);
   font-weight: 600;
 }
 
@@ -261,7 +261,7 @@
   display: block;
   height: 18px;
   border-radius: 6px;
-  background: #e8edf2;
+  background: var(--border);
 }
 
 .skeleton span:nth-child(1) {
@@ -280,7 +280,7 @@
 .primaryAction:focus-visible,
 .secondaryAction:focus-visible,
 .retryButton:focus-visible {
-  outline: 3px solid #1d4ed8;
+  outline: 2px solid var(--focus);
   outline-offset: 3px;
 }
 

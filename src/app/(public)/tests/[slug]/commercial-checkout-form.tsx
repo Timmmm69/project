@@ -76,10 +76,6 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-function isSafeVerifiedDestination(value: string) {
-  return /^\/(?:attempts|results)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
-}
-
 export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency, recovery }: {
 
   legal: LegalLinks;
@@ -663,7 +659,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
           <p className="subsection-title">{price}</p>
           <span className="badge">Разовый платёж</span>
         </div>
-        <p className="muted">Без подписки, автоматического продления и повторных списаний. Одна покупка — одна попытка.</p>
+        <p className="muted">Без подписки, автоматического продления и повторных списаний. Одна покупка, одна попытка.</p>
         <ul className="muted">
           <li>Начать попытку можно в течение 90 дней после подтверждения оплаты.</li>
           <li>После начала даётся 120 минут без паузы.</li>

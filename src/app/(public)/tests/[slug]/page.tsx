@@ -31,6 +31,10 @@ function formatPrice(price: number, currency: string) {
   return `${(price / 100).toFixed(2)} ${currency}`;
 }
 
+function formatVisibleText(value: string) {
+  return value.replace(/[—–]/g, "-");
+}
+
 export default async function PublicTestPage({ params, searchParams }: PageProps) {
   const { slug } = await params;
   const test = await prisma.test.findFirst({
@@ -152,8 +156,8 @@ export default async function PublicTestPage({ params, searchParams }: PageProps
                 {isFullCeCt ? <span className="badge">шкала РИКЗ 0-100</span> : null}
               </div>
               <h1 className="page-title">{publicTest.title}</h1>
-              {publicTest.shortDescription ? <p className="lead">{publicTest.shortDescription}</p> : null}
-              {publicTest.fullDescription ? <p className="muted">{publicTest.fullDescription}</p> : null}
+              {publicTest.shortDescription ? <p className="lead">{formatVisibleText(publicTest.shortDescription)}</p> : null}
+              {publicTest.fullDescription ? <p className="muted">{formatVisibleText(publicTest.fullDescription)}</p> : null}
             </div>
           </section>
 

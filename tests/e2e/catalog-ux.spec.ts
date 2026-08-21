@@ -76,7 +76,7 @@ test("desktop success, authentic content, generic regression and product navigat
   await page.setViewportSize({ height: 900, width: 1440 });
   await page.goto("/");
 
-  await expect(page.getByRole("heading", { level: 1, name: "Тренировочные тесты по русскому языку" })).toHaveCount(1);
+  await expect(page.getByRole("heading", { level: 1, name: "Практика русского для ЦЭ и ЦТ" })).toHaveCount(1);
   await expect(page.getByRole("link", { name: "Админка" })).toHaveCount(0);
   await expect(page.getByText("разбор ошибок", { exact: false })).toHaveCount(0);
   await expect(page.getByText("близком к реальной проверке", { exact: false })).toHaveCount(0);
@@ -121,8 +121,9 @@ test("keyboard order and visible focus", async ({ page }, testInfo) => {
   await page.goto("/");
   const pageLinks = page.locator("main a");
   await expect(pageLinks.nth(0)).toHaveAccessibleName(/Русский язык.*главная/);
-  await expect(pageLinks.nth(1)).toHaveAccessibleName("Подробнее о тесте");
-  await expect(pageLinks.nth(2)).toHaveAccessibleName("Уже есть доступ?");
+  await expect(pageLinks.nth(1)).toHaveAccessibleName("Выбрать тест");
+  await expect(pageLinks.nth(2)).toHaveAccessibleName("Подробнее о тесте");
+  await expect(pageLinks.nth(3)).toHaveAccessibleName("Уже есть доступ?");
   await page.keyboard.press("Tab");
   await expect(page.getByRole("link", { name: /Русский язык.*главная/ })).toBeFocused();
   const primary = page.locator(`[data-catalog-kind="authentic"]:has(a[href="/tests/${authenticSlug}"])`).getByRole("link", { name: "Подробнее о тесте" });
