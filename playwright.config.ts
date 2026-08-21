@@ -1,10 +1,12 @@
 import { defineConfig, devices } from "@playwright/test";
 
 const recoveryUiE2eEnabled = process.env.RUN_ACC01A_RECOVERY_UI_E2E === "true";
+const e2ePort = process.env.PLAYWRIGHT_PORT ?? "3000";
+const e2eBaseUrl = `http://localhost:${e2ePort}`;
 const encodedRecoveryKey = (byte: number) => Buffer.alloc(32, byte).toString("base64url");
 const recoveryUiEnvironment: Record<string, string> = recoveryUiE2eEnabled
   ? {
-      APP_URL: "http://localhost:3000",
+      APP_URL: e2eBaseUrl,
       ACC_01A_RECOVERY_ENABLED: "true",
       RECOVERY_MAILER_MODE: "fake",
       RECOVERY_COMMERCIAL_PRODUCT_CODE: "russian-training-variant-01",
@@ -25,7 +27,7 @@ const recoveryUiEnvironment: Record<string, string> = recoveryUiE2eEnabled
 export default defineConfig({
   testDir: "tests/e2e",
   use: {
-    baseURL: "http://localhost:3000",
+    baseURL: e2eBaseUrl,
     trace: "on-first-retry"
   },
   projects: [
@@ -35,10 +37,11 @@ export default defineConfig({
     }
   ],
   webServer: {
-    command: "pnpm dev",
-    url: "http://localhost:3000/api/health",
+    command: `pnpm exec next dev --port ${e2ePort}`,
+    url: `${e2eBaseUrl}/api/health`,
     reuseExistingServer: true,
     env: {
+      APP_URL: e2eBaseUrl,
       DATABASE_URL:
         process.env.DATABASE_URL ?? "postgresql://postgres:postgres@localhost:5432/russian_tests_mvp?schema=public",
       SESSION_SECRET: process.env.SESSION_SECRET ?? "dev_session_secret_for_e2e_1234567890",
@@ -46,8 +49,7 @@ export default defineConfig({
       COMMERCIAL_CHECKOUT_ENABLED: "true",
       PAYMENTS_MODE: "webpay_sandbox",
       COMMERCIAL_FAKE_PROVIDER_TEST_ONLY: "true",
-      COMMERCIAL_ORDER_TOKEN_HMAC_KEY:
-        process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY ?? "synthetic-e2e-commercial-order-token-key-32-bytes",
+      COMMERCIAL_ORDER_TOKEN_HMAC_KEY: process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY ?? "synthetic-e2e-commercial-order-token-key-32-bytes",
       LEGAL_BUNDLE_VERSION: "e2e-v1",
       OFFER_URL: "https://example.test/offer",
       PRIVACY_URL: "https://example.test/privacy",
@@ -64,7 +66,6 @@ export default defineConfig({
         ? { VERIFIED_STUDENT_SESSION_HMAC_KEY_RING: process.env.VERIFIED_STUDENT_SESSION_HMAC_KEY_RING }
         : {}),
       ...recoveryUiEnvironment
-
     }
   }
 });

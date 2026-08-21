@@ -63,6 +63,7 @@ async function createSession(publicId: string, key: string) {
 
 test.beforeAll(async () => {
   process.env.LEGAL_BUNDLE_VERSION = "concurrency-v1";
+  process.env.COMMERCIAL_ORDER_TOKEN_HMAC_KEY = "synthetic-e2e-commercial-order-token-key-32-bytes";
   const testRecord = await prisma.test.findFirst({
     where: { examMode: "RIKZ_RUSSIAN_2026", status: "PUBLISHED", deletedAt: null },
     select: { id: true }

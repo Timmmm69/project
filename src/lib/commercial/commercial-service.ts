@@ -1,6 +1,10 @@
 import { randomUUID } from "node:crypto";
 import { Prisma, type CommercialPaymentAttemptStatus, type CommercialPaymentProvider, type CommercialOrderStatus } from "@prisma/client";
 import { analyticsConfig, hashAnalyticsId } from "@/lib/analytics/analytics-id";
+import {
+  emitCanonicalOrderCreated,
+  type CanonicalOrderCreatedEmitter
+} from "@/lib/analytics/order-created-callsite";
 import { safelyWriteAnalyticsEvent, type AnalyticsWriteInput, type AnalyticsWriter } from "@/lib/analytics/analytics-service";
 import {
   COMMERCIAL_ATTEMPT_LIMIT,
@@ -12,10 +16,17 @@ import {
   COMMERCIAL_START_WINDOW_DAYS,
   commercialLegalConfig
 } from "@/lib/commercial/config";
-import { checkoutStartedProperties, createCheckoutFlowId, orderCreatedProperties } from "@/lib/commercial/checkout-flow";
+import { checkoutStartedProperties, createCheckoutFlowId } from "@/lib/commercial/checkout-flow";
 import type { CommercialPaymentProviderAdapter, ProviderNotification } from "@/lib/commercial/providers";
 import { commercialCheckoutFlowIdSchema } from "@/lib/commercial/schemas";
-import { createLookupToken, hashLookupToken, payloadHash } from "@/lib/commercial/security";
+import {
+  commercialOrderTokenSecret,
+  createLookupToken,
+  deriveCommercialOrderLookupToken,
+  hashLookupToken,
+  lookupTokenMatches,
+  payloadHash
+} from "@/lib/commercial/security";
 import {
   canOpenNewPaymentAttempt,
   canRetryTerminalOrder,
@@ -225,35 +236,6 @@ async function ensureCheckoutStartedAnalytics(input: {
       examMode: input.examMode
     })
   }), writer);
-}
-
-async function ensureOrderCreatedAnalytics(input: {
-  checkoutFlowId: string;
-  occurredAt: Date;
-  orderId: string;
-  orderPublicId: string;
-  productCode: string;
-  testSlug: string;
-  amount: number;
-  currency: string;
-}, writer?: AnalyticsWriter) {
-  return ensureAnalytics(() => {
-    const hashes = analyticsHashes({ orderPublicId: input.orderPublicId });
-    return {
-      eventName: "order_created",
-      transitionKey: `commercial-order-created:${input.orderId}`,
-      occurredAt: input.occurredAt,
-      analyticsIdKeyVersion: hashes.analyticsIdKeyVersion,
-      properties: orderCreatedProperties({
-        checkoutFlowId: input.checkoutFlowId,
-        orderPublicIdHash: hashes.properties.order_public_id_hash ?? "",
-        productId: input.productCode,
-        testId: input.testSlug,
-        amount: input.amount,
-        currency: input.currency
-      })
-    };
-  }, writer);
 }
 
 async function ensureCheckoutFailureAnalytics(input: { occurredAt: Date; orderPublicId: string; paymentAttemptId: string; paymentAttemptPublicId: string }, writer?: AnalyticsWriter) {
@@ -579,7 +561,7 @@ async function recoverConcurrentOrderCreation(input: {
   emailNormalized: string;
   idempotencyKey: string;
   checkoutFlowId: string;
-  lookupToken: string;
+  orderTokenSecret: string;
   verifiedEmailAuthority?: CommercialVerifiedEmailAuthority;
 }, integrityError: Prisma.PrismaClientKnownRequestError) {
   return prisma.$transaction(async (tx) => {
@@ -608,11 +590,8 @@ async function recoverConcurrentOrderCreation(input: {
           sameRequest.idempotencyKey !== input.idempotencyKey) {
         throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
       }
-      const order = await tx.commercialOrder.update({
-        where: { id: sameRequest.id },
-        data: { lookupTokenHash: hashLookupToken(input.lookupToken) }
-      });
-      return { order, lookupToken: input.lookupToken, idempotent: true };
+      const lookupToken = stableOrderLookupToken(sameRequest, input.orderTokenSecret);
+      return { order: sameRequest, lookupToken, idempotent: true };
     }
 
     const openOrder = await tx.commercialOrder.findFirst({
@@ -635,6 +614,32 @@ async function recoverConcurrentOrderCreation(input: {
   });
 }
 
+function stableOrderLookupToken(order: {
+  id: string;
+  checkoutFlowId: string | null;
+  idempotencyKey: string;
+  lookupTokenHash: string;
+}, secret: string) {
+  if (!order.checkoutFlowId) throw new CommercialError("ORDER_TOKEN_INTEGRITY_ERROR");
+  const token = deriveCommercialOrderLookupToken({
+    orderId: order.id,
+    checkoutFlowId: order.checkoutFlowId,
+    idempotencyKey: order.idempotencyKey
+  }, secret);
+  if (!lookupTokenMatches(token, order.lookupTokenHash)) {
+    throw new CommercialError("ORDER_TOKEN_INTEGRITY_ERROR");
+  }
+  return token;
+}
+
+async function lockCommercialCheckoutFlow(tx: Tx, checkoutFlowId: string) {
+  const lockKey = `commercial-checkout-flow:${checkoutFlowId}`;
+  await tx.$queryRaw`
+    SELECT 1::integer AS "locked"
+    FROM (SELECT pg_advisory_xact_lock(hashtextextended(${lockKey}, 0))) AS acquired
+  `;
+}
+
 export async function createCommercialOrder(input: {
   productCode: string;
   checkoutFlowId: string;
@@ -644,6 +649,7 @@ export async function createCommercialOrder(input: {
   legalBundleVersion: string;
   idempotencyKey: string;
   analyticsWriter?: AnalyticsWriter;
+  orderCreatedAnalyticsEmitter?: CanonicalOrderCreatedEmitter;
 }) {
   if (!commercialCheckoutFlowIdSchema.safeParse(input.checkoutFlowId).success) {
     throw new CommercialError("INVALID_CHECKOUT_FLOW");
@@ -663,11 +669,20 @@ export async function createCommercialOrder(input: {
     requireLegacyCommercialEmail(input.email);
   const emailOriginal = initialVerifiedAuthority?.emailNormalized ?? input.email!.trim();
   const legal = commercialLegalConfig();
-  const token = createLookupToken();
+  const orderTokenSecret = commercialOrderTokenSecret();
+  const orderId = randomUUID();
+  const token = deriveCommercialOrderLookupToken({
+    orderId,
+    checkoutFlowId: input.checkoutFlowId,
+    idempotencyKey: input.idempotencyKey
+  }, orderTokenSecret);
 
   let outcome;
   try {
     outcome = await prisma.$transaction(async (tx) => {
+    // Serialize one logical checkout flow before reading its Order. A transaction
+    // that waited here receives a fresh READ COMMITTED snapshot for later reads.
+    await lockCommercialCheckoutFlow(tx, input.checkoutFlowId);
     const verifiedAuthority = input.verifiedEmailAuthority
       ? await resolveCommercialEmailAuthority(input.verifiedEmailAuthority, tx)
       : null;
@@ -718,11 +733,8 @@ export async function createCommercialOrder(input: {
       if (checkoutFlow.order.emailNormalized !== emailNormalized || checkoutFlow.order.idempotencyKey !== input.idempotencyKey) {
         throw new CommercialError("CHECKOUT_FLOW_CONFLICT");
       }
-      const updated = await tx.commercialOrder.update({
-        where: { id: checkoutFlow.order.id },
-        data: { lookupTokenHash: hashLookupToken(token) }
-      });
-      return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
+      const lookupToken = stableOrderLookupToken(checkoutFlow.order, orderTokenSecret);
+      return { kind: "created" as const, order: checkoutFlow.order, lookupToken, idempotent: true, product, newOrder: false };
     }
 
     const existingByKey = await tx.commercialOrder.findUnique({
@@ -732,11 +744,8 @@ export async function createCommercialOrder(input: {
       if (existingByKey.emailNormalized !== emailNormalized || existingByKey.checkoutFlowId !== input.checkoutFlowId) {
         throw new CommercialError("IDEMPOTENCY_KEY_CONFLICT");
       }
-      const updated = await tx.commercialOrder.update({
-        where: { id: existingByKey.id },
-        data: { lookupTokenHash: hashLookupToken(token) }
-      });
-      return { kind: "created" as const, order: updated, lookupToken: token, idempotent: true, product, newOrder: false };
+      const lookupToken = stableOrderLookupToken(existingByKey, orderTokenSecret);
+      return { kind: "created" as const, order: existingByKey, lookupToken, idempotent: true, product, newOrder: false };
     }
 
     const pending = await tx.commercialOrder.findFirst({
@@ -744,6 +753,14 @@ export async function createCommercialOrder(input: {
       orderBy: { createdAt: "desc" }
     });
     if (pending) {
+      // Under READ COMMITTED, a concurrent transaction can commit the Order after
+      // checkoutFlow.order was read but before this lookup. Treat that exact
+      // flow/key match as an idempotent replay instead of an unrelated pending Order.
+      if (pending.checkoutFlowId === input.checkoutFlowId &&
+          pending.idempotencyKey === input.idempotencyKey) {
+        const lookupToken = stableOrderLookupToken(pending, orderTokenSecret);
+        return { kind: "created" as const, order: pending, lookupToken, idempotent: true, product, newOrder: false };
+      }
       const [paidOrder, access, attempt] = await Promise.all([
         tx.commercialOrder.findFirst({
           where: {
@@ -802,6 +819,7 @@ export async function createCommercialOrder(input: {
 
     const order = await tx.commercialOrder.create({
       data: {
+        id: orderId,
         commercialProductId: product.id,
         testIdSnapshot: product.testId,
         productNameSnapshot: product.name,
@@ -838,7 +856,7 @@ export async function createCommercialOrder(input: {
         emailNormalized,
         idempotencyKey: input.idempotencyKey,
         checkoutFlowId: input.checkoutFlowId,
-        lookupToken: token,
+        orderTokenSecret,
         verifiedEmailAuthority: input.verifiedEmailAuthority
       }, error);
     }
@@ -865,17 +883,17 @@ export async function createCommercialOrder(input: {
   if (outcome.kind === "support") {
     throw new CommercialError("RECOVERY_SUPPORT_REQUIRED", "Recovery requires support", "NONE");
   }
-  if (outcome.newOrder) {
-    await ensureOrderCreatedAnalytics({
+  try {
+    await (input.orderCreatedAnalyticsEmitter ?? emitCanonicalOrderCreated)({
       checkoutFlowId: input.checkoutFlowId,
-      occurredAt: outcome.order.createdAt,
-      orderId: outcome.order.id,
       orderPublicId: outcome.order.publicId,
-      productCode: outcome.product.code,
-      testSlug: outcome.product.test.slug,
-      amount: outcome.order.priceMinor,
-      currency: outcome.order.currency
-    }, input.analyticsWriter);
+      occurredAt: outcome.order.createdAt,
+      productId: outcome.product.code,
+      testId: outcome.product.test.slug,
+      examMode: outcome.product.test.examMode
+    });
+  } catch {
+    // Analytics is post-commit and must never replace a successful Order result.
   }
   return { order: outcome.order, lookupToken: outcome.lookupToken, idempotent: outcome.idempotent };
 }
@@ -884,7 +902,7 @@ export async function getCommercialOrder(publicId: string) {
   const order = await prisma.commercialOrder.findUnique({
     where: { publicId },
     include: {
-      product: { include: { test: { select: { slug: true } } } },
+      product: { include: { test: { select: { slug: true, examMode: true } } } },
       paymentAttempts: { orderBy: { createdAt: "desc" }, take: 1 },
       access: { include: { attempts: { orderBy: { createdAt: "desc" }, take: 1 } } }
     }
@@ -1576,7 +1594,7 @@ export async function claimCommercialOrderAccess(publicId: string) {
       include: {
         product: {
           include: {
-            test: { select: { id: true, slug: true, examMode: true } }
+            test: { select: { id: true, slug: true } }
           }
         }
       }
@@ -1640,7 +1658,7 @@ export async function claimCommercialOrderAccess(publicId: string) {
       : "OPEN_PRE";
   return {
     orderId: order.id,
-    examMode: order.product.test.examMode,
+    examMode: order.examModeSnapshot,
     student: { userId: access.user.id, email: access.user.email, role: "STUDENT" as const },
     accessId: access.id,
     commercialProductId: order.commercialProductId,
