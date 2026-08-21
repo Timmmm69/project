@@ -43,9 +43,23 @@ export type IssueVerifiedStudentSessionResult = VerifiedStudentSessionScope & Re
 }>;
 
 export type ResolveVerifiedStudentSessionResult =
-  | Readonly<{ status: "INVALID_TOKEN" | "UNKNOWN_KEY" | "NOT_FOUND" | "REVOKED" | "EXPIRED" | "SUBJECT_INVALID" | "ACCESS_REVOKED" | "SCOPE_MISMATCH" }>
+  | Readonly<{ status: "INVALID_TOKEN" | "UNKNOWN_KEY" | "NOT_FOUND" | "REVOKED" | "EXPIRED" | "SUBJECT_INVALID" | "ACCESS_REVOKED" | "ACCESS_EXPIRED" | "SCOPE_MISMATCH" }>
   | Readonly<{
       status: "RESOLVED";
+      sessionId: string;
+      scope: VerifiedStudentSessionScope;
+      source: VerifiedStudentSessionSource;
+      sourceReferenceId: string;
+      issuanceOperationId: string;
+      tokenGeneration: number;
+      issuedAt: Date;
+      expiresAt: Date;
+    }>;
+
+export type ResolveVerifiedStudentSessionForEntryResult =
+  | ResolveVerifiedStudentSessionResult
+  | Readonly<{
+      status: "RESOLVED_ACCESS_EXPIRED";
       sessionId: string;
       scope: VerifiedStudentSessionScope;
       source: VerifiedStudentSessionSource;
@@ -63,6 +77,7 @@ export type RevokeCurrentVerifiedStudentSessionResult = Readonly<{
 export type VerifiedStudentSessionServiceErrorCode =
   | "SUBJECT_INVALID"
   | "ACCESS_REVOKED"
+  | "ACCESS_EXPIRED"
   | "SCOPE_MISMATCH"
   | "SESSION_INACTIVE"
   | "CONCURRENT_STATE_CHANGE";
@@ -101,7 +116,30 @@ function scopeFromInput(input: VerifiedStudentSessionScope): VerifiedStudentSess
   };
 }
 
-async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStudentSessionScope) {
+function exactAttemptPreservesExpiredAccess(
+  attempts: readonly Readonly<{
+    userId: string;
+    testId: string;
+    accessId: string;
+    status: string;
+  }>[],
+  scope: VerifiedStudentSessionScope,
+  attemptsAvailable: number
+) {
+  if (attemptsAvailable !== 0 || attempts.length !== 1) return false;
+  const attempt = attempts[0];
+  const status = attempt.status.toUpperCase();
+  return attempt.userId === scope.userId &&
+    attempt.testId === scope.testId &&
+    attempt.accessId === scope.accessId &&
+    (status === "STARTED" || status === "COMPLETED" || status === "EXPIRED");
+}
+
+async function validateVerifiedStudentSessionScope(
+  tx: Tx,
+  scope: VerifiedStudentSessionScope,
+  now: Date
+) {
   const users = await tx.$queryRaw<Array<{ role: string; deletedAt: Date | null }>>`
     SELECT "role"::text AS "role", "deleted_at" AS "deletedAt"
     FROM "users"
@@ -129,13 +167,17 @@ async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStuden
     userId: string;
     testId: string;
     commercialProductId: string | null;
+    attemptsAvailable: number;
     revokedAt: Date | null;
+    expiresAt: Date;
   }>>`
     SELECT
       "user_id" AS "userId",
       "test_id" AS "testId",
       "commercial_product_id" AS "commercialProductId",
-      "revoked_at" AS "revokedAt"
+      "attempts_available" AS "attemptsAvailable",
+      "revoked_at" AS "revokedAt",
+      "expires_at" AS "expiresAt"
     FROM "accesses"
     WHERE "id" = ${scope.accessId}::uuid
     FOR SHARE
@@ -154,6 +196,26 @@ async function validateVerifiedStudentSessionScope(tx: Tx, scope: VerifiedStuden
   }
   if (access?.revokedAt) {
     throw new VerifiedStudentSessionServiceError("ACCESS_REVOKED");
+  }
+  if (access && now.getTime() >= access.expiresAt.getTime()) {
+    const attempts = await tx.$queryRaw<Array<{
+      userId: string;
+      testId: string;
+      accessId: string;
+      status: string;
+    }>>`
+      SELECT
+        "user_id" AS "userId",
+        "test_id" AS "testId",
+        "access_id" AS "accessId",
+        "status"::text AS "status"
+      FROM "attempts"
+      WHERE "access_id" = ${scope.accessId}::uuid
+      FOR SHARE
+    `;
+    if (!exactAttemptPreservesExpiredAccess(attempts, scope, access.attemptsAvailable)) {
+      throw new VerifiedStudentSessionServiceError("ACCESS_EXPIRED");
+    }
   }
 }
 
@@ -190,7 +252,7 @@ export function createVerifiedStudentSessionService(input: {
     if (existing && !scopeMatches(existing, requestedScope)) {
       throw new VerifiedStudentSessionServiceError("SCOPE_MISMATCH");
     }
-    await validateVerifiedStudentSessionScope(tx, requestedScope);
+    await validateVerifiedStudentSessionScope(tx, requestedScope, now);
 
     if (!existing) {
       const rawToken = createVerifiedStudentSessionToken(input.config.activeKeyVersion);
@@ -259,79 +321,103 @@ export function createVerifiedStudentSessionService(input: {
     };
   }
 
-  return {
-    issue(
-      issueInput: IssueVerifiedStudentSessionInput,
-      tx?: Tx
-    ): Promise<IssueVerifiedStudentSessionResult> {
-      return withTransaction(tx, (activeTx) => issueWithinTransaction(activeTx, issueInput));
-    },
-
-    async resolve(rawToken: string, tx?: Tx): Promise<ResolveVerifiedStudentSessionResult> {
-      let parsed;
-      try {
-        parsed = parseVerifiedStudentSessionToken(rawToken, input.config.keys);
-      } catch (error) {
-        if (error instanceof VerifiedStudentSessionTokenError) {
-          return { status: error.code === "UNKNOWN_KEY_VERSION" ? "UNKNOWN_KEY" : "INVALID_TOKEN" };
-        }
-        throw error;
+  async function resolveWithinService(
+    rawToken: string,
+    tx: Tx | undefined,
+    preserveExactExpiredEntryScope: boolean,
+    capturedNow?: Date
+  ): Promise<ResolveVerifiedStudentSessionForEntryResult> {
+    let parsed;
+    try {
+      parsed = parseVerifiedStudentSessionToken(rawToken, input.config.keys);
+    } catch (error) {
+      if (error instanceof VerifiedStudentSessionTokenError) {
+        return { status: error.code === "UNKNOWN_KEY_VERSION" ? "UNKNOWN_KEY" : "INVALID_TOKEN" };
       }
+      throw error;
+    }
 
-      const tokenDigest = digestVerifiedStudentSessionToken(rawToken, input.config);
-      const activeClient = tx ?? input.client;
-      const session = await activeClient.verifiedStudentSession.findUnique({
-        where: { tokenDigest },
-        include: {
-          user: { select: { id: true, role: true, deletedAt: true } },
-          product: { select: { id: true, testId: true } },
-          test: { select: { id: true } },
-          access: {
-            select: {
-              id: true,
-              userId: true,
-              testId: true,
-              commercialProductId: true,
-              revokedAt: true
+    const now = capturedNow ?? clock();
+    const tokenDigest = digestVerifiedStudentSessionToken(rawToken, input.config);
+    const activeClient = tx ?? input.client;
+    const session = await activeClient.verifiedStudentSession.findUnique({
+      where: { tokenDigest },
+      include: {
+        user: { select: { id: true, role: true, deletedAt: true } },
+        product: { select: { id: true, testId: true } },
+        test: { select: { id: true } },
+        access: {
+          select: {
+            id: true,
+            userId: true,
+            testId: true,
+            source: true,
+            commercialProductId: true,
+            attemptsAvailable: true,
+            revokedAt: true,
+            expiresAt: true,
+            attempts: {
+              take: 2,
+              orderBy: { createdAt: "asc" },
+              select: {
+                userId: true,
+                testId: true,
+                accessId: true,
+                status: true
+              }
             }
           }
         }
-      });
-      if (!session || !verifiedStudentSessionDigestsEqual(tokenDigest, session.tokenDigest)) {
-        return { status: "NOT_FOUND" };
       }
-      if (session.tokenKeyVersion !== parsed.keyVersion) {
-        return { status: "SCOPE_MISMATCH" };
+    });
+    if (!session || !verifiedStudentSessionDigestsEqual(tokenDigest, session.tokenDigest)) {
+      return { status: "NOT_FOUND" };
+    }
+    if (session.tokenKeyVersion !== parsed.keyVersion) {
+      return { status: "SCOPE_MISMATCH" };
+    }
+    if (session.revokedAt) {
+      return { status: "REVOKED" };
+    }
+    if (now.getTime() >= session.expiresAt.getTime()) {
+      return { status: "EXPIRED" };
+    }
+    if (session.user.deletedAt || session.user.role !== "STUDENT") {
+      return { status: "SUBJECT_INVALID" };
+    }
+    if (session.access.revokedAt) {
+      return { status: "ACCESS_REVOKED" };
+    }
+    const scope = scopeFromInput(session);
+    const scopeIsConsistent =
+      session.user.id === scope.userId &&
+      session.product.id === scope.commercialProductId &&
+      session.product.testId === scope.testId &&
+      session.test.id === scope.testId &&
+      session.access.id === scope.accessId &&
+      session.access.userId === scope.userId &&
+      session.access.testId === scope.testId &&
+      session.access.commercialProductId === scope.commercialProductId;
+    if (!scopeIsConsistent) {
+      return { status: "SCOPE_MISMATCH" };
+    }
+    const accessExpired = now.getTime() >= session.access.expiresAt.getTime();
+    if (accessExpired && !exactAttemptPreservesExpiredAccess(
+      session.access.attempts,
+      scope,
+      session.access.attemptsAvailable
+    )) {
+      const allowedEntrySource = session.source === "COMMERCIAL_ORDER_CLAIM" ||
+        session.source === "ACCESS_CODE" ||
+        session.source === "EMAIL_OTP_RECOVERY";
+      const exactUnstartedCommercialAccess = session.access.source === "COMMERCIAL" &&
+        session.access.attemptsAvailable === 1 &&
+        session.access.attempts.length === 0;
+      if (!preserveExactExpiredEntryScope || !allowedEntrySource || !exactUnstartedCommercialAccess) {
+        return { status: "ACCESS_EXPIRED" };
       }
-      if (session.revokedAt) {
-        return { status: "REVOKED" };
-      }
-      if (clock().getTime() >= session.expiresAt.getTime()) {
-        return { status: "EXPIRED" };
-      }
-      if (session.user.deletedAt || session.user.role !== "STUDENT") {
-        return { status: "SUBJECT_INVALID" };
-      }
-      if (session.access.revokedAt) {
-        return { status: "ACCESS_REVOKED" };
-      }
-
-      const scope = scopeFromInput(session);
-      const scopeIsConsistent =
-        session.user.id === scope.userId &&
-        session.product.id === scope.commercialProductId &&
-        session.product.testId === scope.testId &&
-        session.test.id === scope.testId &&
-        session.access.id === scope.accessId &&
-        session.access.userId === scope.userId &&
-        session.access.testId === scope.testId &&
-        session.access.commercialProductId === scope.commercialProductId;
-      if (!scopeIsConsistent) {
-        return { status: "SCOPE_MISMATCH" };
-      }
-
       return {
-        status: "RESOLVED",
+        status: "RESOLVED_ACCESS_EXPIRED",
         sessionId: session.id,
         scope,
         source: session.source,
@@ -341,6 +427,42 @@ export function createVerifiedStudentSessionService(input: {
         issuedAt: session.issuedAt,
         expiresAt: session.expiresAt
       };
+    }
+
+    return {
+      status: "RESOLVED",
+      sessionId: session.id,
+      scope,
+      source: session.source,
+      sourceReferenceId: session.sourceReferenceId,
+      issuanceOperationId: session.issuanceOperationId,
+      tokenGeneration: session.tokenGeneration,
+      issuedAt: session.issuedAt,
+      expiresAt: session.expiresAt
+    };
+  }
+
+  return {
+    issue(
+      issueInput: IssueVerifiedStudentSessionInput,
+      tx?: Tx
+    ): Promise<IssueVerifiedStudentSessionResult> {
+      return withTransaction(tx, (activeTx) => issueWithinTransaction(activeTx, issueInput));
+    },
+
+    async resolve(rawToken: string, tx?: Tx): Promise<ResolveVerifiedStudentSessionResult> {
+      const result = await resolveWithinService(rawToken, tx, false);
+      return result.status === "RESOLVED_ACCESS_EXPIRED"
+        ? { status: "ACCESS_EXPIRED" }
+        : result;
+    },
+
+    resolveForEntry(
+      rawToken: string,
+      tx?: Tx,
+      now?: Date
+    ): Promise<ResolveVerifiedStudentSessionForEntryResult> {
+      return resolveWithinService(rawToken, tx, true, now);
     },
 
     async revokeCurrent(

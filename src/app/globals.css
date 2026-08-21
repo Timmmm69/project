@@ -366,6 +366,57 @@ a:focus-visible,
   color: var(--success);
 }
 
+.prestart-page {
+  padding-bottom: max(56px, calc(32px + env(safe-area-inset-bottom)));
+}
+
+.prestart-surface {
+  margin: 0 auto;
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding: clamp(22px, 4vw, 36px);
+  width: min(100%, 760px);
+}
+
+.prestart-title:focus-visible,
+.prestart-error:focus-visible {
+  border-radius: 4px;
+  outline: 3px solid rgba(23, 107, 91, 0.28);
+  outline-offset: 4px;
+}
+
+.prestart-facts {
+  display: grid;
+  gap: 12px;
+  margin: 0;
+  padding-left: 24px;
+}
+
+.prestart-actions {
+  align-items: stretch;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+}
+
+.prestart-actions .button {
+  min-width: 220px;
+}
+
+.prestart-status {
+  color: var(--muted);
+  margin: 0;
+  min-height: 24px;
+}
+
+.prestart-error {
+  background: var(--danger-soft);
+  border: 1px solid #ffcdc6;
+  border-radius: 8px;
+  color: var(--danger);
+  padding: 14px 16px;
+}
+
 .catalog-grid {
   display: grid;
   gap: 16px;
@@ -733,5 +784,23 @@ th {
 
   .page-title {
     font-size: 30px;
+  }
+
+  .prestart-page {
+    padding-bottom: max(36px, calc(24px + env(safe-area-inset-bottom)));
+  }
+
+  .prestart-surface {
+    padding: 20px 18px;
+  }
+
+  .prestart-actions {
+    display: grid;
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .prestart-actions .button {
+    min-width: 0;
+    width: 100%;
   }
 }

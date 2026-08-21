@@ -447,7 +447,7 @@ async function lockCommercialPaymentAttempt(tx: Tx, attemptId: string) {
   await tx.$queryRaw(Prisma.sql`SELECT "id" FROM "commercial_payment_attempts" WHERE "id" = ${attemptId}::uuid FOR UPDATE`);
 }
 
-export type CommercialNextAction = "START_TEST" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
+export type CommercialNextAction = "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT" | "WAIT_FOR_PAYMENT" | "NONE";
 
 function addDays(date: Date, days: number) {
   const result = new Date(date);
@@ -491,7 +491,7 @@ async function existingStateAction(input: {
   });
   switch (resolution.response.state) {
     case "access_unstarted":
-      return "START_TEST" as const;
+      return "OPEN_PRE" as const;
     case "attempt_active":
       return "RESUME_TEST" as const;
     case "result_available":
@@ -1569,28 +1569,78 @@ export async function commercialOrderStatus(
 }
 
 export async function claimCommercialOrderAccess(publicId: string) {
-  const order = await getCommercialOrder(publicId);
-  const access = await prisma.access.findUnique({
-    where: { commercialOrderId: order.id },
-    include: {
-      user: { select: { id: true, email: true, role: true, deletedAt: true } },
-      attempts: { orderBy: { createdAt: "desc" }, take: 1 }
-    }
-  });
-  if (!access || order.status !== "PAID" || access.revokedAt || access.expiresAt <= new Date()) {
-    throw new CommercialError("PAYMENT_NOT_CONFIRMED");
-  }
-  if (access.user.role !== "STUDENT" || access.user.deletedAt) {
-    throw new CommercialError("EMAIL_NOT_AVAILABLE");
-  }
+  const now = new Date();
+  const proof = await prisma.$transaction(async (tx) => {
+    const order = await tx.commercialOrder.findUnique({
+      where: { publicId },
+      include: {
+        product: {
+          include: {
+            test: { select: { id: true, slug: true, examMode: true } }
+          }
+        }
+      }
+    });
+    if (!order) throw new CommercialError("PAYMENT_NOT_CONFIRMED");
 
-  const attempt = access.attempts[0] ?? null;
+    const accesses = await tx.access.findMany({
+      where: { commercialOrderId: order.id },
+      take: 2,
+      include: {
+        user: { select: { id: true, email: true, role: true, deletedAt: true } },
+        commercialProduct: { select: { id: true, testId: true } },
+        commercialPaymentAttempt: {
+          select: { id: true, commercialOrderId: true, status: true }
+        },
+        attempts: {
+          orderBy: { createdAt: "desc" },
+          take: 1,
+          select: { id: true, userId: true, testId: true, accessId: true, status: true }
+        }
+      }
+    });
+    const access = accesses.length === 1 ? accesses[0] : null;
+    const attempt = access?.attempts[0] ?? null;
+    const exactProof = order.status === "PAID" &&
+      order.commercialProductId === order.product.id &&
+      order.testIdSnapshot === order.product.testId &&
+      order.product.test.id === order.product.testId &&
+      access !== null &&
+      access.userId === access.user.id &&
+      access.testId === order.product.testId &&
+      access.source === "COMMERCIAL" &&
+      access.commercialProductId === order.product.id &&
+      access.commercialOrderId === order.id &&
+      access.commercialPaymentAttemptId !== null &&
+      access.commercialProduct?.id === order.product.id &&
+      access.commercialProduct.testId === order.product.testId &&
+      access.commercialPaymentAttempt?.id === access.commercialPaymentAttemptId &&
+      access.commercialPaymentAttempt.commercialOrderId === order.id &&
+      access.commercialPaymentAttempt.status === "PAID" &&
+      access.revokedAt === null &&
+      now.getTime() < access.expiresAt.getTime() &&
+      access.user.role === "STUDENT" &&
+      access.user.deletedAt === null &&
+      normalizeEmail(order.emailOriginal) === order.emailNormalized &&
+      normalizeEmail(access.user.email) === order.emailNormalized &&
+      (!attempt ||
+        attempt.userId === access.userId &&
+        attempt.testId === access.testId &&
+        attempt.accessId === access.id);
+    if (!exactProof || !access) throw new CommercialError("PAYMENT_NOT_CONFIRMED");
+    return { order, access, attempt };
+  });
+
+  const { order, access, attempt } = proof;
+
   const nextAction: CommercialNextAction = attempt?.status === "STARTED"
     ? "RESUME_TEST"
     : attempt && access.attemptsAvailable <= 0
       ? "VIEW_RESULT"
-      : "START_TEST";
+      : "OPEN_PRE";
   return {
+    orderId: order.id,
+    examMode: order.product.test.examMode,
     student: { userId: access.user.id, email: access.user.email, role: "STUDENT" as const },
     accessId: access.id,
     commercialProductId: order.commercialProductId,

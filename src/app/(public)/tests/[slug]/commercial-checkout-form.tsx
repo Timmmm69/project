@@ -75,13 +75,16 @@ function newKey() {
   return crypto.randomUUID();
 }
 
-export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency, verifiedPreAuthorized }: {
+function isSafeVerifiedDestination(value: string) {
+  return /^\/(?:attempts|results)\/[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(value);
+}
+
+export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor, currency }: {
   legal: LegalLinks;
   testId: string;
   productCode: string;
   priceMinor: number;
   currency: string;
-  verifiedPreAuthorized: boolean;
 }) {
   const query = useSearchParams();
   const [email, setEmail] = useState("");
@@ -100,6 +103,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   const orderKey = useRef<string | null>(null);
   const checkoutFlowId = useRef<string | null>(null);
   const paymentKey = useRef<string | null>(null);
+  const claimKey = useRef<string | null>(null);
   const challengeKey = useRef<string | null>(null);
   const paymentFormRef = useRef<{ action: string; fields: Record<string, string> } | null>(null);
   const redirectingOrderId = useRef<string | null>(null);
@@ -530,24 +534,15 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
   async function claimAndContinue() {
     if (!order) return;
     setBusy(true);
-    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, { method: "POST" });
-    const body = await response.json() as ApiResponse<{ nextAction: "START_TEST" | "RESUME_TEST" | "VIEW_RESULT"; nextUrl: string; testId: string }>;
+    claimKey.current ??= newKey();
+    const response = await fetch(`/api/commercial/orders/${order.publicId}/claim-access`, {
+      method: "POST",
+      headers: { "Idempotency-Key": claimKey.current }
+    });
+    const body = await response.json() as ApiResponse<{ nextAction: "OPEN_PRE" | "RESUME_TEST" | "VIEW_RESULT"; nextUrl: string }>;
     if (!body.success) {
       setBusy(false);
       setMessage(body.error.message);
-      return;
-    }
-    if (body.data.nextAction === "START_TEST") {
-      const start = await fetch(`/api/commercial/orders/${order.publicId}/start-attempt`, {
-        method: "POST",
-      });
-      const startBody = await start.json() as ApiResponse<{ nextUrl: string }>;
-      if (!startBody.success) {
-        setBusy(false);
-        setMessage(startBody.error.message);
-        return;
-      }
-      window.location.assign(startBody.data.nextUrl);
       return;
     }
     window.location.assign(body.data.nextUrl);
@@ -569,23 +564,6 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
   }
 
-  async function startVerifiedAttempt() {
-    setBusy(true);
-    setMessage(null);
-    const response = await fetch("/api/attempts/start", {
-      method: "POST",
-      headers: { "Content-Type": "application/json" },
-      body: JSON.stringify({ testId })
-    });
-    const body = await response.json() as ApiResponse<{ attempt: { attemptId: string } }>;
-    setBusy(false);
-    if (!body.success) {
-      setMessage(body.error.message);
-      return;
-    }
-    window.location.assign(`/attempts/${body.data.attempt.attemptId}`);
-  }
-
   function handleEmailKeyUp(event: React.KeyboardEvent<HTMLInputElement>) {
     if (event.key === "Enter" && email && !otpSent) {
       void requestOtp();
@@ -598,17 +576,6 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
     }
   }
 
-  if (verifiedPreAuthorized) {
-    return (
-      <section className="subpanel stack compact">
-        {message ? <p className="form-message info">{message}</p> : null}
-        <button className="button" type="button" disabled={busy} onClick={startVerifiedAttempt}>
-          Начать или продолжить тест
-        </button>
-      </section>
-    );
-  }
-
   if (checkoutPhase === "creating_order") {
     return (
       <section className="subpanel">
@@ -616,6 +583,7 @@ export function CommercialCheckoutForm({ legal, testId, productCode, priceMinor,
           <div className="spinner" aria-hidden="true" />
           <p className="subsection-title">Создаём заказ…</p>
           <p className="muted">Фиксируем цену {price}, состав покупки и данные для перехода к оплате.</p>
+
         </div>
       </section>
     );

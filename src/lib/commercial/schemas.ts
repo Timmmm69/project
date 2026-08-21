@@ -19,4 +19,6 @@ export const commercialCheckoutFlowIdSchema = z.string().uuid();
 
 export const commercialIdempotencyKeySchema = z.string().trim().min(16).max(200);
 
+export const commercialClaimOperationIdSchema = z.string().uuid();
+
 export const commercialPublicIdSchema = z.string().trim().min(10).max(100);

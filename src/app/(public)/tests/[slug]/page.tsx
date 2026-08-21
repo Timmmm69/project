@@ -1,13 +1,18 @@
 import Link from "next/link";
-import { notFound } from "next/navigation";
+import { notFound, redirect } from "next/navigation";
 import { serializePublicTest } from "@/lib/public-tests/serialize";
 import { commercialLegalConfig, COMMERCIAL_PRODUCT_CODE, isCommercialCheckoutEnabled } from "@/lib/commercial/config";
 import { CommercialCheckoutForm } from "./commercial-checkout-form";
 import { prisma } from "@/server/db/client";
 import { TestAccessForm } from "./test-access-form";
 import { parseVerifiedCommercialSessionMode } from "@/server/auth/verified-student-session/config";
-import { authorizeVerifiedStudentDestination } from "@/server/auth/verified-student-session/destination-guard";
+import {
+  resolveVerifiedStudentEntryDestination,
+  type VerifiedStudentEntryResolution
+} from "@/server/auth/verified-student-session/destination-guard";
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
+import { PrestartAccessExpired, PrestartConfirmation } from "./prestart-confirmation";
+
 
 export const dynamic = "force-dynamic";
 
@@ -15,13 +20,16 @@ type PageProps = {
   params: Promise<{
     slug: string;
   }>;
+  searchParams?: Promise<{
+    view?: string | string[];
+  }>;
 };
 
 function formatPrice(price: number, currency: string) {
   return `${(price / 100).toFixed(2)} ${currency}`;
 }
 
-export default async function PublicTestPage({ params }: PageProps) {
+export default async function PublicTestPage({ params, searchParams }: PageProps) {
   const { slug } = await params;
   const test = await prisma.test.findFirst({
     where: {
@@ -45,13 +53,10 @@ export default async function PublicTestPage({ params }: PageProps) {
     : null;
   const showCommercialCheckout = Boolean(commercialProduct);
   isFullCeCt &&= !showCommercialCheckout;
-  let verifiedPreAuthorized = false;
   let hideLegacyPrivateControls = false;
+  let entryResolution: VerifiedStudentEntryResolution | null = null;
   try {
-    const authorization = await authorizeVerifiedStudentDestination({ destination: "PRE", testSlug: slug });
-    verifiedPreAuthorized = authorization.status === "AUTHORIZED";
-    hideLegacyPrivateControls = authorization.mode === "enforce" &&
-      authorization.classification === "AUTHENTIC";
+    entryResolution = await resolveVerifiedStudentEntryDestination({ testSlug: slug });
   } catch {
     const authenticTest = isAuthenticRikzRussianExamMode(test.examMode, "CURRENT_TEST");
     try {
@@ -60,6 +65,52 @@ export default async function PublicTestPage({ params }: PageProps) {
     } catch {
       hideLegacyPrivateControls = authenticTest;
     }
+  }
+  if (entryResolution?.status === "AUTHORIZED") {
+    if (entryResolution.nextAction === "OPEN_ATTEMPT" || entryResolution.nextAction === "OPEN_RESULT") {
+      redirect(entryResolution.nextUrl);
+    }
+  }
+  if (entryResolution) {
+    hideLegacyPrivateControls = entryResolution.mode === "enforce" &&
+      entryResolution.classification === "AUTHENTIC";
+  }
+  const view = searchParams ? (await searchParams).view : undefined;
+  const verifiedOpenPre = entryResolution?.status === "AUTHORIZED" &&
+    entryResolution.nextAction === "OPEN_PRE";
+  const verifiedProductView = verifiedOpenPre && view === "product";
+  const verifiedAccessExpired = entryResolution?.status === "BLOCKED" &&
+    entryResolution.mode === "enforce" &&
+    entryResolution.classification === "AUTHENTIC" &&
+    entryResolution.reason === "ACCESS_EXPIRED";
+
+  if (verifiedAccessExpired) {
+    return (
+      <main className="page-shell prestart-page stack">
+        <header className="topbar">
+          <Link className="text-link" href="/">
+            Назад к каталогу
+          </Link>
+          <span className="badge accent">{publicTest.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</span>
+        </header>
+        <PrestartAccessExpired />
+      </main>
+    );
+  }
+
+
+  if (verifiedOpenPre && !verifiedProductView) {
+    return (
+      <main className="page-shell prestart-page stack">
+        <header className="topbar">
+          <Link className="text-link" href="/">
+            Назад к каталогу
+          </Link>
+          <span className="badge accent">{publicTest.mode === "ce_ct" ? "ЦЭ/ЦТ" : "Тренировка"}</span>
+        </header>
+        <PrestartConfirmation testId={publicTest.id} cancelHref={`/tests/${slug}?view=product`} />
+      </main>
+    );
   }
 
   return (
@@ -140,8 +191,9 @@ export default async function PublicTestPage({ params }: PageProps) {
             <h2 className="section-title">{showCommercialCheckout && commercialProduct ? formatPrice(commercialProduct.priceMinor, commercialProduct.currency) : formatPrice(publicTest.price, publicTest.currency)}</h2>
             <p className="muted">Введите email. Если доступ уже открыт, можно сразу начать или продолжить попытку.</p>
           </div>
-          {verifiedPreAuthorized || showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct?.priceMinor ?? publicTest.price} currency={commercialProduct?.currency ?? publicTest.currency} verifiedPreAuthorized={verifiedPreAuthorized} /> : null}
+          {showCommercialCheckout && commercialProduct ? <CommercialCheckoutForm legal={commercialLegalConfig()} testId={publicTest.id} productCode={COMMERCIAL_PRODUCT_CODE} priceMinor={commercialProduct.priceMinor} currency={commercialProduct.currency} /> : null}
           {!showCommercialCheckout && !hideLegacyPrivateControls ? <TestAccessForm testId={publicTest.id} hidePayment={showCommercialCheckout} /> : null}
+
         </aside>
       </section>
     </main>

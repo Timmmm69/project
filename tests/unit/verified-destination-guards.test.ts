@@ -10,6 +10,7 @@ import {
 import { isAuthenticRikzRussianExamMode } from "@/server/auth/verified-student-session/exam-mode";
 import {
   finalizeVerifiedDestinationResponse,
+  verifiedEntryBlockedResponse,
   verifiedDestinationRejection
 } from "@/server/auth/verified-student-session/destination-response";
 import type {
@@ -57,6 +58,7 @@ function access(overrides: Record<string, unknown> = {}) {
     source: "COMMERCIAL",
     commercialProductId: ids.product,
     revokedAt: null,
+    expiresAt: new Date("2026-08-14T10:00:00.000Z"),
     user: {
       id: ids.user,
       email: "student@example.test",
@@ -209,7 +211,8 @@ describe("ACC-01A verified destination guard", () => {
     ["4. unknown session", "NOT_FOUND"],
     ["5. expired session", "EXPIRED"],
     ["6. revoked session", "REVOKED"],
-    ["7. revoked Access", "ACCESS_REVOKED"]
+    ["7. revoked Access", "ACCESS_REVOKED"],
+    ["expired Access", "ACCESS_EXPIRED"]
   ] as const)("%s is rejected as requiring a verified session", async (_label, status) => {
     expect(await authorizePre({ resolution: { status } })).toMatchObject({
       status: "REJECTED",
@@ -422,6 +425,26 @@ describe("ACC-01A verified destination guard", () => {
     expect(verifiedDestinationRejection(decision).headers.get("set-cookie")).toBeNull();
   });
 
+  it("returns a fixed private response for an exact blocked entry decision", async () => {
+    const response = verifiedEntryBlockedResponse({
+      status: "BLOCKED",
+      mode: "enforce",
+      classification: "AUTHENTIC",
+      reason: "ACCESS_EXPIRED"
+    });
+    expect(response.status).toBe(409);
+    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("referrer-policy")).toBe("no-referrer");
+    expect(response.headers.get("set-cookie")).toBeNull();
+    expect(await response.json()).toEqual({
+      success: false,
+      error: {
+        code: "ACCESS_EXPIRED",
+        message: "Attempt cannot be started for this access."
+      }
+    });
+  });
+
   it("31. guard resolves once and never invokes an issuer or rotation path", async () => {
     const resolveSession = vi.fn(async () => resolved());
     await authorizePre({ resolveSession });
@@ -446,11 +469,43 @@ describe("ACC-01A verified destination guard", () => {
     for (const spy of consoleSpies) spy.mockRestore();
   });
 
-  it("34. public Test page keeps catalog content outside the private authorization branch", () => {
+  it("34. public Test page resolves verified entry after public serialization and gates dedicated PRE", () => {
     const page = readFileSync(join(process.cwd(), "src/app/(public)/tests/[slug]/page.tsx"), "utf8");
-    expect(page).toContain("serializePublicTest(test)");
-    expect(page.indexOf("serializePublicTest(test)")).toBeLessThan(page.indexOf("verifiedPreAuthorized"));
+    const publicSerializationIndex = page.indexOf("serializePublicTest(test)");
+    const entryResolutionIndex = page.indexOf("resolveVerifiedStudentEntryDestination({ testSlug: slug })");
+
+    expect(publicSerializationIndex).not.toBe(-1);
+    expect(entryResolutionIndex).not.toBe(-1);
+    expect(publicSerializationIndex).toBeLessThan(entryResolutionIndex);
+    expect(page).toMatch(/entryResolution\?\.status\s*===\s*"AUTHORIZED"/);
+    expect(page).toMatch(/entryResolution\.nextAction\s*===\s*"OPEN_PRE"/);
+    expect(page).toContain("if (verifiedOpenPre && !verifiedProductView)");
+    expect(page).toContain("<PrestartConfirmation");
     expect(page).toContain("<h1 className=\"page-title\">{publicTest.title}</h1>");
+    expect(page).toContain("Доступ готов. Попытка ещё не начата.");
+    expect(page).toContain("Перейти к началу");
+    expect(page).not.toContain("verifiedPreAuthorized");
+    expect(page).not.toContain("Начать или продолжить тест");
+  });
+
+  it("associates the focused expired heading with its description without live announcements", () => {
+    const component = readFileSync(
+      join(process.cwd(), "src/app/(public)/tests/[slug]/prestart-confirmation.tsx"),
+      "utf8"
+    );
+    const expiredState = component.slice(component.indexOf("export function PrestartAccessExpired"));
+    const sectionOpeningTag = expiredState.match(/<section[\s\S]*?>/)?.[0] ?? "";
+    const headingOpeningTag = expiredState.match(/<h1[\s\S]*?>/)?.[0] ?? "";
+
+    expect(sectionOpeningTag).toContain('aria-labelledby="prestart-access-expired-title"');
+    expect(sectionOpeningTag).not.toContain("aria-describedby");
+    expect(headingOpeningTag).toContain('id="prestart-access-expired-title"');
+    expect(headingOpeningTag).toContain('aria-describedby="prestart-access-expired-description"');
+    expect(headingOpeningTag).toContain("tabIndex={-1}");
+    expect(expiredState).toContain('id="prestart-access-expired-description"');
+    expect(expiredState).not.toContain('role="alert"');
+    expect(expiredState).not.toContain("aria-live");
+    expect(expiredState.match(/headingRef\.current\?\.focus\(\)/g)).toHaveLength(1);
   });
 
   it("35. classifies PRE generic mode without a product as legacy", async () => {
