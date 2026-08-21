@@ -8,7 +8,6 @@ import { POST as expireAttempt } from "@/app/api/attempts/[attemptId]/expire/rou
 import { GET as readAdminResult } from "@/app/api/admin/attempts/[attemptId]/route";
 import { POST as startAttempt } from "@/app/api/attempts/start/route";
 import { POST as claimCommercialAccess } from "@/app/api/commercial/orders/[publicId]/claim-access/route";
-
 import { GET as readResult } from "@/app/api/results/[attemptId]/route";
 import { orderTokenCookieName } from "@/lib/commercial/commercial-service";
 import { createLookupToken, hashLookupToken } from "@/lib/commercial/security";
@@ -170,6 +169,7 @@ async function createCommercialFixture(email = `prod03-${randomUUID()}@example.t
       testIdSnapshot: test.id,
       productNameSnapshot: product.name,
       priceMinor: product.priceMinor,
+      examModeSnapshot: "RIKZ_RUSSIAN_2026",
       currency: "BYN",
       emailOriginal: email,
       emailNormalized: email,
@@ -219,7 +219,6 @@ async function createCommercialFixture(email = `prod03-${randomUUID()}@example.t
 function commercialRequest(fixture: Fixture) {
   nextCookieState.values.set(orderTokenCookieName(fixture.order.publicId), fixture.lookupToken);
   return new Request(`${origin}/api/commercial/orders/${fixture.order.publicId}/claim-access`, {
-
     method: "POST",
     headers: {
       origin,
@@ -273,7 +272,6 @@ async function startFixture(fixture: Fixture) {
     testId: fixture.test.id
   }));
   expect(response.status).toBe(200);
-
   const body = await response.json();
   return { attemptId: body.data.attempt.attemptId as string, rawToken: rawToken! };
 }

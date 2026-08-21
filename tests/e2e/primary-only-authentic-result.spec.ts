@@ -424,7 +424,7 @@ test("authentic Result is aggregate-only in DOM, network, refresh and responsive
 test("authentic completion label is independent of the browser device timezone", async ({ browser }) => {
   for (const timezoneId of ["America/Los_Angeles", "Asia/Tokyo"]) {
     const timezoneContext = await browser.newContext({
-      baseURL: "http://localhost:3000",
+      baseURL: process.env.APP_URL ?? `http://localhost:${process.env.PLAYWRIGHT_PORT ?? "3000"}`,
       timezoneId
     });
     try {
