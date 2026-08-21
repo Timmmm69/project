@@ -69,7 +69,7 @@ Production verdict: **NO-GO**.
 - `pnpm build` — PASS.
 - `git diff --check` — PASS.
 
-Финальный clean-checkout прогон выполняется на release SHA теми же командами, включая `pnpm install --frozen-lockfile`; authoritative remote status — GitHub CI check suite в PR.
+Clean-checkout прогон `e60a5ff327c46f9b2a664240229700b4f776a034` выполнен с синтетическими CI-переменными и завершился PASS для frozen install, Prisma generate/validate, lint, typecheck, unit tests, build и `git diff --check`. Authoritative remote status финального SHA — GitHub CI check suite в PR.
 
 ## Не включено
 
