@@ -177,6 +177,7 @@ function commercialRequest(
     headers: {
       origin,
       host: "commercial-order-issuer.test",
+      "x-test-internal-request": "true",
       ...(operationId === null ? {} : { "Idempotency-Key": operationId })
     }
   });
@@ -368,7 +369,12 @@ describeWithDatabase("ACC-01A commercial Order issuer PostgreSQL integration", (
     const denied = await startCommercialAttempt(
       new Request(`${origin}/api/commercial/orders/${wrongToken.order.publicId}/start-attempt`, {
         method: "POST",
-        headers: { origin, host: "commercial-order-issuer.test", "Idempotency-Key": randomUUID() }
+        headers: {
+          origin,
+          host: "commercial-order-issuer.test",
+          "x-test-internal-request": "true",
+          "Idempotency-Key": randomUUID()
+        }
       }),
       commercialContext(wrongToken)
     );
