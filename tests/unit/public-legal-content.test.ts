@@ -11,7 +11,7 @@ describe("public WEBPAY legal content", () => {
       country: "Республика Беларусь",
       email: "kolyugova42@icloud.com"
     });
-    expect(SELLER.phoneHref).toBe("tel:+375293768988");
+    expect(SELLER.phoneHref).toBe("tel:+375233472020");
   });
 
   it("keeps the commercial offer in BYN and aligned with the immutable order snapshot", () => {

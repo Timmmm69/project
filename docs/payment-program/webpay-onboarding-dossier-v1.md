@@ -29,12 +29,12 @@
 | 3-D Secure и mobile rules | Merchant-specific provider docs | `MISSING` |
 | Brand/logo/copy rules | WEBPAY brand package | `MISSING` |
 
-### Подтверждённые seller/site inputs, 2026-08-13
+### Подтверждённые seller/site inputs, обновлено 2026-10-19
 
 - Seller: `Колюгова Софья Игоревна`.
 - Legal/tax status: физическое лицо, применяющее налог на профессиональный доход.
 - УНП: `EE8047957`.
-- Контакты: `+375293768988`, `kolyugova42@icloud.com`.
+- Контакты: `+375233472020`, `kolyugova42@icloud.com`.
 - Support: Пн-Пт 10:00-18:00 Europe/Minsk, ответ в течение двух рабочих дней.
 - Acquiring route для самозанятого со слов onboarding: WEBPAY / МТБанк;
   merchant-specific agreement всё ещё `MISSING`.
