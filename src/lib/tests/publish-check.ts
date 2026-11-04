@@ -1,4 +1,5 @@
-﻿import type { Prisma } from "@prisma/client";
+﻿import { validateAnswerConfiguration } from "@/lib/scoring/answer-policy";
+import type { Prisma } from "@prisma/client";
 
 export type PublishCheckIssue = {
   code: string;
@@ -39,6 +40,8 @@ export type PublishCheckInput = {
     officialNumber?: number | null;
     responseSubtype?: "WORD" | "DIGITS" | "ALNUM" | string | null;
     acceptedAnswers?: Prisma.JsonValue | null;
+    partialPolicy?: string | null;
+    normalizationPolicy?: Prisma.JsonValue | null;
     explanation?: string | null;
     subtopic?: string | null;
     deletedAt?: Date | null;
@@ -111,7 +114,7 @@ function addRikzRussian2026PublishChecks(
   }
 
   const totalPoints = questions.reduce((sum, question) => sum + (question.points ?? 0), 0);
-  if (totalPoints !== 80) {
+  if (totalPoints !== 80 || test.maxRawScore !== 80) {
     errors.push({
       code: "RIKZ_RUSSIAN_TOTAL_POINTS_INVALID",
       message: "Ð”Ð»Ñ Ñ€ÐµÐ¶Ð¸Ð¼Ð° Ð¦Ð­/Ð¦Ð¢ Ð¿Ð¾ Ñ€ÑƒÑÑÐºÐ¾Ð¼Ñƒ ÑÑƒÐ¼Ð¼Ð° Ð¿ÐµÑ€Ð²Ð¸Ñ‡Ð½Ñ‹Ñ… Ð±Ð°Ð»Ð»Ð¾Ð² Ð´Ð¾Ð»Ð¶Ð½Ð° Ð±Ñ‹Ñ‚ÑŒ 80."
@@ -143,6 +146,12 @@ function addRikzRussian2026PublishChecks(
   for (const [index, question] of questions.entries()) {
     const number = index + 1;
     const label = questionLabel(question, number);
+    const configurationErrors = validateAnswerConfiguration(question);
+    if (configurationErrors.length > 0) errors.push({
+      code: "RIKZ_RUSSIAN_SCORING_CONFIGURATION_INVALID",
+      message: `${label}: ${configurationErrors.join("; ")}`
+    });
+    if (question.points !== 2) errors.push({ code: "RIKZ_RUSSIAN_QUESTION_POINTS_INVALID", message: `${label}: максимум должен быть равен 2.` });
 
     if (question.questionType === "SINGLE_CHOICE") {
       errors.push({
@@ -187,7 +196,7 @@ function addRikzRussian2026PublishChecks(
       });
     } else {
       const maxNumber = question.officialPart === "A" ? 18 : 22;
-      if (question.officialNumber < 1 || question.officialNumber > maxNumber) {
+      if (!Number.isInteger(question.officialNumber) || question.officialNumber < 1 || question.officialNumber > maxNumber) {
         errors.push({
           code: "RIKZ_RUSSIAN_OFFICIAL_NUMBER_RANGE_INVALID",
           message: `ÐÐ¾Ð¼ÐµÑ€ ${question.officialPart}${question.officialNumber} Ð´Ð¾Ð»Ð¶ÐµÐ½ Ð±Ñ‹Ñ‚ÑŒ Ð² Ð´Ð¸Ð°Ð¿Ð°Ð·Ð¾Ð½Ðµ 1-${maxNumber}.`
@@ -390,6 +399,9 @@ export function runPublishCheck(test: PublishCheckInput) {
 
   if (isRikzRussian2026) {
     addRikzRussian2026PublishChecks(test, questions, errors);
+    if (questions.some((question) => question.officialPart === "B" && question.officialNumber === 14 && question.responseSubtype === "WORD")) {
+      warnings.push({ code: "RIKZ_RUSSIAN_B14_AUTHORED_VARIATION", message: "B14 — словесное авторское задание (2/0). В реальной схеме ЦЭ/ЦТ-2026 B14 допускает частичный балл; для совпадения структуры требуется методическая замена задания." });
+    }
   }
 
   return {

@@ -36,9 +36,11 @@ export const AUTHENTIC_IMPORT_TEMPLATE_COLUMNS = [
   "explanation"
 ] as const;
 
+export const AUTHENTIC_POLICY_COLUMNS = ["partial_policy", "normalization_policy"] as const;
+
 export const IMPORT_TEMPLATE_COLUMNS = GENERIC_IMPORT_TEMPLATE_COLUMNS;
 
-export type ImportTemplateColumn = (typeof AUTHENTIC_IMPORT_TEMPLATE_COLUMNS)[number];
+export type ImportTemplateColumn = (typeof AUTHENTIC_IMPORT_TEMPLATE_COLUMNS)[number] | (typeof AUTHENTIC_POLICY_COLUMNS)[number];
 export type ImportTemplateMode = "generic" | "rikz_russian_2026";
 
 export const MAX_IMPORT_ROWS = 500;
@@ -70,6 +72,10 @@ export const AUTHENTIC_IMPORT_EXAMPLE_ROWS = Array.from({ length: 40 }, (_, inde
     };
   }
 
+  const partBNumber = number - 18;
+  const isSet = [1, 7, 13, 14, 16, 18].includes(partBNumber);
+  const isMatching = partBNumber >= 19;
+  const key = isSet ? "13" : isMatching ? "А1Б2В3Г4" : "пример";
   return {
     exam_mode: "rikz_russian_2026",
     official_part: "B",
@@ -82,8 +88,8 @@ export const AUTHENTIC_IMPORT_EXAMPLE_ROWS = Array.from({ length: 40 }, (_, inde
     option_d: "",
     option_e: "",
     correct_answer: "",
-    accepted_answers: "[\"placeholder\"]",
-    response_subtype: "word",
+    accepted_answers: JSON.stringify([key]),
+    response_subtype: isSet ? "digits" : isMatching ? "alnum" : "word",
     topic: "Placeholder topic",
     subtopic: "",
     difficulty: "medium",

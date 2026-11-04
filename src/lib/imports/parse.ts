@@ -1,7 +1,7 @@
 import ExcelJS from "exceljs";
 import { parse as parseCsvSync } from "csv-parse/sync";
 import { mapRecordToImportRow } from "@/lib/imports/validation";
-import { AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, GENERIC_IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
+import { AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, AUTHENTIC_POLICY_COLUMNS, GENERIC_IMPORT_TEMPLATE_COLUMNS } from "@/lib/imports/template";
 import type { ImportError, ImportFileType, ImportRawRow } from "@/lib/imports/types";
 
 type ParsedSheet = {
@@ -40,7 +40,9 @@ function nonEmptyRecord(record: string[]) {
 }
 
 function columnsFromHeader(header: string[]) {
-  return header[0]?.trim() === "exam_mode" ? AUTHENTIC_IMPORT_TEMPLATE_COLUMNS : GENERIC_IMPORT_TEMPLATE_COLUMNS;
+  return header[0]?.trim() === "exam_mode"
+    ? [...AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, ...AUTHENTIC_POLICY_COLUMNS]
+    : GENERIC_IMPORT_TEMPLATE_COLUMNS;
 }
 
 export function detectImportFileType(fileName: string): ImportFileType | null {

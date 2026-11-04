@@ -76,6 +76,12 @@ async function cleanDatabase() {
   await prisma.user.deleteMany();
 }
 
+function partBFixture(number: number) {
+  const set = [1, 7, 13, 16, 18].includes(number);
+  const matching = number >= 19;
+  return { key: set ? "135" : matching ? "А1Б2В3Г4" : "пример", subtype: set ? "DIGITS" as const : matching ? "ALNUM" as const : "WORD" as const };
+}
+
 function authenticQuestions() {
   return [
     ...Array.from({ length: 18 }, (_, index) => ({
@@ -99,8 +105,8 @@ function authenticQuestions() {
     ...Array.from({ length: 22 }, (_, index) => ({
       questionText: `Part B ${index + 1}`,
       questionType: "SHORT_ANSWER_TOKEN" as const,
-      correctAnswer: index === 0 ? "correctsecret1" : `token${index + 1}`,
-      acceptedAnswers: index === 0 ? ["acceptedsecret1"] : [`token${index + 1}`],
+      correctAnswer: partBFixture(index + 1).key,
+      acceptedAnswers: [partBFixture(index + 1).key],
       explanation: index === 0
         ? "ADMIN_B_EXPLANATION_SECRET"
         : `private Part B explanation ${index + 1}`,
@@ -108,7 +114,7 @@ function authenticQuestions() {
       points: 2,
       officialPart: "B" as const,
       officialNumber: index + 1,
-      responseSubtype: "ALNUM" as const,
+      responseSubtype: partBFixture(index + 1).subtype,
       orderIndex: index + 19
     }))
   ];
@@ -257,7 +263,7 @@ function cookieValue(response: Response, name: string) {
 
 async function startFixture(fixture: Fixture) {
   const claim = await claimCommercialAccess(commercialRequest(fixture), commercialContext(fixture));
-  expect(claim.status).toBe(200);
+  expect(claim.status, await claim.clone().text()).toBe(200);
   const rawToken = cookieValue(claim, "verified_student_session");
   expect(rawToken).toMatch(/^vs1\.v1\./);
   expect((await claim.clone().json()).data).toMatchObject({
@@ -355,7 +361,7 @@ describeWithDatabase("PROD-03 primary-only authentic Result PostgreSQL integrati
     for (const question of questions) {
       const selectedAnswer = question.questionType === "multi_select_five"
         ? (question.officialNumber === 1 ? "A,E" : "A,C")
-        : (question.officialNumber === 1 ? "acceptedsecret1" : `token${question.officialNumber}`);
+        : partBFixture(question.officialNumber).key;
       const saved = await saveAnswer(
         destinationRequest("POST", `/api/attempts/${started.attemptId}/answers`, started.rawToken, {
           snapshotQuestionId: question.snapshotQuestionId,

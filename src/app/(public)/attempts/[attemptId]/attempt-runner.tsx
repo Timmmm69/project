@@ -1,5 +1,6 @@
 "use client";
 
+import { parsePolicyAnswer, type AnswerPolicy } from "@/lib/scoring/answer-policy";
 import { useEffect, useMemo, useRef, useState } from "react";
 
 type AttemptQuestion = {
@@ -9,6 +10,7 @@ type AttemptQuestion = {
   questionType: "single_choice" | "multiple_choice" | "short_text" | "multi_select_five" | "short_answer_token";
   officialPart: "A" | "B" | null;
   officialNumber: number | null;
+  answerFormat?: AnswerPolicy;
   options: {
     A?: string;
     B?: string;
@@ -85,6 +87,10 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
   const [answers, setAnswers] = useState<Record<string, string>>({});
   const answersRef = useRef<Record<string, string>>({});
   const saveQueuesRef = useRef<Record<string, Promise<void>>>({});
+  const finishingRef = useRef(false);
+  const deadlineRef = useRef(0);
+  const [expiryRetry, setExpiryRetry] = useState(0);
+  const [checkedFormats, setCheckedFormats] = useState<Record<string, boolean>>({});
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string | null>(null);
   const [remainingSeconds, setRemainingSeconds] = useState<number | null>(null);
@@ -110,7 +116,8 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
 
     const serverNow = new Date(loaded.serverNow).getTime();
     const endsAt = new Date(loaded.endsAt).getTime();
-    setRemainingSeconds(Math.max(0, Math.floor((endsAt - serverNow) / 1000)));
+    deadlineRef.current = performance.now() + Math.max(0, endsAt - serverNow);
+    setRemainingSeconds(Math.max(0, Math.ceil((endsAt - serverNow) / 1000)));
   }
 
   useEffect(() => {
@@ -122,16 +129,18 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
       return;
     }
     if (remainingSeconds <= 0) {
-      void handleExpire();
-      return;
+      if (busy) return;
+      const retryDelay = expiryRetry === 0 ? 0 : Math.min(30_000, 1000 * 2 ** Math.min(expiryRetry - 1, 5));
+      const retry = window.setTimeout(() => { void handleExpire(); }, retryDelay);
+      return () => window.clearTimeout(retry);
     }
 
     const timer = window.setTimeout(() => {
-      setRemainingSeconds((value) => (value === null ? value : Math.max(0, value - 1)));
+      setRemainingSeconds(Math.max(0, Math.ceil((deadlineRef.current - performance.now()) / 1000)));
     }, 1000);
 
     return () => window.clearTimeout(timer);
-  }, [attempt, remainingSeconds]);
+  }, [attempt, remainingSeconds, busy, expiryRetry]);
 
   const answeredCount = useMemo(
     () => Object.values(answers).filter((value) => value.trim().length > 0).length,
@@ -152,11 +161,12 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
     });
     const body = await readJson<{ saved: boolean }>(response);
     if (!body.success) {
-      setMessage(body.error.message);
+      throw new Error(body.error.message);
     }
   }
 
   function saveAnswer(question: AttemptQuestion, value: string) {
+    if (finishingRef.current) return;
     const nextAnswers = {
       ...answersRef.current,
       [question.snapshotQuestionId]: value
@@ -168,6 +178,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
       .catch(() => undefined)
       .then(() => persistAnswer(question, value));
     saveQueuesRef.current[question.snapshotQuestionId] = nextSave;
+    void nextSave.catch((error: unknown) => setMessage(error instanceof Error ? error.message : "Не удалось сохранить ответ. Проверьте соединение."));
   }
 
   function saveMultipleAnswer(question: AttemptQuestion, letter: string) {
@@ -175,39 +186,45 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
     saveAnswer(question, toggleMultipleAnswer(currentValue, letter));
   }
 
-  async function handleComplete() {
-    if (!confirm("Завершить тест? После этого ответы нельзя будет изменить.")) {
-      return;
-    }
-
+  async function finishAttempt(expire: boolean) {
+    if (finishingRef.current) return;
+    finishingRef.current = true;
     setBusy(true);
     setMessage(null);
-    await Promise.all(Object.values(saveQueuesRef.current));
-    const response = await fetch(`/api/attempts/${attemptId}/complete`, { method: "POST" });
-    const body = await readJson<{ resultUrl: string }>(response);
-    setBusy(false);
-    if (!body.success) {
-      setMessage(body.error.message);
-      return;
+    try {
+      if (expire) {
+        // Pending requests remain subject to the server deadline.
+        await Promise.allSettled(Object.values(saveQueuesRef.current));
+      } else {
+        // Retry failed autosaves with the latest raw value. Inputs are frozen
+        // synchronously so a failed save cannot silently finish a stale answer.
+        const pending = Object.entries(saveQueuesRef.current);
+        const results = await Promise.allSettled(pending.map(([, promise]) => promise));
+        const failedIds = new Set(pending.filter((_, index) => results[index].status === "rejected").map(([id]) => id));
+        await Promise.all(attempt!.questions.filter((question) => failedIds.has(question.snapshotQuestionId)).map((question) =>
+          persistAnswer(question, answersRef.current[question.snapshotQuestionId] ?? "")
+        ));
+      }
+      const response = await fetch(`/api/attempts/${attemptId}/${expire ? "expire" : "complete"}`, { method: "POST" });
+      const body = await readJson<{ resultUrl: string }>(response);
+      if (!body.success) throw new Error(body.error.message);
+      window.location.href = body.data.resultUrl;
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : "Не удалось завершить тест. Проверьте соединение и повторите.");
+      finishingRef.current = false;
+      setExpiryRetry((value) => value + 1);
+      setBusy(false);
     }
+  }
 
-    window.location.href = body.data.resultUrl;
+  async function handleComplete() {
+    if (!finishingRef.current && confirm("Завершить тест? После этого ответы нельзя будет изменить.")) {
+      await finishAttempt(false);
+    }
   }
 
   async function handleExpire() {
-    if (busy) {
-      return;
-    }
-    setBusy(true);
-    const response = await fetch(`/api/attempts/${attemptId}/expire`, { method: "POST" });
-    const body = await readJson<{ resultUrl: string }>(response);
-    setBusy(false);
-    if (!body.success) {
-      setMessage(body.error.message);
-      return;
-    }
-
-    window.location.href = body.data.resultUrl;
+    await finishAttempt(true);
   }
 
   if (!attempt) {
@@ -281,7 +298,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                           type="radio"
                           name={question.snapshotQuestionId}
                           checked={value === letter}
-                          disabled={isFinished}
+                          disabled={isFinished || busy}
                           onChange={() => saveAnswer(question, letter)}
                         />
                         <span>
@@ -299,7 +316,7 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                         <input
                           type="checkbox"
                           checked={value.split(",").includes(letter)}
-                          disabled={isFinished}
+                          disabled={isFinished || busy}
                           onChange={() => saveMultipleAnswer(question, letter)}
                         />
                         <span>
@@ -315,9 +332,25 @@ export function AttemptRunner({ attemptId }: { attemptId: string }) {
                     <span>Ответ</span>
                     <input
                       value={value}
-                      disabled={isFinished}
+                      disabled={isFinished || busy}
+                      aria-describedby={question.answerFormat ? `${question.snapshotQuestionId}-format` : undefined}
+                      aria-invalid={Boolean(checkedFormats[question.snapshotQuestionId] && question.answerFormat && parsePolicyAnswer(value, question.answerFormat).status === "invalid")}
+                      onBlur={() => setCheckedFormats((current) => ({ ...current, [question.snapshotQuestionId]: true }))}
                       onChange={(event) => saveAnswer(question, event.target.value)}
                     />
+                    {question.answerFormat ? (
+                      <span className="muted" id={`${question.snapshotQuestionId}-format`}>
+                        {question.answerFormat.kind === "set"
+                          ? `Цифры ${question.answerFormat.alphabet.split("").join(", ")} без повторов. Порядок не важен; можно разделять пробелами или запятыми.`
+                          : question.answerFormat.kind === "matching"
+                            ? `Все пары в порядке ${question.answerFormat.positions.split("").join("–")}, без пробелов: буква и цифра ${question.answerFormat.values.split("").join(", ")}. Используйте кириллицу.`
+                            : question.answerFormat.subtype === "digits"
+                              ? "Запишите цифры подряд в требуемом порядке."
+                              : "Запишите ответ без пробелов. Буквы е и ё различаются."}
+                        {checkedFormats[question.snapshotQuestionId] && value.trim() && parsePolicyAnswer(value, question.answerFormat).status === "invalid"
+                          ? " Запись неполная или содержит недопустимые символы; проверьте формат." : ""}
+                      </span>
+                    ) : null}
                   </label>
                 ) : null}
               </article>

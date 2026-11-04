@@ -1,5 +1,6 @@
 import type { ExamMode, OfficialPart, Prisma, QuestionType, ResponseSubtype, Subject, TestMode } from "@prisma/client";
 import { fromPrismaQuestionType, scoringRuleForQuestionType } from "@/lib/questions/enums";
+import { readAnswerPolicy, resolveAnswerPolicy } from "@/lib/scoring/answer-policy";
 import { fromPrismaExamMode, fromPrismaTestMode } from "@/lib/tests/enums";
 
 type QuestionForSnapshot = {
@@ -84,6 +85,7 @@ export type SnapshotQuestion = {
 };
 
 export type TestSnapshot = {
+  scoringVersion?: 2;
   testId: string;
   title: string;
   subject: "russian";
@@ -120,8 +122,20 @@ function optionsFromQuestion(question: QuestionForSnapshot) {
   };
 }
 
+// The old authored variant printed its actual matching key as a format example.
+// Redact only that exact known suffix in new snapshots and student projections;
+// never infer a model from prose or rewrite stored historical snapshots.
+function safeAuthenticPrompt(question: { questionText: string; correctAnswer: string; officialPart?: string | null; responseSubtype?: string | null }) {
+  const suffix = `Запишите ответ без пробелов в формате ${question.correctAnswer.toUpperCase()}.`;
+  if (question.officialPart === "B" && question.responseSubtype?.toLowerCase() === "alnum" && question.questionText.endsWith(suffix)) {
+    return question.questionText.slice(0, -suffix.length) + "Запишите все пары в порядке А, Б, В, Г: после каждой буквы укажите выбранную цифру. Без пробелов.";
+  }
+  return question.questionText;
+}
+
 export function buildTestSnapshot(test: TestForSnapshot): TestSnapshot {
   return {
+    ...(test.examMode === "RIKZ_RUSSIAN_2026" ? { scoringVersion: 2 as const } : {}),
     testId: test.id,
     title: test.title,
     subject: "russian",
@@ -133,11 +147,12 @@ export function buildTestSnapshot(test: TestForSnapshot): TestSnapshot {
     maxRawScore: test.maxRawScore,
     questions: test.questions.map((question, index) => {
       const questionType = fromPrismaQuestionType(question.questionType);
+      const policy = test.examMode === "RIKZ_RUSSIAN_2026" ? resolveAnswerPolicy(question) : null;
       return {
         snapshotQuestionId: `q_${index + 1}`,
         originalQuestionId: question.id,
         orderIndex: question.orderIndex,
-        questionText: question.questionText,
+        questionText: test.examMode === "RIKZ_RUSSIAN_2026" ? safeAuthenticPrompt(question) : question.questionText,
         questionType,
         options: optionsFromQuestion(question),
         correctAnswer: question.correctAnswer,
@@ -154,6 +169,10 @@ export function buildTestSnapshot(test: TestForSnapshot): TestSnapshot {
         partialPolicy: question.partialPolicy ?? null,
         acceptedAnswers: question.acceptedAnswers ?? null,
         normalizationPolicy: question.normalizationPolicy ?? null,
+        ...(policy ? {
+          partialPolicy: policy.partialPolicy,
+          normalizationPolicy: policy.normalizationPolicy as Prisma.JsonValue
+        } : {}),
         expertReviewerName: question.expertReviewerName ?? null,
         expertReviewedAt: question.expertReviewedAt?.toISOString() ?? null
       };
@@ -195,12 +214,14 @@ export function serializeQuestionForStudent(question: SnapshotQuestion) {
   return {
     snapshotQuestionId: question.snapshotQuestionId,
     orderIndex: question.orderIndex,
-    questionText: question.questionText,
+    questionText: safeAuthenticPrompt(question),
     questionType: question.questionType,
     officialPart: question.officialPart ?? null,
     officialNumber: question.officialNumber ?? null,
     options: question.options,
     topic: question.topic,
-    subtopic: question.subtopic
+    subtopic: question.subtopic,
+    ...(question.normalizationPolicy && typeof question.normalizationPolicy === "object" && !Array.isArray(question.normalizationPolicy) && question.normalizationPolicy.version === 1
+      ? { answerFormat: readAnswerPolicy(question.normalizationPolicy) } : {})
   };
 }
