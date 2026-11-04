@@ -20,8 +20,12 @@
     "rule_tested": "Чередующиеся гласные лаг/лож, кас/кос, зар/зор, гар/гор, плав/плов",
     "action_required": "Выбрать все слова с буквой А",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Предполагать: лаг перед суффиксом -а-. Озарённый: в безударном корне зар/зор пишется а. Остальные формы: прикоснуться, загореть, пловец.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -47,8 +51,12 @@
     "rule_tested": "Чередующиеся корни мер/мир, стел/стил, блест/блист, бер/бир",
     "action_required": "Выбрать все слова с буквой И",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Замирать и блистательный пишутся с и перед суффиксом -а-. Правильно: расстелить, выберу, сочетание.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -74,8 +82,12 @@
     "rule_tested": "Удвоенные согласные на стыке морфем и в заимствованных словах",
     "action_required": "Выбрать слова с удвоенной согласной",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Удвоенные согласные есть в словах искусственный, коллекционный, поддержанный. В словах расчётливый и гостиница удвоения нет.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -101,8 +113,12 @@
     "rule_tested": "Суффиксы причастий и личные окончания глаголов",
     "action_required": "Выбрать формы с буквой Е",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Правильно: построенный, борешься, заклеенный. В остальных формах: видимый, рассеявший.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -128,8 +144,12 @@
     "rule_tested": "НИ в уступительных конструкциях и усилительном отрицании",
     "action_required": "Определить позиции частицы НИ",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Пишется: как ни старался, ни разу, ни с кем. В остальных позициях: не успел, не отказался.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -155,8 +175,12 @@
     "rule_tested": "Раздельное и слитное написание НЕ с прилагательными, причастиями и глаголами",
     "action_required": "Выбрать случаи раздельного написания",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Раздельно: далеко не простое; не законченная вовремя работа, где зависимое слово обозначает время действия; не высокий, а низкий. Слитно: недолюбливать, небрежный.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -182,8 +206,12 @@
     "rule_tested": "Наречия с по- и слова с пол-/полу-",
     "action_required": "Выбрать дефисные написания",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "По-весеннему пишется через дефис по модели по-...-ему. Пол-апельсина пишется через дефис перед гласной. Остальные слова пишутся слитно.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -209,8 +237,12 @@
     "rule_tested": "Союзы, местоименные сочетания и наречия-омонимы",
     "action_required": "Выбрать слитные написания",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Слитно пишутся союзы зато, чтобы и наречие оттого со значением причины. Раздельно: то же правило, по тому плану.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -236,8 +268,12 @@
     "rule_tested": "Тире между подлежащим и именной частью сказуемого",
     "action_required": "Выбрать предложения с обязательным тире",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Тире требуется в конструкциях цель — собрать, пятью пять — двадцать пять, самое трудное — это начать. Перед словно тире обычно не ставится; в E нейтральная норма не требует тире.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -263,8 +299,12 @@
     "rule_tested": "Причастные и деепричастные обороты",
     "action_required": "Выбрать конструкции с обязательным обособлением",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Причастные обороты после определяемого слова в B и D обособляются. Деепричастие смеясь в C обособляется. В A определение перед существительным не обособляется. В E однородные наречия не обособляются.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -290,8 +330,12 @@
     "rule_tested": "Источник сообщения, степень уверенности и эмоциональная оценка",
     "action_required": "Выбрать вводные единицы",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "По словам синоптика указывает на источник сообщения, вероятно выражает степень уверенности, к счастью передаёт оценку. Очевидно в B входит в сказуемое. Однако в начале предложения является союзом.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -317,8 +361,12 @@
     "rule_tested": "Бессоюзное перечисление и повторяющиеся союзы",
     "action_required": "Выбрать предложения с запятой",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "В A три однородных члена перечислены без союзов. В C повторяется союз то... то. При одиночном союзе и запятая не ставится.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -344,8 +392,12 @@
     "rule_tested": "СПП, ССП и границы придаточной части",
     "action_required": "Выбрать правильно оформленные предложения",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "В A отделено придаточное времени. В B запятая закрывает придаточную часть. В E запятая стоит перед но. В C запятая ошибочна, в D пропущена запятая после придаточного.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -371,8 +423,12 @@
     "rule_tested": "Двоеточие и тире в бессоюзных и комбинированных конструкциях",
     "action_required": "Выбрать правильно оформленные предложения",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "В A вторая часть поясняет увиденное; в B тире передаёт условно-следственное отношение; в E раскрывается содержание мысли. В C и D двоеточие разрывает главную и придаточную части.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -398,8 +454,12 @@
     "rule_tested": "Прямая речь до и после слов автора",
     "action_required": "Выбрать нормативное оформление",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "В A, B и C прямая речь оформлена нормативно. В D требуется двоеточие. В E вопросительный знак должен стоять внутри кавычек.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -425,8 +485,12 @@
     "rule_tested": "Сравнительный оборот и значение роли",
     "action_required": "Выбрать предложения с обязательной запятой",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "В B и D обороты имеют значение свободного сравнения. В A и C как обозначает роль или качество, в E оборот входит в смысл сказуемого.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -452,8 +516,12 @@
     "rule_tested": "Извлечение фактов и обобщённого смысла",
     "action_required": "Выбрать верные утверждения",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "В предложении 6 сказано о птицах нескольких видов уже первой весной. Предложения 8–9 подтверждают пользу пространства для природы и обучения.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -480,8 +548,12 @@
     "rule_tested": "Характер изложения и типы речи",
     "action_required": "Выбрать верные характеристики",
     "answer_pattern": "^[A-E](,[A-E]){1,4}$",
-    "partial_policy": "one_error_half_credit",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "ABCDE"
+    },
     "explanation": "Текст доступно сообщает о наблюдениях и выводах. В нём есть последовательность событий и рассуждение с общим выводом.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -504,8 +576,12 @@
     "rule_tested": "Местоименное наречие и лексический повтор",
     "action_required": "Определить средства связи",
     "answer_pattern": "^[1-5]{2}$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "12345"
+    },
     "explanation": "Предложение 8 начинается словом поэтому, которое выражает следствие и является указательным местоименным наречием. Слова птицам и птиц образуют лексический повтор.",
     "qa_status": "reconstructed_and_corrected",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -527,8 +603,12 @@
     "rule_tested": "Контекстное значение слова",
     "action_required": "Найти слово по толкованию",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Требуемое значение имеет глагол переосмыслить.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -550,8 +630,12 @@
     "rule_tested": "Слитное написание НЕ с прилагательным",
     "action_required": "Выписать нормативную словоформу",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Невыполнимой пишется слитно: слово можно заменить синонимом без не — неосуществимой.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -574,8 +658,12 @@
     "rule_tested": "Значение приставки при-",
     "action_required": "Найти слово в тексте",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "В слове прилёта приставка при- обозначает приближение.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -597,8 +685,12 @@
     "rule_tested": "Соотношение букв и звуков",
     "action_required": "Найти слово по фонетическому признаку",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "В слове здесь пять букв и четыре звука: мягкий знак отдельного звука не обозначает.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -620,8 +712,12 @@
     "rule_tested": "Разряд местоимения и функция союзного слова",
     "action_required": "Найти слово в тексте",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Которое — относительное местоимение и член придаточной части.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -644,8 +740,12 @@
     "rule_tested": "Морфологические признаки глагола",
     "action_required": "Выбрать верные признаки",
     "answer_pattern": "^[1-5]{2}$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "12345"
+    },
     "explanation": "Служит — глагол несовершенного вида, изъявительного наклонения, настоящего времени, единственного числа.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -667,8 +767,12 @@
     "rule_tested": "Начальная форма прилагательного",
     "action_required": "Определить и записать начальную форму",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Определение спокойных согласуется с существительным участков; начальная форма — спокойный.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -690,8 +794,12 @@
     "rule_tested": "Виды подчинительной связи",
     "action_required": "Назвать тип связи",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Зависимое прилагательное изменяется вместе с существительным в роде, числе и падеже: это согласование.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10",
@@ -713,8 +821,12 @@
     "rule_tested": "Ы после русской приставки на согласную",
     "action_required": "Образовать и записать слово",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "После русской приставки на согласную начальная и корня заменяется на ы: безысходный.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -735,8 +847,12 @@
     "rule_tested": "Н и НН в суффиксах причастий",
     "action_required": "Восстановить нормативное написание",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Полное страдательное причастие с суффиксом -ованн- пишется с двумя н: организованный.",
     "qa_status": "reconstructed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -757,8 +873,12 @@
     "rule_tested": "Удвоенная согласная на стыке приставки и корня",
     "action_required": "Исправить слово",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Нормативное написание — рассчитывать.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -784,8 +904,12 @@
     "rule_tested": "Граница придаточной части и обособление причастного оборота",
     "action_required": "Выбрать позиции запятых",
     "answer_pattern": "^[1-5]{3}$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "12345"
+    },
     "explanation": "Запятая 3 отделяет придаточную часть времени. Запятые 4 и 5 обособляют распространённый причастный оборот. Наконец здесь не является вводным.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -806,8 +930,12 @@
     "rule_tested": "Лингвистический термин",
     "action_required": "Назвать раздел языкознания",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Раздел языкознания, изучающий словарный состав языка, называется лексикологией.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -828,8 +956,12 @@
     "rule_tested": "Составное глагольное сказуемое",
     "action_required": "Выписать вспомогательную часть",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "В сочетании начал работать глагол начал выражает фазовое значение и является вспомогательной частью сказуемого.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -851,8 +983,12 @@
     "rule_tested": "Лексическая сочетаемость и речевая избыточность",
     "action_required": "Найти предложения с нарушениями",
     "answer_pattern": "^[1-5]{2}$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "12345"
+    },
     "explanation": "Нормативно: потерпела поражение, но одержала победу. Сочетание главная суть избыточно. Остальные предложения нормативны.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -873,8 +1009,12 @@
     "rule_tested": "Склонение количественного числительного",
     "action_required": "Записать форму родительного падежа",
     "answer_pattern": "^[А-Яа-яЁё-]+$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "exact_match",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "exact",
+      "subtype": "word"
+    },
     "explanation": "Предлог около требует родительного падежа: около пятисот добровольцев.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -900,8 +1040,12 @@
     "rule_tested": "Деепричастный оборот и управление",
     "action_required": "Найти предложения с нарушениями",
     "answer_pattern": "^[1-5]{3}$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "set_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "set",
+      "alphabet": "12345"
+    },
     "explanation": "В 1 действие деепричастия не относится к грамматическому подлежащему. После согласно нужен дательный падеж: согласно приказу. Глагол оплатить употребляется без предлога: оплатить проезд.",
     "qa_status": "passed",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -912,7 +1056,7 @@
     "official_number": 19,
     "question_type": "short_answer_token",
     "response_subtype": "alnum",
-    "prompt": "Установите соответствие между словами и особенностями их морфемного состава.\n\nСлова:\nА. подснежник\nБ. серебристый\nВ. ледокол\nГ. бездорожье\n\nОсобенности морфемного состава:\n1. В слове два корня, соединительная гласная и нулевое окончание.\n2. В слове есть приставка, корень, суффикс и нулевое окончание.\n3. В слове есть корень, суффикс и выраженное окончание, но нет приставки.\n4. В слове есть приставка, корень, суффикс и выраженное окончание.\n5. В слове есть только корень и нулевое окончание.\n\nЗапишите ответ без пробелов в формате А2Б3В1Г4.",
+    "prompt": "Установите соответствие между словами и особенностями их морфемного состава.\n\nСлова:\nА. подснежник\nБ. серебристый\nВ. ледокол\nГ. бездорожье\n\nОсобенности морфемного состава:\n1. В слове два корня, соединительная гласная и нулевое окончание.\n2. В слове есть приставка, корень, суффикс и нулевое окончание.\n3. В слове есть корень, суффикс и выраженное окончание, но нет приставки.\n4. В слове есть приставка, корень, суффикс и выраженное окончание.\n5. В слове есть только корень и нулевое окончание.\n\nЗапишите все пары в порядке А, Б, В, Г: после каждой буквы укажите выбранную цифру. Без пробелов.",
     "accepted_answers": [
       "А2Б3В1Г4"
     ],
@@ -922,8 +1066,13 @@
     "rule_tested": "Морфемный состав слова",
     "action_required": "Установить четыре соответствия",
     "answer_pattern": "^А[1-5]Б[1-5]В[1-5]Г[1-5]$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "matching_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "matching",
+      "positions": "АБВГ",
+      "values": "12345"
+    },
     "explanation": "Подснежник: приставка, корень, суффикс, нулевое окончание. Серебристый: корень, суффикс, выраженное окончание. Ледокол: два корня, соединительная гласная, нулевое окончание. Бездорожье: приставка, корень, суффикс, выраженное окончание.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -934,7 +1083,7 @@
     "official_number": 20,
     "question_type": "short_answer_token",
     "response_subtype": "alnum",
-    "prompt": "Установите соответствие между словами и способами их образования.\n\nСлова:\nА. каменщик\nБ. сверхмощный\nВ. птицефабрика\nГ. подберёзовик\n\nСпособы образования:\n1. Приставочный.\n2. Суффиксальный.\n3. Приставочно-суффиксальный.\n4. Сложение основ.\n5. Бессуффиксный.\n\nЗапишите ответ без пробелов в формате А2Б1В4Г3.",
+    "prompt": "Установите соответствие между словами и способами их образования.\n\nСлова:\nА. каменщик\nБ. сверхмощный\nВ. птицефабрика\nГ. подберёзовик\n\nСпособы образования:\n1. Приставочный.\n2. Суффиксальный.\n3. Приставочно-суффиксальный.\n4. Сложение основ.\n5. Бессуффиксный.\n\nЗапишите все пары в порядке А, Б, В, Г: после каждой буквы укажите выбранную цифру. Без пробелов.",
     "accepted_answers": [
       "А2Б1В4Г3"
     ],
@@ -944,8 +1093,13 @@
     "rule_tested": "Способы образования слов",
     "action_required": "Установить четыре соответствия",
     "answer_pattern": "^А[1-5]Б[1-5]В[1-5]Г[1-5]$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "matching_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "matching",
+      "positions": "АБВГ",
+      "values": "12345"
+    },
     "explanation": "Каменщик образован суффиксальным способом, сверхмощный — приставочным, птицефабрика — сложением основ, подберёзовик — приставочно-суффиксальным.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -956,7 +1110,7 @@
     "official_number": 21,
     "question_type": "short_answer_token",
     "response_subtype": "alnum",
-    "prompt": "Установите соответствие между выделенными словами и частями речи, к которым они относятся.\n\nПредложения:\nА. *Впереди* показалась пристань.\nБ. *Вследствие* тумана рейс задержали.\nВ. *Даже* опытный проводник ошибся.\nГ. Мы вернулись, *потому что* началась гроза.\n\nЧасти речи:\n1. Союз.\n2. Частица.\n3. Наречие.\n4. Производный предлог.\n5. Местоимение.\n\nЗапишите ответ без пробелов в формате А3Б4В2Г1.",
+    "prompt": "Установите соответствие между выделенными словами и частями речи, к которым они относятся.\n\nПредложения:\nА. *Впереди* показалась пристань.\nБ. *Вследствие* тумана рейс задержали.\nВ. *Даже* опытный проводник ошибся.\nГ. Мы вернулись, *потому что* началась гроза.\n\nЧасти речи:\n1. Союз.\n2. Частица.\n3. Наречие.\n4. Производный предлог.\n5. Местоимение.\n\nЗапишите все пары в порядке А, Б, В, Г: после каждой буквы укажите выбранную цифру. Без пробелов.",
     "accepted_answers": [
       "А3Б4В2Г1"
     ],
@@ -966,8 +1120,13 @@
     "rule_tested": "Части речи",
     "action_required": "Установить четыре соответствия",
     "answer_pattern": "^А[1-5]Б[1-5]В[1-5]Г[1-5]$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "matching_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "matching",
+      "positions": "АБВГ",
+      "values": "12345"
+    },
     "explanation": "Впереди — наречие; вследствие — производный предлог; даже — частица; потому что — составной подчинительный союз.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"
@@ -978,7 +1137,7 @@
     "official_number": 22,
     "question_type": "short_answer_token",
     "response_subtype": "alnum",
-    "prompt": "Установите соответствие между предложениями и их синтаксическими характеристиками.\n\nПредложения:\nА. Когда рассвело, лодки вышли из бухты.\nБ. Ветер ослаб, и море быстро успокоилось.\nВ. Я поднял фонарь: тропа исчезла в тумане.\nГ. Я понял, что мост закрыт, и мы свернули к переправе.\n\nСинтаксические характеристики:\n1. Сложноподчинённое предложение.\n2. Сложносочинённое предложение.\n3. Бессоюзное сложное предложение.\n4. Сложное предложение с разными видами связи.\n5. Простое осложнённое предложение.\n\nЗапишите ответ без пробелов в формате А1Б2В3Г4.",
+    "prompt": "Установите соответствие между предложениями и их синтаксическими характеристиками.\n\nПредложения:\nА. Когда рассвело, лодки вышли из бухты.\nБ. Ветер ослаб, и море быстро успокоилось.\nВ. Я поднял фонарь: тропа исчезла в тумане.\nГ. Я понял, что мост закрыт, и мы свернули к переправе.\n\nСинтаксические характеристики:\n1. Сложноподчинённое предложение.\n2. Сложносочинённое предложение.\n3. Бессоюзное сложное предложение.\n4. Сложное предложение с разными видами связи.\n5. Простое осложнённое предложение.\n\nЗапишите все пары в порядке А, Б, В, Г: после каждой буквы укажите выбранную цифру. Без пробелов.",
     "accepted_answers": [
       "А1Б2В3Г4"
     ],
@@ -988,8 +1147,13 @@
     "rule_tested": "Типы сложных предложений",
     "action_required": "Установить четыре соответствия",
     "answer_pattern": "^А[1-5]Б[1-5]В[1-5]Г[1-5]$",
-    "partial_policy": "none",
-    "normalization_policy": "conservative",
+    "partial_policy": "matching_partial",
+    "normalization_policy": {
+      "version": 1,
+      "kind": "matching",
+      "positions": "АБВГ",
+      "values": "12345"
+    },
     "explanation": "А — СПП; Б — ССП; В — бессоюзное сложное; Г содержит подчинительную и сочинительную связь.",
     "qa_status": "corrected",
     "source_ref": "original_authoring_qa_2026-07-10"

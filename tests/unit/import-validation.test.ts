@@ -37,6 +37,8 @@ function authenticRecord(input: {
     ];
   }
 
+  const isSet = [1, 7, 13, 14, 16, 18].includes(input.number);
+  const isMatching = input.number >= 19;
   return [
     "rikz_russian_2026",
     "B",
@@ -49,8 +51,8 @@ function authenticRecord(input: {
     "",
     "",
     "",
-    input.acceptedAnswers ?? "[\"placeholder\"]",
-    "word",
+    input.acceptedAnswers ?? JSON.stringify([isSet ? "13" : isMatching ? "А1Б2В3Г4" : "пример"]),
+    isSet ? "digits" : isMatching ? "alnum" : "word",
     "Topic",
     "",
     "medium",
@@ -106,7 +108,7 @@ describe("import validation", () => {
     expect(result.preview).toHaveLength(40);
     expect(result.preview[18]).toMatchObject({
       questionType: "short_answer_token",
-      acceptedAnswers: ["placeholder"]
+      acceptedAnswers: ["13"]
     });
   });
 
@@ -279,9 +281,9 @@ describe("import validation", () => {
     });
     expect(result.preview[18]).toMatchObject({
       questionType: "short_answer_token",
-      acceptedAnswers: ["placeholder"],
-      responseSubtype: "word",
-      correctAnswer: "placeholder"
+      acceptedAnswers: ["13"],
+      responseSubtype: "digits",
+      correctAnswer: "13"
     });
   });
 

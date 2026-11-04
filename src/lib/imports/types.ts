@@ -1,3 +1,4 @@
+import type { AnswerPolicy, ScoringStrategy } from "@/lib/scoring/answer-policy";
 import type { MvpDifficulty, MvpQuestionType } from "@/lib/questions/enums";
 import type { ImportTemplateColumn } from "@/lib/imports/template";
 
@@ -33,6 +34,8 @@ export type ImportPreviewQuestion = {
   optionE: string | null;
   correctAnswer: string;
   acceptedAnswers: string[] | null;
+  partialPolicy?: ScoringStrategy;
+  normalizationPolicy?: AnswerPolicy;
   responseSubtype: "word" | "digits" | "alnum" | null;
   topic: string;
   subtopic: string | null;

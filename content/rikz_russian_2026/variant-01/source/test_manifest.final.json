@@ -34,11 +34,41 @@
     ]
   },
   "scoring": {
-    "part_a_partial_policy": "one_error_half_credit",
-    "part_b_partial_policy": "none",
+    "version": 2,
+    "part_a_partial_policy": "set_partial",
+    "part_b_set_partial": [
+      1,
+      7,
+      13,
+      16,
+      18
+    ],
+    "part_b_matching_partial": [
+      19,
+      20,
+      21,
+      22
+    ],
+    "part_b_exact_match": [
+      2,
+      3,
+      4,
+      5,
+      6,
+      8,
+      9,
+      10,
+      11,
+      12,
+      14,
+      15,
+      17
+    ],
+    "matching_format": "complete_ordered_cyrillic_pairs",
+    "authored_B14_variation": "B14 is a word task scored 2/0; official main CE/CT-2026 B14 allows partial credit and requires different task content.",
     "scaled_score_policy": "show_only_if_official_2026_lookup_is_attached"
   },
-  "normalization_policy": "conservative",
+  "normalization_policy": "versioned_per_question",
   "shared_contexts": [
     {
       "id": "text_1",

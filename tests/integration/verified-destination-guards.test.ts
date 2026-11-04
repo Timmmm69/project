@@ -453,14 +453,14 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
         testId,
         questionText: "Sensitive prompt",
         questionType: "SHORT_ANSWER_TOKEN" as const,
-        correctAnswer: "SECRET_CORRECT",
-        acceptedAnswers: ["SECRET_ACCEPTED"],
+        correctAnswer: "135",
+        acceptedAnswers: ["135"],
         explanation: "SECRET_EXPLANATION",
         topic: "Sensitive topic",
         points: 2,
         officialPart: "B" as const,
         officialNumber: 1,
-        responseSubtype: "WORD" as const,
+        responseSubtype: "DIGITS" as const,
         orderIndex: 1
         },
         ...Array.from({ length: 18 }, (_, index) => ({
@@ -483,13 +483,13 @@ describeWithDatabase("ACC-01A verified destination guards PostgreSQL integration
           testId,
           questionText: `Part B ${index + 2}`,
           questionType: "SHORT_ANSWER_TOKEN" as const,
-          correctAnswer: `token${index + 2}`,
-          acceptedAnswers: [`token${index + 2}`],
+          correctAnswer: index + 2 >= 19 ? "А1Б2В3Г4" : [7, 13, 16, 18].includes(index + 2) ? "135" : "пример",
+          acceptedAnswers: [index + 2 >= 19 ? "А1Б2В3Г4" : [7, 13, 16, 18].includes(index + 2) ? "135" : "пример"],
           topic: "Part B",
           points: 2,
           officialPart: "B" as const,
           officialNumber: index + 2,
-          responseSubtype: "ALNUM" as const,
+          responseSubtype: index + 2 >= 19 ? "ALNUM" as const : [7, 13, 16, 18].includes(index + 2) ? "DIGITS" as const : "WORD" as const,
           orderIndex: index + 20
         }))
       ]

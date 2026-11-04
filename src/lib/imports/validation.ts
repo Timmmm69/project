@@ -1,7 +1,9 @@
+import { defaultAnswerPolicy, resolveAnswerPolicy, validateAnswerConfiguration, type ScoringStrategy } from "@/lib/scoring/answer-policy";
 import { isOptionLetter, normalizeCorrectAnswer, parseMultipleChoiceLetters } from "@/lib/questions/normalization";
 import type { MvpDifficulty, MvpQuestionType } from "@/lib/questions/enums";
 import {
   AUTHENTIC_IMPORT_TEMPLATE_COLUMNS,
+  AUTHENTIC_POLICY_COLUMNS,
   GENERIC_IMPORT_TEMPLATE_COLUMNS,
   IMPORT_TEMPLATE_COLUMNS,
   MAX_IMPORT_ROWS,
@@ -86,7 +88,10 @@ function validateHeader(header: string[], examMode: ImportExamMode) {
   }
 
   if (normalized.length > expected.length) {
-    const extra = normalized.slice(expected.length).filter(Boolean);
+    const extraColumns = normalized.slice(expected.length).filter(Boolean);
+    const extra = examMode === "rikz_russian_2026"
+      ? extraColumns.filter((column, index) => column !== AUTHENTIC_POLICY_COLUMNS[index])
+      : extraColumns;
     if (extra.length > 0) {
       errors.push(issue(1, "file", "UNKNOWN_COLUMNS", `Unknown columns: ${extra.join(", ")}.`));
     }
@@ -333,7 +338,7 @@ function validateRow(row: ImportRawRow, examMode: ImportExamMode) {
       ? parseResponseSubtype(values.response_subtype, row.rowNumber, errors)
       : null;
   const acceptedAnswers =
-    examMode === "rikz_russian_2026" && officialPart === "B"
+    examMode === "rikz_russian_2026" && (officialPart === "B" || trim(values.accepted_answers))
       ? parseAcceptedAnswers(values.accepted_answers, row.rowNumber, errors)
       : null;
 
@@ -362,7 +367,9 @@ function validateRow(row: ImportRawRow, examMode: ImportExamMode) {
     optionC: optional(values.option_c),
     optionD: optional(values.option_d),
     optionE: optional(values.option_e),
-    correctAnswer: normalizeCorrectAnswer(questionType, values.correct_answer || acceptedAnswers?.[0] || ""),
+    correctAnswer: examMode === "rikz_russian_2026"
+      ? trim(values.correct_answer || acceptedAnswers?.[0])
+      : normalizeCorrectAnswer(questionType, values.correct_answer || acceptedAnswers?.[0] || ""),
     acceptedAnswers,
     responseSubtype,
     topic,
@@ -375,6 +382,21 @@ function validateRow(row: ImportRawRow, examMode: ImportExamMode) {
 
   if (examMode === "rikz_russian_2026") {
     validateAuthenticRow(row.rowNumber, candidate, errors);
+    const defaults = defaultAnswerPolicy(candidate);
+    let policyInput: unknown = defaults.normalizationPolicy;
+    if (trim(values.normalization_policy)) {
+      try { policyInput = JSON.parse(values.normalization_policy); }
+      catch { errors.push(issue(row.rowNumber, "normalization_policy", "INVALID_NORMALIZATION_POLICY", "normalization_policy must be JSON.")); }
+    }
+    const resolved = resolveAnswerPolicy({ ...candidate, partialPolicy: trim(values.partial_policy) || null, normalizationPolicy: policyInput });
+    const configured = { ...candidate, ...resolved };
+    const configurationErrors = validateAnswerConfiguration(configured);
+    for (const message of configurationErrors) errors.push(issue(row.rowNumber, "partial_policy", "AUTHENTIC_SCORING_CONFIGURATION", message));
+    if (configurationErrors.length === 0) {
+      candidate.partialPolicy = resolved.partialPolicy as ScoringStrategy;
+      // Preserve explicit, validated domains, not just the defaults.
+      candidate.normalizationPolicy = configured.normalizationPolicy as typeof defaults.normalizationPolicy;
+    }
   } else if (candidate.questionType === "short_text") {
     validateShortTextAnswer(row.rowNumber, candidate, errors, warnings);
     candidate.optionA = null;
@@ -438,7 +460,7 @@ export function mapRecordToImportRow(
   columns: readonly ImportTemplateColumn[] = IMPORT_TEMPLATE_COLUMNS
 ): ImportRawRow {
   const values = Object.fromEntries(
-    AUTHENTIC_IMPORT_TEMPLATE_COLUMNS.map((column) => [column, ""])
+    [...AUTHENTIC_IMPORT_TEMPLATE_COLUMNS, ...AUTHENTIC_POLICY_COLUMNS].map((column) => [column, ""])
   ) as Record<ImportTemplateColumn, string>;
 
   columns.forEach((column, index) => {

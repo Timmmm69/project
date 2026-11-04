@@ -36,6 +36,8 @@ function authenticQuestion(part: "A" | "B", officialNumber: number): PublishQues
       topic: "Орфография",
       subtopic: "Правописание",
       points: 2,
+      partialPolicy: "set_partial",
+      normalizationPolicy: { version: 1, kind: "set", alphabet: "ABCDE" },
       optionA: "A",
       optionB: "B",
       optionC: "C",
@@ -48,17 +50,24 @@ function authenticQuestion(part: "A" | "B", officialNumber: number): PublishQues
     };
   }
 
+  const isSet = [1, 7, 13, 14, 16, 18].includes(officialNumber);
+  const isMatching = officialNumber >= 19;
+  const key = isSet ? "13" : isMatching ? "А1Б2В3Г4" : "пример";
   return {
     questionText: `Задание B${officialNumber}`,
     questionType: "SHORT_ANSWER_TOKEN",
-    correctAnswer: `ответ${officialNumber}`,
+    correctAnswer: key,
     topic: "Грамматика",
     subtopic: "Краткий ответ",
     points: 2,
     officialPart: "B",
     officialNumber,
-    responseSubtype: "WORD",
-    acceptedAnswers: [`ответ${officialNumber}`],
+    responseSubtype: isSet ? "DIGITS" : isMatching ? "ALNUM" : "WORD",
+    acceptedAnswers: [key],
+    partialPolicy: isSet ? "set_partial" : isMatching ? "matching_partial" : "exact_match",
+    normalizationPolicy: isSet ? { version: 1, kind: "set", alphabet: "12345" } : isMatching
+      ? { version: 1, kind: "matching", positions: "АБВГ", values: "12345" }
+      : { version: 1, kind: "exact", subtype: "word" },
     explanation: "Пояснение",
     deletedAt: null
   };

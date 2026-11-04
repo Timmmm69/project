@@ -1,3 +1,4 @@
+import { validateAnswerConfiguration } from "@/lib/scoring/answer-policy";
 import { Prisma } from "@prisma/client";
 import { normalizeAttemptAnswer } from "@/lib/attempts/answer-normalization";
 import { buildScoringSchemeSnapshot, buildTestSnapshot, parseScoringSchemeSnapshot, parseTestSnapshot } from "@/lib/attempts/snapshot";
@@ -155,6 +156,9 @@ export async function startOrRestoreAttempt(input: {
       }
 
       const snapshot = buildTestSnapshot(test);
+      if (snapshot.scoringVersion === 2 && snapshot.questions.some((question) => validateAnswerConfiguration(question).length > 0)) {
+        throw new Error("TEST_SCORING_CONFIGURATION_INVALID");
+      }
       const scoringSchemeSnapshot = buildScoringSchemeSnapshot(test);
       return tx.attempt.create({
         data: {
@@ -245,54 +249,63 @@ export async function saveAttemptAnswer(input: {
   snapshotQuestionId: string;
   selectedAnswer: string | null;
 }) {
-  const attempt = await prisma.attempt.findFirst({
-    where: {
-      id: input.attemptId,
-      userId: input.studentId,
-      ...(input.authorizedAccessId ? {
-        accessId: input.authorizedAccessId,
-        access: { revokedAt: null }
-      } : {})
-    }
-  });
-
-  if (!attempt) {
-    throw new Error("ATTEMPT_NOT_FOUND");
-  }
-  if (attempt.status !== "STARTED") {
-    throw new Error("ATTEMPT_FINISHED");
-  }
-
-  const snapshot = parseTestSnapshot(attempt.testSnapshot);
-  const question = snapshot.questions.find((item) => item.snapshotQuestionId === input.snapshotQuestionId);
-  if (!question) {
-    throw new Error("QUESTION_NOT_FOUND");
-  }
-
-  const selectedAnswer = normalizeAttemptAnswer(question.questionType, input.selectedAnswer);
-  const answer = await prisma.answer.upsert({
-    where: {
-      attemptId_snapshotQuestionId: {
-        attemptId: attempt.id,
-        snapshotQuestionId: question.snapshotQuestionId
+  return prisma.$transaction(async (tx) => {
+    // Saving and finishing share this row lock: no write can cross completion.
+    await tx.$queryRaw`SELECT id FROM attempts WHERE id = ${input.attemptId}::uuid FOR UPDATE`;
+    const attempt = await tx.attempt.findFirst({
+      where: {
+        id: input.attemptId,
+        userId: input.studentId,
+        ...(input.authorizedAccessId ? {
+          accessId: input.authorizedAccessId,
+          access: { revokedAt: null }
+        } : {})
       }
-    },
-    create: {
-      attemptId: attempt.id,
-      questionId: question.originalQuestionId,
-      snapshotQuestionId: question.snapshotQuestionId,
-      questionSnapshot: question as unknown as Prisma.InputJsonValue,
-      selectedAnswer,
-      maxPoints: question.points,
-      answeredAt: selectedAnswer ? new Date() : null
-    },
-    update: {
-      selectedAnswer,
-      answeredAt: selectedAnswer ? new Date() : null
-    }
-  });
+    });
 
-  return answer;
+    if (!attempt) {
+      throw new Error("ATTEMPT_NOT_FOUND");
+    }
+    if (attempt.status !== "STARTED") {
+      throw new Error("ATTEMPT_FINISHED");
+    }
+
+    const snapshot = parseTestSnapshot(attempt.testSnapshot);
+    const question = snapshot.questions.find((item) => item.snapshotQuestionId === input.snapshotQuestionId);
+    if (!question) {
+      throw new Error("QUESTION_NOT_FOUND");
+    }
+
+    if (new Date() >= new Date(attempt.startedAt.getTime() + snapshot.durationMinutes * 60_000)) {
+      throw new Error("ATTEMPT_TIME_EXPIRED");
+    }
+    const selectedAnswer = snapshot.scoringVersion === 2 && snapshot.examMode === "rikz_russian_2026"
+      ? input.selectedAnswer
+      : normalizeAttemptAnswer(question.questionType, input.selectedAnswer);
+    const answer = await tx.answer.upsert({
+      where: {
+        attemptId_snapshotQuestionId: {
+          attemptId: attempt.id,
+          snapshotQuestionId: question.snapshotQuestionId
+        }
+      },
+      create: {
+        attemptId: attempt.id,
+        questionId: question.originalQuestionId,
+        snapshotQuestionId: question.snapshotQuestionId,
+        questionSnapshot: question as unknown as Prisma.InputJsonValue,
+        selectedAnswer,
+        maxPoints: question.points,
+        answeredAt: selectedAnswer ? new Date() : null
+      },
+      update: {
+        selectedAnswer,
+        answeredAt: selectedAnswer ? new Date() : null
+      }
+    });
+
+    return answer;
+  });
 }
 
 export async function completeAttempt(input: {
@@ -301,49 +314,25 @@ export async function completeAttempt(input: {
   authorizedAccessId?: string;
   expire: boolean;
 }) {
-  const now = new Date();
-  const attempt = await prisma.attempt.findFirst({
-    where: {
-      id: input.attemptId,
-      userId: input.studentId,
-      ...(input.authorizedAccessId ? {
-        accessId: input.authorizedAccessId,
-        access: { revokedAt: null }
-      } : {})
-    }
-  });
-
-  if (!attempt) {
-    throw new Error("ATTEMPT_NOT_FOUND");
-  }
-  if (attempt.status !== "STARTED") {
-    return attempt;
-  }
-
-  const snapshot = parseTestSnapshot(attempt.testSnapshot);
-  const completionState = resolveAttemptCompletion({
-    now,
-    startedAt: attempt.startedAt,
-    durationMinutes: snapshot.durationMinutes,
-    expire: input.expire
-  });
-
-  const finishedAt = completionState.finishedAt;
   const completion = await prisma.$transaction(async (tx) => {
-    const attemptWithAnswers = await tx.attempt.findUnique({
-      where: { id: attempt.id },
-      include: {
-        answers: true
-      }
+    await tx.$queryRaw`SELECT id FROM attempts WHERE id = ${input.attemptId}::uuid FOR UPDATE`;
+    const attemptWithAnswers = await tx.attempt.findFirst({
+      where: {
+        id: input.attemptId,
+        userId: input.studentId,
+        ...(input.authorizedAccessId ? { accessId: input.authorizedAccessId, access: { revokedAt: null } } : {})
+      },
+      include: { answers: true }
     });
-
-    if (!attemptWithAnswers) {
-      throw new Error("ATTEMPT_NOT_FOUND");
-    }
-    if (attemptWithAnswers.status !== "STARTED") {
-      return { attempt: attemptWithAnswers, transitioned: false };
-    }
-
+    if (!attemptWithAnswers) throw new Error("ATTEMPT_NOT_FOUND");
+    if (attemptWithAnswers.status !== "STARTED") return { attempt: attemptWithAnswers, transitioned: false };
+    const attempt = attemptWithAnswers;
+    const completionState = resolveAttemptCompletion({
+      now: new Date(), startedAt: attempt.startedAt,
+      durationMinutes: parseTestSnapshot(attempt.testSnapshot).durationMinutes,
+      expire: input.expire
+    });
+    const finishedAt = completionState.finishedAt;
     const snapshotForScoring = parseTestSnapshot(attemptWithAnswers.testSnapshot);
     const scoringSchemeSnapshot = parseScoringSchemeSnapshot(attemptWithAnswers.scoringSchemeSnapshot);
     const scoringResult = scoreAttemptSnapshot(
@@ -429,20 +418,20 @@ export async function completeAttempt(input: {
       eventType: "scoring_scaled_score_missing",
       actorUserId: input.studentId,
       entityType: "attempt",
-      entityId: attempt.id,
+      entityId: updated.id,
       payload: {
-        testId: attempt.testId,
+        testId: updated.testId,
         rawScore: updated.rawScore
       }
     });
   }
 
   await logEvent({
-    eventType: completionState.status === "EXPIRED" ? "attempt_expired" : "attempt_completed",
+    eventType: updated.status === "EXPIRED" ? "attempt_expired" : "attempt_completed",
     actorUserId: input.studentId,
     entityType: "attempt",
-    entityId: attempt.id,
-    payload: { testId: attempt.testId }
+    entityId: updated.id,
+    payload: { testId: updated.testId }
   });
 
   return updated;

@@ -1,3 +1,4 @@
+import { resolveAnswerPolicy, validateAnswerConfiguration } from "@/lib/scoring/answer-policy";
 import { Prisma } from "@prisma/client";
 import { apiFailure, apiSuccess } from "@/lib/api-response";
 import type { ImportPreviewQuestion } from "@/lib/imports/types";
@@ -63,7 +64,7 @@ export async function POST(_request: Request, context: RouteContext) {
 
   const job = await prisma.importJob.findFirst({
     where: { id: parsedId.data, adminId: admin.id },
-    include: { test: { select: { id: true, deletedAt: true } } }
+    include: { test: { select: { id: true, deletedAt: true, examMode: true } } }
   });
   if (!job || job.test.deletedAt) {
     return apiFailure({ code: "NOT_FOUND", message: "Import job not found" }, 404);
@@ -79,6 +80,11 @@ export async function POST(_request: Request, context: RouteContext) {
   const preview = asPreview(job.preview);
   if (preview.length === 0) {
     return apiFailure({ code: "EMPTY_IMPORT", message: "Import has no valid rows" }, 409);
+  }
+
+  const policies = job.test.examMode === "RIKZ_RUSSIAN_2026" ? preview.map((question) => resolveAnswerPolicy(question)) : null;
+  if (policies && preview.some((question, index) => validateAnswerConfiguration({ ...question, ...policies[index] }).length > 0)) {
+    return apiFailure({ code: "IMPORT_SCORING_INVALID", message: "Revalidate this import: invalid scoring configuration" }, 409);
   }
 
   try {
@@ -137,6 +143,7 @@ export async function POST(_request: Request, context: RouteContext) {
           officialNumber: question.officialNumber,
           responseSubtype: toPrismaResponseSubtype(question.responseSubtype),
           acceptedAnswers: toPrismaAcceptedAnswers(question.acceptedAnswers),
+          ...(policies ? { partialPolicy: policies[index].partialPolicy, normalizationPolicy: policies[index].normalizationPolicy as Prisma.InputJsonValue } : {}),
           orderIndex: startOrder + index + 1
         }))
       });

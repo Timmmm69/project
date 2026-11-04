@@ -1,3 +1,4 @@
+import { scorePolicyAnswer } from "@/lib/scoring/answer-policy";
 import type { ScoringSchemeSnapshot, SnapshotQuestion, TestSnapshot } from "@/lib/attempts/snapshot";
 import {
   normalizeCorrectAnswer,
@@ -302,6 +303,9 @@ export function scoreAttemptSnapshot(
   answers: StudentAnswerInput[],
   scoringSchemeSnapshot: ScoringSchemeSnapshot | null
 ): ScoringResult {
+  if (snapshot.examMode === "rikz_russian_2026" && snapshot.scoringVersion !== undefined && snapshot.scoringVersion !== 2) {
+    throw new Error("UNSUPPORTED_SCORING_VERSION");
+  }
   const answerByQuestion = new Map(
     answers
       .filter((answer) => answer.snapshotQuestionId)
@@ -309,11 +313,14 @@ export function scoreAttemptSnapshot(
   );
 
   const scoredAnswers = snapshot.questions.map((question) => {
-    const selectedAnswer = normalizeStudentAnswer(question, answerByQuestion.get(question.snapshotQuestionId) ?? null);
+    const rawAnswer = answerByQuestion.get(question.snapshotQuestionId) ?? null;
+    const usePolicy = snapshot.examMode === "rikz_russian_2026" && snapshot.scoringVersion === 2;
+    const selectedAnswer = usePolicy ? rawAnswer : normalizeStudentAnswer(question, rawAnswer);
     const score =
-      snapshot.examMode === "rikz_russian_2026"
-        ? rikzRussian2026Scoring(question, selectedAnswer)
-        : scoreQuestion(question, selectedAnswer);
+      usePolicy ? scorePolicyAnswer(question, selectedAnswer)
+        : snapshot.examMode === "rikz_russian_2026"
+          ? rikzRussian2026Scoring(question, selectedAnswer)
+          : scoreQuestion(question, selectedAnswer);
     return {
       snapshotQuestionId: question.snapshotQuestionId,
       question,
